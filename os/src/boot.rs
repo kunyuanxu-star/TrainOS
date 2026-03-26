@@ -29,6 +29,7 @@ fn panic(_info: &core::panic::PanicInfo) -> ! {
 /// Main entry point called from assembly
 #[no_mangle]
 extern "C" fn rust_main() -> ! {
+    // Test with println!
     crate::println!("========================================");
     crate::println!("  trainOS is booting!");
     crate::println!("========================================");

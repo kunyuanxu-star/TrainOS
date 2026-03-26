@@ -3,6 +3,15 @@
 #![no_std]
 #![no_main]
 
+#[panic_handler]
+fn panic(_info: &core::panic::PanicInfo) -> ! {
+    loop {
+        unsafe {
+            core::arch::asm!("wfi");
+        }
+    }
+}
+
 #[no_mangle]
 extern "C" fn main() {
     // Write "Hello from trainOS!\n" to stdout (fd=1)

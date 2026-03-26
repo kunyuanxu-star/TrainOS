@@ -1,0 +1,23 @@
+# Build output
+target/
+
+# RustSBI firmware (built from rustsbi-qemu)
+rustsbi-qemu.bin
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+
+# Logs
+*.log
+
+# Rust-specific
+Cargo.lock
+
+# Claude
+.claude/

@@ -1,0 +1,13 @@
+[package]
+name = "os"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+riscv = { workspace = true }
+spin = { workspace = true }
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1

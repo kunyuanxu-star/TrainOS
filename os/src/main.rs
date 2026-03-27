@@ -14,3 +14,5 @@ mod fs;
 mod syscall;
 mod smp;
 mod drivers;
+mod net;
+mod thread;

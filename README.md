@@ -75,6 +75,16 @@ TrainOS/
 │       │   ├── cpu.rs   # Per-CPU structures
 │       │   ├── hart.rs  # HART management
 │       │   └── ipi.rs   # Inter-processor interrupts
+│       ├── net/         # TCP/IP network stack
+│       │   ├── mod.rs   # Core types (NetBuffer, MacAddr, IpAddr)
+│       │   ├── eth.rs   # Ethernet II framing
+│       │   ├── ipv4.rs  # IPv4 packet handling
+│       │   ├── tcp.rs   # TCP streaming protocol
+│       │   ├── udp.rs   # UDP datagram protocol
+│       │   ├── arp.rs   # Address Resolution Protocol
+│       │   └── dns.rs   # DNS client
+│       ├── thread/      # Threading support (pthread-like)
+│       │   └── mod.rs   # Thread, ThreadTable, Mutex, Cond, Barrier
 │       └── drivers/     # Device drivers
 │           ├── mod.rs   # Driver framework
 │           ├── virtio/   # VirtIO core
@@ -108,6 +118,20 @@ TrainOS/
 - **Trap Handling**: Exception and interrupt handling with proper stvec/sstatus setup
 - **System Calls**: Linux-compatible syscall interface with extensive operations
 - **SMP Support**: Per-CPU data structures, HART management, IPI infrastructure
+- **Threading (pthread-like)**:
+  - Thread creation and management (ThreadId, ThreadStatus, ThreadTable)
+  - pthread attributes (stack size, guard size, scheduling policy)
+  - Synchronization primitives: Mutex, Condition Variable, Barrier, RWLock
+  - Thread-local storage (ThreadLocalKey)
+  - Once primitive for one-time initialization
+- **Networking (TCP/IP Stack)**:
+  - Ethernet II framing (eth.rs)
+  - IPv4 packet handling with fragmentation support (ipv4.rs)
+  - TCP streaming protocol with connection state machine (tcp.rs)
+  - UDP datagram protocol (udp.rs)
+  - ARP for address resolution (arp.rs)
+  - DNS client for domain name resolution (dns.rs)
+  - Socket syscalls for Linux-compatible network API
 - **File System**:
   - VFS (Virtual File System) layer with unified inode/file interface
   - Device file system (devfs) with /dev/null, /dev/zero, /dev/random, /dev/console
@@ -224,6 +248,101 @@ struct PerCpu {
 - **Running**: Hart is running the kernel
 - **Idle**: Hart has no work and is halted
 
+## Network Stack Architecture
+
+TrainOS implements a TCP/IP network stack with the following layers:
+
+### Protocol Stack
+
+```
++-------------------+
+|     Socket API    |  (sys_socket, sys_connect, etc.)
++-------------------+
+         |
++-------------------+
+|  TCP / UDP / ICMP |  (transport layer)
++-------------------+
+         |
++-------------------+
+|      IPv4         |  (network layer)
++-------------------+
+         |
++-------------------+
+|    Ethernet       |  (data link layer)
++-------------------+
+         |
++-------------------+
+|    VirtIO-Net     |  (device driver)
++-------------------+
+```
+
+### Network Buffer (NetBuffer)
+
+The `NetBuffer` structure manages packet data with header push/pull operations:
+
+- `push_header()`: Prepend header (used when building outgoing packets)
+- `pull_header()`: Remove header (used when parsing incoming packets)
+- `header()`: Get header bytes
+- `payload()`: Get payload bytes
+
+### Protocol Modules
+
+| Module | File | Description |
+|--------|------|-------------|
+| Ethernet | `net/eth.rs` | EthHeader, EthFrame, eth_input, eth_output |
+| IPv4 | `net/ipv4.rs` | IpHeader, IP fragmentation, routing |
+| TCP | `net/tcp.rs` | TcpHeader, TcpState, connection state machine |
+| UDP | `net/udp.rs` | UdpHeader, datagram multiplexing |
+| ARP | `net/arp.rs` | ArpHeader, ArpCache for MAC resolution |
+| DNS | `net/dns.rs` | DnsClient, DNS query/response parsing |
+
+### Default Network Configuration
+
+- **Interface**: eth0
+- **MAC Address**: 52:54:00:12:34:56
+- **IP Address**: 10.0.2.15
+- **Subnet Mask**: 255.255.255.0
+- **Gateway**: 10.0.2.1
+- **MTU**: 1500 bytes
+
+### Socket Syscalls
+
+TrainOS provides Linux-compatible socket syscalls:
+
+| Syscall | Number | Description |
+|---------|--------|-------------|
+| socket | 198 | Create socket |
+| bind | 203 | Bind to port |
+| connect | 208 | Connect to remote |
+| listen | 201 | Listen for connections |
+| accept | 202 | Accept connection |
+| sendto | 206 | Send datagram |
+| recvfrom | 207 | Receive datagram |
+| shutdown | 210 | Shutdown socket |
+
+## Threading Architecture
+
+TrainOS provides a pthread-like threading interface:
+
+### Thread Management
+
+- `ThreadId`: Unique thread identifier
+- `ThreadStatus`: Ready, Running, Blocked, Exited
+- `ThreadTable`: Global thread registry (MAX_THREADS = 64)
+- `thread_create()`, `thread_exit()`, `thread_join()`, `thread_yield()`
+
+### Synchronization Primitives
+
+| Primitive | Description |
+|-----------|-------------|
+| `PthreadMutex` | Spin-based mutual exclusion |
+| `PthreadCond` | Condition variable for signaling |
+| `PthreadBarrier` | Barrier for thread synchronization |
+| `PthreadRwLock` | Read-write lock |
+| `Once` | One-time initialization |
+
+All primitives use spin-based locking for the no_std environment.
+
 ## System Call Interface
 
 The syscall module (`os/src/syscall/`) provides:
@@ -241,10 +360,12 @@ This is an educational project. The current roadmap:
 2. **Completed**: Full context switching between tasks
 3. **Completed**: VFS layer with device file system
 4. **Completed**: Extensive Linux syscall implementation
-5. **In Progress**: User mode execution with proper page tables
-6. **Planned**: Timer interrupt handling for preemption
-7. **Planned**: Disk-based file system (EasyFS)
-8. **Planned**: Async runtime for event-driven programming
+5. **Completed**: TCP/IP network stack with socket API
+6. **Completed**: pthread-like threading interface
+7. **In Progress**: User mode execution with proper page tables
+8. **Planned**: Timer interrupt handling for preemption
+9. **Planned**: Disk-based file system (EasyFS)
+10. **Planned**: Async runtime for event-driven programming
 
 ## Contributing
 

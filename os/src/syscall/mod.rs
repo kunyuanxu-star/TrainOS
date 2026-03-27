@@ -7,6 +7,7 @@ pub mod memory;
 pub mod fs;
 pub mod net;
 pub mod fd;
+pub mod newlib;
 
 use core::ops::Add;
 use spin::Mutex;

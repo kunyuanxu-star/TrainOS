@@ -8,6 +8,7 @@
 mod boot;
 pub mod console;
 pub mod error;
+mod elf;
 mod memory;
 mod process;
 mod trap;

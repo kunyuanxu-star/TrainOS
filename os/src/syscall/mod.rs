@@ -282,6 +282,10 @@ pub extern "C" fn do_syscall() {
         // Process management
         172 => sys_getpid(),                                    // getpid
         173 => sys_getppid(),                                   // getppid
+        174 => sys_getuid(),                                    // getuid
+        175 => sys_geteuid(),                                   // geteuid
+        176 => sys_getgid(),                                    // getgid
+        177 => sys_getegid(),                                   // getegid
         178 => sys_gettid(),                                    // gettid
         96 => sys_set_tid_address(get_arg0()),                  // set_tid_address
         93 => sys_exit(get_arg0()),                             // exit
@@ -309,10 +313,17 @@ pub extern "C" fn do_syscall() {
         220 => sys_clone(get_arg0(), get_arg1(), get_arg2(), get_arg3()), // clone
         221 => sys_execve(get_arg0(), get_arg1(), get_arg2()), // execve
 
-        // File operations (TrainOS custom)
-        1000 => sys_openat(get_arg0(), get_arg1(), get_arg2(), get_arg3()), // openat
-        1001 => sys_mkdirat(get_arg0(), get_arg1(), get_arg2()), // mkdirat
-        1002 => sys_unlinkat(get_arg0(), get_arg1(), get_arg2()), // unlinkat
+        // File operations (Linux standard)
+        56 => sys_openat(get_arg0(), get_arg1(), get_arg2(), get_arg3()), // openat
+        34 => sys_mkdirat(get_arg0(), get_arg1(), get_arg2()), // mkdirat
+        35 => sys_unlinkat(get_arg0(), get_arg1(), get_arg2()), // unlinkat
+        37 => sys_linkat(get_arg0(), get_arg1(), get_arg2(), get_arg3(), get_arg4()), // linkat
+        38 => sys_renameat2(get_arg0(), get_arg1(), get_arg2(), get_arg3(), get_arg4()), // renameat2
+        45 => sys_truncate(get_arg0(), get_arg1()),               // truncate
+        46 => sys_ftruncate(get_arg0(), get_arg1()),             // ftruncate
+        17 => sys_getcwd(get_arg0(), get_arg1()),                // getcwd
+        49 => sys_chdir(get_arg0()),                             // chdir
+        50 => sys_fchdir(get_arg0()),                           // fchdir
 
         // Signal handling
         129 => sys_sigaction(get_arg0(), get_arg1(), get_arg2()), // rt_sigaction
@@ -461,6 +472,49 @@ fn sys_unlinkat(_dirfd: usize, _pathname: usize, _flags: usize) -> isize {
     0
 }
 
+fn sys_linkat(_olddirfd: usize, _oldpath: usize, _newdirfd: usize, _newpath: usize, _flags: usize) -> isize {
+    crate::println!("[syscall] linkat called");
+    -1  // Not implemented
+}
+
+fn sys_renameat2(_olddirfd: usize, _oldpath: usize, _newdirfd: usize, _newpath: usize, _flags: usize) -> isize {
+    crate::println!("[syscall] renameat2 called");
+    -1  // Not implemented
+}
+
+fn sys_truncate(_path: usize, _length: usize) -> isize {
+    crate::println!("[syscall] truncate called");
+    -1  // Not implemented
+}
+
+fn sys_ftruncate(_fd: usize, _length: usize) -> isize {
+    crate::println!("[syscall] ftruncate called");
+    0
+}
+
+fn sys_getcwd(buf: usize, size: usize) -> isize {
+    if buf == 0 || size == 0 {
+        return -1;
+    }
+    // Return "/" as current directory
+    unsafe {
+        let dest = &mut *(buf as *mut u8);
+        *dest = b'/';
+        *((buf + 1) as *mut u8) = 0;
+    }
+    2 as isize
+}
+
+fn sys_chdir(_path: usize) -> isize {
+    crate::println!("[syscall] chdir called");
+    0
+}
+
+fn sys_fchdir(_fd: usize) -> isize {
+    crate::println!("[syscall] fchdir called");
+    0
+}
+
 // ============================================
 // Process Management
 // ============================================
@@ -488,6 +542,26 @@ pub fn sys_getpid() -> isize {
 /// Get parent process ID
 fn sys_getppid() -> isize {
     0  // Parent is init
+}
+
+/// Get current user ID
+fn sys_getuid() -> isize {
+    0  // Root user
+}
+
+/// Get current effective user ID
+fn sys_geteuid() -> isize {
+    0  // Root user
+}
+
+/// Get current group ID
+fn sys_getgid() -> isize {
+    0  // Root group
+}
+
+/// Get current effective group ID
+fn sys_getegid() -> isize {
+    0  // Root group
 }
 
 /// Get thread ID (same as PID in our implementation)

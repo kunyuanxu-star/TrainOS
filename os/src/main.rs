@@ -7,6 +7,7 @@
 
 mod boot;
 pub mod console;
+pub mod error;
 mod memory;
 mod process;
 mod trap;

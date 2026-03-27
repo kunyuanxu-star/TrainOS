@@ -96,7 +96,7 @@ extern "C" fn handle_trap() {
             match ex {
                 ExceptionCause::EcallFromUser | ExceptionCause::EcallFromSupervisor => {
                     // Handle system call
-                    crate::syscall::handle_syscall();
+                    crate::syscall::do_syscall();
                 }
                 _ => {
                     crate::println!("[trap] Exception occurred");

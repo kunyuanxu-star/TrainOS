@@ -125,6 +125,9 @@ extern "C" fn rust_main() -> ! {
     // Initialize memory management
     crate::memory::init();
 
+    // Initialize SMP (multi-core) support
+    crate::smp::init();
+
     // Initialize process management
     crate::process::init();
 

@@ -65,10 +65,15 @@ TrainOS/
 │       ├── process/     # Process/task management
 │       ├── fs/          # File system (EasyFS structures)
 │       ├── syscall/     # System call handling
-│       └── trap/        # Trap/interrupt handling
-└── user/                # User space programs
-    └── src/
-        └── main.rs      # Hello world program
+│       ├── trap/        # Trap/interrupt handling
+│       └── smp/         # SMP multi-core support
+│           ├── cpu.rs   # Per-CPU structures
+│           ├── hart.rs  # HART management
+│           └── ipi.rs   # Inter-processor interrupts
+├── user/                # User space programs
+│   └── src/
+│       └── main.rs      # Hello world program
+└── README.md
 ```
 
 ## Features
@@ -78,35 +83,38 @@ TrainOS/
 - **Bootstrapping**: Assembly entry point with stack setup
 - **Console I/O**: SBI-based putchar for text output
 - **Memory Management**: Sv39 page table structures and bitmap-based physical page allocator
-- **Process Management**: Task control block, scheduler infrastructure
+- **Process Management**: Task control block, scheduler infrastructure, process ID allocation
 - **Trap Handling**: Exception and interrupt handling with proper stvec/sstatus setup
-- **System Calls**: Framework for write, read, fork, exec, exit, getpid, sched_yield
+- **System Calls**: Linux-compatible syscall interface with common operations
+- **SMP Support**: Per-CPU data structures, HART management, IPI infrastructure
+- **File System Structures**: EasyFS superblock, inode, and directory entry definitions
+
+### Linux Syscall Compatibility
+
+TrainOS implements Linux-compatible syscall numbers for easier porting:
+
+| Syscall | Number | Description |
+|---------|--------|-------------|
+| read | 63 | Read from file descriptor |
+| write | 64 | Write to file descriptor |
+| exit | 93 | Terminate current process |
+| getpid | 172 | Get current process ID |
+| getppid | 173 | Get parent process ID |
+| brk | 214 | Change data segment size |
+| mmap | 222 | Memory map |
+| munmap | 215 | Unmap memory |
+| clone | 220 | Create a new process |
+| sched_yield | 124 | Yield CPU to scheduler |
 
 ### In Development
 
-- Full context switching between tasks
-- User program loading and execution
-- Timer interrupt handling for preemption
-- Virtual memory activation (currently uses identity mapping)
-- File system implementation with disk I/O
-
-## System Call Interface
-
-TrainOS implements the following system calls:
-
-| ID  | Name        | Description                    |
-|-----|-------------|--------------------------------|
-| 0   | read        | Read from file descriptor      |
-| 1   | write       | Write to file descriptor       |
-| 2   | open        | Open a file                    |
-| 3   | close       | Close a file descriptor        |
-| 4   | fork        | Create a child process         |
-| 5   | exec        | Execute a program             |
-| 6   | wait        | Wait for child process         |
-| 7   | exit        | Terminate current process      |
-| 8   | getpid      | Get current process ID         |
-| 9   | getppid     | Get parent process ID         |
-| 10  | sched_yield | Yield CPU to scheduler        |
+- **Copy-on-Write Fork**: Efficient process creation by sharing page tables until write
+- **Context Switching**: Full task switching with saved registers
+- **User Mode Execution**: Set up proper page tables and run user programs
+- **Timer Interrupts**: Preemption via supervisor timer interrupt
+- **Virtual Memory**: Activate Sv39 page table and implement memory mapping
+- **File System**: Disk I/O and file operations using EasyFS structures
+- **Async Runtime**: no_std compatible async/await infrastructure
 
 ## Memory Layout
 
@@ -115,22 +123,39 @@ For QEMU virt machine:
 - `0x80000000` - DRAM base (physical memory start)
 - `0x80200000` - Kernel text start (linked base address)
 - `0x80300000` - Kernel end (symbol `end`)
-- `0x80400000`+ - Available for physical page allocation
+- `0x80400000`+ - Available for physical page allocation and heap
 
 Virtual address space (Sv39):
 - 256GB total addressable space
 - 4KB pages with 3-level page table
 
+## SMP Architecture
+
+TrainOS supports multi-core processors through:
+
+- **Per-CPU Data**: Each CPU core has its own local data structure
+- **HART Management**: Hardware thread detection and management
+- **IPI Support**: Inter-processor interrupts for communication
+- **Thread-Local Storage**: Per-core data isolation
+
+## System Call Interface
+
+The syscall module (`os/src/syscall/`) provides:
+
+- `syscall/mod.rs`: Main syscall dispatcher with Linux-compatible numbers
+- `syscall/memory.rs`: Memory-related syscalls (mmap, munmap, mprotect, brk)
+- `syscall/task.rs`: Process/thread management structures
+- `syscall/fs.rs`: File operations infrastructure
+
 ## Development Status
 
-This is an educational project. The following are on the development roadmap:
+This is an educational project. The current roadmap:
 
-1. **Process Scheduling**: Implement round-robin scheduling with context switching
-2. **User Mode Execution**: Set up proper page tables and run user programs
-3. **Timer Interrupts**: Implement preemption via supervisor timer interrupt
-4. **Virtual Memory**: Activate Sv39 page table and implement memory mapping
-5. **File System**: Implement disk I/O and file operations
-6. **System Calls**: Complete all syscall implementations
+1. **In Progress**: COW fork implementation for efficient process creation
+2. **In Progress**: Full context switching between tasks
+3. **Planned**: User mode execution with proper page tables
+4. **Planned**: Timer interrupt handling for preemption
+5. **Planned**: Async runtime for event-driven programming
 
 ## Contributing
 

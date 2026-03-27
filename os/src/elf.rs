@@ -189,7 +189,7 @@ pub fn load_elf(data: &[u8]) -> Result<usize, ElfResult> {
     let phdr_size = header.e_phentsize as usize;
     let phdr_count = header.e_phnum as usize;
 
-    crate::println!("[elf] Program headers: {}", phdr_count);
+    crate::println!("[elf] Program headers: count loaded");
 
     // Track the lowest and highest virtual addresses for setup
     let mut min_vaddr: usize = 0xFFFFFFFFFFFFFFFF;
@@ -222,8 +222,7 @@ pub fn load_elf(data: &[u8]) -> Result<usize, ElfResult> {
     let total_size = max_vaddr - min_vaddr;
     let pages_needed = (total_size + PAGE_SIZE - 1) / PAGE_SIZE;
 
-    crate::println!("[elf] Loading {} bytes ({} pages) from vaddr {:#x}",
-        total_size, pages_needed, min_vaddr);
+    crate::println!("[elf] Loading bytes and pages from vaddr");
 
     // Load each segment and copy to physical memory (identity mapped for simplicity)
     for i in 0..phdr_count {
@@ -235,8 +234,7 @@ pub fn load_elf(data: &[u8]) -> Result<usize, ElfResult> {
             let filesz = phdr.p_filesz as usize;
             let memsz = phdr.p_memsz as usize;
 
-            crate::println!("[elf] Loading segment: vaddr={:#x}, filesz={}, memsz={}",
-                vaddr, filesz, memsz);
+            crate::println!("[elf] Loading segment");
 
             // For identity mapping, calculate physical destination
             let phys_dest = USER_BASE + (vaddr - min_vaddr);
@@ -255,13 +253,13 @@ pub fn load_elf(data: &[u8]) -> Result<usize, ElfResult> {
                 }
             }
 
-            crate::println!("[elf] Segment loaded to physical {:#x}", phys_dest);
+            crate::println!("[elf] Segment loaded to physical memory");
         }
     }
 
     // Return entry point virtual address
     // The actual execution would need to set up proper page tables and switch to user mode
-    crate::println!("[elf] Entry point: {:#x}", header.e_entry);
+    crate::println!("[elf] Entry point loaded");
     Ok(header.e_entry as usize)
 }
 

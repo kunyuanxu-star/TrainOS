@@ -6,6 +6,7 @@ pub mod task;
 pub mod memory;
 pub mod fs;
 pub mod net;
+pub mod fd;
 
 use core::ops::Add;
 use spin::Mutex;
@@ -403,30 +404,46 @@ fn advance_sepc() {
 // ============================================
 
 fn sys_read(fd: usize, buf: usize, count: usize) -> isize {
-    if fd != 0 && fd != 1 && fd != 2 {
-        return -1;
+    // For stdin (fd 0), return EOF for now (no keyboard input)
+    if fd == 0 {
+        // In a real implementation, this would read from keyboard
+        // For now, return that no data is available
+        crate::println!("[syscall] read from stdin (not implemented)");
+        0
+    } else if fd == 1 || fd == 2 {
+        // Can't read from stdout/stderr
+        -1
+    } else {
+        // File or other fd
+        crate::println!("[syscall] read from fd");
+        -1  // Not implemented yet
     }
-    // For stdin/stdout/stderr, just return 0 (no input available)
-    0
 }
 
 pub fn sys_write(fd: usize, buf: usize, count: usize) -> isize {
-    if fd != 1 && fd != 2 {
-        return -1;
-    }
-    // Write string to console
-    let mut written = 0;
-    let mut ptr = buf;
-    while written < count {
-        let c = unsafe { *(ptr as *const u8) };
-        crate::console::sbi_console_putchar(c as usize);
-        if c == b'\n' {
-            crate::console::sbi_console_putchar(b'\r' as usize);
+    // stdout = 1, stderr = 2
+    if fd == 1 || fd == 2 {
+        // Write string to console
+        let mut written = 0;
+        let mut ptr = buf;
+        while written < count {
+            let c = unsafe { *(ptr as *const u8) };
+            crate::console::sbi_console_putchar(c as usize);
+            if c == b'\n' {
+                crate::console::sbi_console_putchar(b'\r' as usize);
+            }
+            ptr += 1;
+            written += 1;
         }
-        ptr += 1;
-        written += 1;
+        written as isize
+    } else if fd == 0 {
+        // Can't write to stdin
+        -1
+    } else {
+        // File or other fd
+        crate::println!("[syscall] write to fd");
+        -1  // Not implemented yet
     }
-    written as isize
 }
 
 fn sys_dup(fd: usize) -> isize {
@@ -689,9 +706,45 @@ fn sys_clone(flags: usize, stack: usize, parent_tid: usize, child_tid: usize) ->
 
 /// Execve - execute a program
 /// a0 = filename, a1 = argv, a2 = envp
-fn sys_execve(_filename: usize, _argv: usize, _envp: usize) -> isize {
+fn sys_execve(filename: usize, _argv: usize, _envp: usize) -> isize {
+    // Try to read the filename
+    let mut name_buf = [0u8; 256];
+    let mut i = 0;
+    while i < 255 {
+        let c = unsafe { *(filename as *const u8).add(i) };
+        name_buf[i] = c;
+        if c == 0 {
+            break;
+        }
+        i += 1;
+    }
+    name_buf[i] = 0;
+
+    // Print what we're trying to execute
     crate::println!("[syscall] execve called");
-    -1  // Not implemented yet
+
+    // Try to find and load the program
+    // For now, we just check if the program exists in our "embedded" list
+    let prog_name = match core::str::from_utf8(&name_buf) {
+        Ok(s) => s,
+        Err(_) => return -1,
+    };
+
+    // Simple program table - in a real OS this would be from filesystem
+    match prog_name {
+        "/bin/hello" | "hello" => {
+            crate::println!("[syscall] Would execute hello program");
+            0
+        }
+        "/bin/shell" | "shell" => {
+            crate::println!("[syscall] Would execute shell program");
+            0
+        }
+        _ => {
+            crate::println!("[syscall] execve: program not found");
+            -1
+        }
+    }
 }
 
 // ============================================

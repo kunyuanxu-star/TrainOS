@@ -2,6 +2,7 @@
 //!
 //! Implements Sv39 virtual memory for RISC-V
 
+#[allow(non_snake_case)]
 pub mod Sv39;
 pub mod allocator;
 

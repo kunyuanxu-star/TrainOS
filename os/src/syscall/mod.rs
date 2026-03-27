@@ -103,17 +103,32 @@ fn sys_read(_fd: usize, _buf: usize, _count: usize) -> isize {
 }
 
 /// System call: write
-fn sys_write(_fd: usize, _buf: usize, count: usize) -> isize {
-    count as isize
+pub fn sys_write(fd: usize, buf: usize, count: usize) -> isize {
+    if fd != 1 {
+        return -1;
+    }
+    // Write string to console
+    let mut written = 0;
+    let mut ptr = buf;
+    while written < count {
+        let c = unsafe { *(ptr as *const u8) };
+        crate::console::sbi_console_putchar(c as usize);
+        if c == b'\n' {
+            crate::console::sbi_console_putchar(b'\r' as usize);
+        }
+        ptr += 1;
+        written += 1;
+    }
+    written as isize
 }
 
 /// System call: fork
-fn sys_fork() -> isize {
+pub fn sys_fork() -> isize {
     0  // Child returns 0
 }
 
 /// System call: exit
-fn sys_exit(_code: usize) -> ! {
+pub fn sys_exit(_code: usize) -> ! {
     crate::println!("[syscall] exit called");
     loop {
         unsafe {
@@ -123,11 +138,11 @@ fn sys_exit(_code: usize) -> ! {
 }
 
 /// System call: getpid
-fn sys_getpid() -> isize {
+pub fn sys_getpid() -> isize {
     1  // Return PID 1 for now
 }
 
 /// System call: sched_yield
-fn sys_sched_yield() -> isize {
+pub fn sys_sched_yield() -> isize {
     0
 }

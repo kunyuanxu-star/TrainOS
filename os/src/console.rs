@@ -2,7 +2,7 @@
 //! Implements console output via SBI calls
 
 /// SBI console putchar - outputs a single character
-fn sbi_console_putchar(c: usize) {
+pub fn sbi_console_putchar(c: usize) {
     unsafe {
         core::arch::asm!(
             "li a7, 1",

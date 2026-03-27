@@ -34,11 +34,35 @@ pub enum InterruptCause {
 pub fn init() {
     crate::println!("[trap] Initializing trap handling...");
     crate::println!("[trap] Setting up sstatus, stvec...");
+
+    // Set stvec to trap handler entry point
+    // Using Direct mode: stvec points to a single entry point
+    extern "C" {
+        fn __trap_entry();
+    }
+    unsafe {
+        // Set stvec: bits[1:0] = mode (0=Direct), bits[MAX:2] = address
+        let stvec_val = __trap_entry as *const () as usize;
+        core::arch::asm!("csrw stvec, {0}", in(reg) stvec_val);
+
+        // Enable interrupts - set SIE bit (Supervisor Interrupt Enable) in sstatus
+        // SIE is bit 1 in sstatus
+        let sie_bit = 1usize << 1;
+        core::arch::asm!(
+            "csrr t0, sstatus",
+            "or t0, t0, {0}",
+            "csrw sstatus, t0",
+            in(reg) sie_bit,
+            out("t0") _
+        );
+    }
+
     crate::println!("[trap] OK");
 }
 
-/// Handle a trap
-pub fn handle_trap() {
+/// Handle a trap - called from assembly trap entry
+#[no_mangle]
+extern "C" fn handle_trap() {
     #[allow(deprecated)]
     let scause = riscv::register::scause::read();
 

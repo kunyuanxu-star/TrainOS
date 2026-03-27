@@ -3,7 +3,7 @@
 //! Manages the current running task on this CPU
 
 use super::task::{TaskControlBlock, TaskId};
-use spin::Mutex;
+use spin::{Mutex, MutexGuard};
 
 /// Per-CPU state
 pub struct Processor {
@@ -14,10 +14,10 @@ pub struct Processor {
 }
 
 impl Processor {
-    pub const fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             current: None,
-            idle_task: TaskControlBlock::new(0, 0, 0),
+            idle_task: TaskControlBlock::new(0),
         }
     }
 
@@ -42,15 +42,24 @@ impl Processor {
     }
 }
 
-/// Global processor instance - lazy initialized
-static PROCESSOR: Mutex<Processor> = Mutex::new(Processor::new());
+/// Global processor instance - use Option to allow lazy initialization
+static PROCESSOR: Mutex<Option<Processor>> = Mutex::new(None);
 
 /// Get the global processor instance
-pub fn get_processor() -> &'static Mutex<Processor> {
+pub fn get_processor() -> &'static Mutex<Option<Processor>> {
     &PROCESSOR
+}
+
+/// Get or initialize the processor
+pub fn get_or_init_processor() -> MutexGuard<'static, Option<Processor>> {
+    let mut guard = PROCESSOR.lock();
+    if guard.is_none() {
+        *guard = Some(Processor::new());
+    }
+    guard
 }
 
 /// Get current task ID
 pub fn current_task_id() -> Option<TaskId> {
-    get_processor().lock().current_id()
+    get_or_init_processor().as_ref()?.current_id()
 }

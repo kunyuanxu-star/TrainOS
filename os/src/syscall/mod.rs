@@ -6,6 +6,7 @@ pub mod task;
 pub mod memory;
 pub mod fs;
 
+use core::ops::Add;
 use spin::Mutex;
 
 /// Linux syscall numbers (RISC-V Linux compatible)
@@ -128,8 +129,11 @@ pub extern "C" fn do_syscall() {
         63 => sys_read(get_arg0(), get_arg1(), get_arg2()),     // read
         64 => sys_write(get_arg0(), get_arg1(), get_arg2()),    // write
         23 => sys_dup(get_arg0()),                              // dup
+        24 => sys_dup3(get_arg0(), get_arg1(), get_arg2()),    // dup3
         57 => sys_close(get_arg0()),                            // close
         59 => sys_pipe2(get_arg0(), get_arg1()),                // pipe2
+        66 => sys_readv(get_arg0(), get_arg1(), get_arg2()),     // readv
+        67 => sys_writev(get_arg0(), get_arg1(), get_arg2()),   // writev
 
         // Process management
         172 => sys_getpid(),                                    // getpid
@@ -146,6 +150,7 @@ pub extern "C" fn do_syscall() {
         124 => sys_sched_yield(),                              // sched_yield
         98 => sys_futex(get_arg0(), get_arg1(), get_arg2(), get_arg3(), get_arg4(), get_arg5()), // futex
 
+        // Memory management
         222 => sys_mmap(get_arg0(), get_arg1(), get_arg2(), get_arg3(), get_arg4(), get_arg5()), // mmap
         215 => sys_munmap(get_arg0(), get_arg1()),             // munmap
         226 => sys_mprotect(get_arg0(), get_arg1(), get_arg2()), // mprotect
@@ -164,6 +169,39 @@ pub extern "C" fn do_syscall() {
         1000 => sys_openat(get_arg0(), get_arg1(), get_arg2(), get_arg3()), // openat
         1001 => sys_mkdirat(get_arg0(), get_arg1(), get_arg2()), // mkdirat
         1002 => sys_unlinkat(get_arg0(), get_arg1(), get_arg2()), // unlinkat
+
+        // Signal handling
+        129 => sys_sigaction(get_arg0(), get_arg1(), get_arg2()), // rt_sigaction
+        130 => sys_sigaction(get_arg0(), get_arg1(), get_arg2()), // sigaction
+        62 => sys_kill(get_arg0(), get_arg1()),                 // kill
+
+        // I/O
+        29 => sys_select(get_arg0(), get_arg1(), get_arg2(), get_arg3(), get_arg4()), // select
+        73 => sys_poll(get_arg0(), get_arg1(), get_arg2() as isize),     // poll
+        25 => sys_sendfile(get_arg0(), get_arg1(), get_arg2(), get_arg3()), // sendfile
+
+        // File control
+        72 => sys_fcntl(get_arg0(), get_arg1(), get_arg2()),     // fcntl
+        29 => sys_ioctl(get_arg0(), get_arg1(), get_arg2()),     // ioctl
+
+        // Time
+        96 => sys_gettimeofday(get_arg0(), get_arg1()),          // gettimeofday
+        201 => sys_settimeofday(get_arg0(), get_arg1()),        // settimeofday
+        113 => sys_clock_gettime(get_arg0(), get_arg1()),         // clock_gettime
+
+        // Process group
+        132 => sys_getpgrp(),                                  // getpgrp
+        154 => sys_setpgid(get_arg0(), get_arg1()),              // setpgid
+
+        // Resource usage
+        165 => sys_getrusage(get_arg0(), get_arg1()),           // getrusage
+
+        // Capability
+        90 => sys_capget(get_arg0(), get_arg1()),               // capget
+        91 => sys_capset(get_arg0(), get_arg1()),               // capset
+
+        // Debug
+        117 => sys_ptrace(get_arg0(), get_arg1(), get_arg2(), get_arg3()), // ptrace
 
         _ => {
             crate::println!("[syscall] Unknown syscall: unknown");
@@ -382,6 +420,14 @@ fn sys_sysinfo() -> isize {
 // Process Creation (Clone/Exec)
 // ============================================
 
+/// Clone flags
+pub const CLONE_VM: usize = 0x00000100;
+pub const CLONE_FS: usize = 0x00000200;
+pub const CLONE_FILES: usize = 0x00000400;
+pub const CLONE_SIGHAND: usize = 0x00008000;
+pub const CLONE_THREAD: usize = 0x00010000;
+pub const CLONE_VFORK: usize = 0x00004000;
+
 /// Clone - create a new process/thread
 /// a0 = flags, a1 = stack, a2 = parent_tidptr, a3 = child_tidptr
 fn sys_clone(flags: usize, stack: usize, parent_tid: usize, child_tid: usize) -> isize {
@@ -396,7 +442,7 @@ fn sys_clone(flags: usize, stack: usize, parent_tid: usize, child_tid: usize) ->
     let new_pid = alloc_pid();
 
     // If this is a fork (CLONE_VM not set), we would copy the page table
-    if flags & 0x00010000 == 0 {
+    if flags & CLONE_VM == 0 {
         // CLONE_VM not set - this is a fork
         crate::println!("[syscall] fork: new pid");
     }
@@ -409,6 +455,248 @@ fn sys_clone(flags: usize, stack: usize, parent_tid: usize, child_tid: usize) ->
 fn sys_execve(_filename: usize, _argv: usize, _envp: usize) -> isize {
     crate::println!("[syscall] execve called");
     -1  // Not implemented yet
+}
+
+// ============================================
+// Signal Handling
+// ============================================
+
+/// Signal numbers
+pub mod signal {
+    pub const SIGINT: usize = 2;    // Interrupt
+    pub const SIGKILL: usize = 9;    // Kill
+    pub const SIGSEGV: usize = 11;   // Segmentation fault
+    pub const SIGTERM: usize = 15;   // Terminate
+    pub const SIGCHLD: usize = 17;   // Child exited
+}
+
+/// Sigaction - signal handler
+#[repr(C)]
+pub struct Sigaction {
+    pub handler: usize,      // Signal handler function
+    pub flags: usize,        // Flags
+    pub mask: usize,         // Signal mask
+}
+
+/// Signal handler function type
+type SigHandler = extern "C" fn(signal: usize);
+
+/// Set a signal handler
+fn sys_sigaction(sig: usize, act: usize, oldact: usize) -> isize {
+    crate::println!("[syscall] sigaction called");
+    // Not fully implemented yet
+    0
+}
+
+/// Send a signal to a process
+fn sys_kill(pid: usize, sig: usize) -> isize {
+    crate::println!("[syscall] kill called");
+    0
+}
+
+/// Create a signalfd
+fn sys_signalfd(fd: usize, _mask: usize, _flags: usize) -> isize {
+    fd as isize
+}
+
+// ============================================
+// I/O Operations
+// ============================================
+
+/// Readv - read from multiple buffers
+fn sys_readv(fd: usize, iov: usize, iovcnt: usize) -> isize {
+    crate::println!("[syscall] readv called");
+    -1
+}
+
+/// Writev - write to multiple buffers
+fn sys_writev(fd: usize, iov: usize, iovcnt: usize) -> isize {
+    if fd != 1 && fd != 2 {
+        return -1;
+    }
+    // Simplified: just write the first buffer
+    let mut total = 0;
+    for i in 0..iovcnt.min(16) {
+        let ptr = unsafe { *(iov.add(i) as *const usize) };
+        let len = unsafe { *((iov.add(i) + 8) as *const usize) };
+        let mut p = ptr;
+        for _ in 0..len {
+            let c = unsafe { *(p as *const u8) };
+            crate::console::sbi_console_putchar(c as usize);
+            if c == b'\n' {
+                crate::console::sbi_console_putchar(b'\r' as usize);
+            }
+            p += 1;
+        }
+        total += len;
+    }
+    total as isize
+}
+
+/// Sendfile - transfer data between file descriptors
+fn sys_sendfile(out_fd: usize, in_fd: usize, _offset: usize, count: usize) -> isize {
+    if out_fd != 1 && out_fd != 2 {
+        return -1;
+    }
+    // Simplified: just read from in_fd and write to out_fd
+    // In a real implementation, we would do actual file I/O
+    let buf = 0x10000 as *mut u8; // dummy buffer
+    let mut written = 0;
+    for _ in 0..count.min(4096) {
+        unsafe {
+            let c = *buf.add(written);
+            crate::console::sbi_console_putchar(c as usize);
+        }
+        written += 1;
+    }
+    written as isize
+}
+
+/// Poll - wait for events on file descriptors
+fn sys_poll(fds: usize, nfds: usize, timeout: isize) -> isize {
+    crate::println!("[syscall] poll called");
+    // Simplified: return 0 (no events)
+    0
+}
+
+/// Select - synchronous I/O multiplexing
+fn sys_select(nfds: usize, readfds: usize, writefds: usize, exceptfds: usize, timeout: usize) -> isize {
+    crate::println!("[syscall] select called");
+    0
+}
+
+// ============================================
+// File Descriptor Operations
+// ============================================
+
+/// Create a file descriptor with specific flags
+fn sys_dup3(oldfd: usize, newfd: usize, flags: usize) -> isize {
+    crate::println!("[syscall] dup3 called");
+    if oldfd <= 2 {
+        oldfd as isize
+    } else {
+        -1
+    }
+}
+
+/// fcntl - file control
+fn sys_fcntl(fd: usize, cmd: usize, arg: usize) -> isize {
+    match cmd {
+        0 => fd as isize,  // F_DUPFD
+        1 => {
+            // F_SETFD
+            0
+        }
+        2 => {
+            // F_GETFD
+            0
+        }
+        3 => {
+            // F_SETFL
+            0
+        }
+        4 => {
+            // F_GETFL
+            0
+        }
+        _ => -1,
+    }
+}
+
+/// ioctl - device control
+fn sys_ioctl(fd: usize, request: usize, arg: usize) -> isize {
+    crate::println!("[syscall] ioctl called");
+    0
+}
+
+// ============================================
+// Time Operations
+// ============================================
+
+/// Get current time
+fn sys_gettimeofday(tv: usize, tz: usize) -> isize {
+    crate::println!("[syscall] gettimeofday called");
+    // Return dummy values
+    if tv != 0 {
+        unsafe {
+            *(tv as *mut u64) = 0;      // seconds
+            *((tv + 8) as *mut u64) = 0; // microseconds
+        }
+    }
+    0
+}
+
+/// Set the time
+fn sys_settimeofday(_tv: usize, _tz: usize) -> isize {
+    -1
+}
+
+/// Clock_gettime
+fn sys_clock_gettime(clockid: usize, tp: usize) -> isize {
+    crate::println!("[syscall] clock_gettime called");
+    if tp != 0 {
+        unsafe {
+            *((tp) as *mut u64) = 0;      // seconds
+            *((tp + 8) as *mut u64) = 0; // nanoseconds
+        }
+    }
+    0
+}
+
+// ============================================
+// Process Information
+// ============================================
+
+/// Get process group ID
+fn sys_getpgrp() -> isize {
+    0  // PGID is 0 for init
+}
+
+/// Set process group ID
+fn sys_setpgid(pid: usize, pgid: usize) -> isize {
+    crate::println!("[syscall] setpgid called");
+    0
+}
+
+/// Getrusage - get resource usage
+fn sys_getrusage(who: usize, usage: usize) -> isize {
+    crate::println!("[syscall] getrusage called");
+    // Return zeros
+    if usage != 0 {
+        let ptr = usage as *mut u64;
+        for i in 0..16 {
+            unsafe { ptr.write(0); }
+        }
+    }
+    0
+}
+
+/// Uptime - get system uptime
+fn sys_uptime() -> isize {
+    0
+}
+
+// ============================================
+// Capability Operations
+// ============================================
+
+/// Capability check (simplified - always return 0)
+fn sys_capget(_hdr: usize, _data: usize) -> isize {
+    0
+}
+
+fn sys_capset(_hdr: usize, _data: usize) -> isize {
+    -1
+}
+
+// ============================================
+// Debug / Tracing
+// ============================================
+
+/// ptrace - process trace
+fn sys_ptrace(request: usize, pid: usize, addr: usize, data: usize) -> isize {
+    crate::println!("[syscall] ptrace called");
+    -1
 }
 
 // Re-export for other modules

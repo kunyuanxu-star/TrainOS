@@ -5,6 +5,7 @@
 pub mod task;
 pub mod processor;
 pub mod scheduler;
+pub mod context;
 
 /// Initialize the process management subsystem
 pub fn init() {

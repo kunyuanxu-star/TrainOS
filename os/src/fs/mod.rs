@@ -1,12 +1,21 @@
 //! File system module
 //!
-//! Implements a simple file system
+//! Provides VFS layer and file system implementations
 
 pub mod easyfs;
+pub mod vfs;
+pub mod devfs;
 
 /// Initialize the file system
 pub fn init() {
     crate::println!("[fs] Initializing file system...");
-    crate::println!("[fs] Mounting root filesystem...");
-    crate::println!("[fs] OK");
+
+    // Initialize VFS
+    vfs::init();
+
+    // Initialize device file system
+    crate::println!("[fs] Mounting devfs...");
+    // devfs would be mounted here in a full implementation
+
+    crate::println!("[fs] File system initialized");
 }

@@ -99,10 +99,29 @@ pub static PAGE_ALLOCATOR: Mutex<BitmapPageAllocator> = Mutex::new(BitmapPageAll
 
 /// Initialize the physical memory allocator
 pub fn init() {
+    crate::println!("[allocator] Initializing physical page allocator...");
     // Page allocator is statically initialized
 }
 
 /// Get the global page allocator
 pub fn get_allocator() -> &'static Mutex<BitmapPageAllocator> {
     &PAGE_ALLOCATOR
+}
+
+/// Allocate a single physical page, returns physical address
+pub fn alloc_page() -> Option<usize> {
+    let mut allocator = PAGE_ALLOCATOR.lock();
+    allocator.alloc()
+}
+
+/// Free a physical page
+pub fn free_page(addr: usize) {
+    let mut allocator = PAGE_ALLOCATOR.lock();
+    allocator.free(addr);
+}
+
+/// Allocate multiple contiguous pages
+pub fn alloc_pages(count: usize) -> Option<usize> {
+    let mut allocator = PAGE_ALLOCATOR.lock();
+    allocator.alloc_pages(count)
 }

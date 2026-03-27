@@ -82,39 +82,61 @@ TrainOS/
 
 - **Bootstrapping**: Assembly entry point with stack setup
 - **Console I/O**: SBI-based putchar for text output
-- **Memory Management**: Sv39 page table structures and bitmap-based physical page allocator
-- **Process Management**: Task control block, scheduler infrastructure, process ID allocation
+- **Memory Management**:
+  - Sv39 virtual memory with 3-level page tables and 4KB pages
+  - Physical page allocator (bitmap-based)
+  - Copy-on-Write (COW) page support for efficient fork()
+  - Virtual address translation and mapping
+- **Process Management**:
+  - Task control block with task ID, status, stack pointers
+  - TaskManager for managing multiple tasks
+  - Processor management with per-CPU state
+  - Process ID allocation
+- **Context Switching**: Full task switching with saved/restored callee-saved registers (s0-s11, sp, ra)
 - **Trap Handling**: Exception and interrupt handling with proper stvec/sstatus setup
-- **System Calls**: Linux-compatible syscall interface with common operations
+- **System Calls**: Linux-compatible syscall interface with extensive operations
 - **SMP Support**: Per-CPU data structures, HART management, IPI infrastructure
-- **File System Structures**: EasyFS superblock, inode, and directory entry definitions
+- **File System**:
+  - VFS (Virtual File System) layer with unified inode/file interface
+  - Device file system (devfs) with /dev/null, /dev/zero, /dev/random, /dev/console
+  - EasyFS structures (superblock, inode, directory entries)
 
 ### Linux Syscall Compatibility
 
 TrainOS implements Linux-compatible syscall numbers for easier porting:
 
-| Syscall | Number | Description |
-|---------|--------|-------------|
-| read | 63 | Read from file descriptor |
-| write | 64 | Write to file descriptor |
-| exit | 93 | Terminate current process |
-| getpid | 172 | Get current process ID |
-| getppid | 173 | Get parent process ID |
-| brk | 214 | Change data segment size |
-| mmap | 222 | Memory map |
-| munmap | 215 | Unmap memory |
-| clone | 220 | Create a new process |
-| sched_yield | 124 | Yield CPU to scheduler |
+| Category | Syscalls |
+|----------|----------|
+| Process | exit, exit_group, getpid, gettid, getppid, clone, wait4, waitid, execve, ptrace |
+| Memory | brk, mmap, munmap, mprotect, madvise, mlock, munlock |
+| I/O | read, write, readv, writev, poll, select, sendfile, pipe2, dup, dup3 |
+| File | openat, close, linkat, unlinkat, mkdirat, readlinkat |
+| Signal | sigaction, kill, sigreturn |
+| Time | nanosleep, clock_gettime, gettimeofday |
+| Process Control | sched_yield, set_tid_address, futex, sysinfo |
+| Misc | ioctl, fcntl, prlimit64 |
 
-### In Development
+### VFS Layer
 
-- **Copy-on-Write Fork**: Efficient process creation by sharing page tables until write
-- **Context Switching**: Full task switching with saved registers
-- **User Mode Execution**: Set up proper page tables and run user programs
-- **Timer Interrupts**: Preemption via supervisor timer interrupt
-- **Virtual Memory**: Activate Sv39 page table and implement memory mapping
-- **File System**: Disk I/O and file operations using EasyFS structures
-- **Async Runtime**: no_std compatible async/await infrastructure
+The VFS layer provides a unified interface for different file systems:
+
+- `VfsInode`: Trait for inode operations (attr, read_at, write_at, open, close)
+- `VfsFile`: Trait for open file operations (read, write, seek, close)
+- `VfsFilesystem`: Trait for mounted file systems (name, root_inode, sync)
+- `FileType`: File type enumeration (RegularFile, Directory, CharDevice, etc.)
+- `FileAttr`: File attribute structure with inode information
+- `DirEntry`: Directory entry structure
+
+### Sv39 Page Table
+
+Complete Sv39 implementation with:
+
+- 3-level page table structure (512 entries per level)
+- PTEFlags: valid, read, write, execute, user, global, accessed, dirty
+- VPN/PPN manipulation functions
+- Virtual address translation
+- COW page detection and breaking
+- Kernel page table with identity mapping for 0x80000000+
 
 ## Memory Layout
 
@@ -126,17 +148,60 @@ For QEMU virt machine:
 - `0x80400000`+ - Available for physical page allocation and heap
 
 Virtual address space (Sv39):
-- 256GB total addressable space
+- 256GB total addressable space (48-bit virtual addresses)
 - 4KB pages with 3-level page table
+- User space: 0x0000000000000000 - 0x0000003FFFFFFFFF (128GB)
+- Kernel space: 0xFFFFFFC000000000+ (upper half)
+
+### Sv39 Address Format
+
+```
+63      54 53    45 44    36 35    27 26     18 17     9 8      0
+|--------|--------|--------|--------|--------|--------|--------|--------|
+   unused    VPN[2]    VPN[1]    VPN[0]   page offset
+              |          |         |
+              +-----+----+---------+
+                    |
+              Points to PPN[2] of next level
+```
+
+### Page Table Entry Format
+
+```
+63      54 53    28 27    19 18    10 9     8 7       1 0
+|--------|--------|--------|--------|--------|--------|--------|--------|
+   PPN[2]    PPN[1]    PPN[0]   reserved   RSW    flags
+```
+
+PTE Flags:
+- V (valid), R (read), W (write), X (execute), U (user), G (global)
+- A (accessed), D (dirty)
 
 ## SMP Architecture
 
 TrainOS supports multi-core processors through:
 
-- **Per-CPU Data**: Each CPU core has its own local data structure
-- **HART Management**: Hardware thread detection and management
-- **IPI Support**: Inter-processor interrupts for communication
-- **Thread-Local Storage**: Per-core data isolation
+- **Per-CPU Data**: Each CPU core has its own local data structure (`PerCpu`)
+- **HART Management**: Hardware thread detection and management (`Hart` struct)
+- **IPI Support**: Inter-processor interrupts for communication (`IpiMsg`)
+- **Thread-Local Storage**: Per-core data isolation via hartid indexing
+
+### Per-CPU Structure
+
+```rust
+struct PerCpu {
+    hartid: usize,        // Hardware thread ID
+    current_task: Option<TaskId>,  // Currently running task
+    kernel_sp: usize,    // Kernel stack pointer
+    user_sp: usize,      // User stack pointer
+}
+```
+
+### HART States
+
+- **Offline**: Hart is not yet started
+- **Running**: Hart is running the kernel
+- **Idle**: Hart has no work and is halted
 
 ## System Call Interface
 
@@ -151,11 +216,14 @@ The syscall module (`os/src/syscall/`) provides:
 
 This is an educational project. The current roadmap:
 
-1. **In Progress**: COW fork implementation for efficient process creation
-2. **In Progress**: Full context switching between tasks
-3. **Planned**: User mode execution with proper page tables
-4. **Planned**: Timer interrupt handling for preemption
-5. **Planned**: Async runtime for event-driven programming
+1. **Completed**: Sv39 page table with COW support
+2. **Completed**: Full context switching between tasks
+3. **Completed**: VFS layer with device file system
+4. **Completed**: Extensive Linux syscall implementation
+5. **In Progress**: User mode execution with proper page tables
+6. **Planned**: Timer interrupt handling for preemption
+7. **Planned**: Disk-based file system (EasyFS)
+8. **Planned**: Async runtime for event-driven programming
 
 ## Contributing
 

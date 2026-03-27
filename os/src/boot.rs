@@ -58,7 +58,8 @@ core::arch::global_asm!(
     "    sd t0, 248(sp)",
     "    csrr t0, sstatus",
     "    sd t0, 256(sp)",
-    // Call the Rust trap handler
+    // Call the Rust trap handler with sp as argument (pointer to trap frame)
+    "    mv a0, sp",
     "    call handle_trap",
     // Restore registers
     "    ld t0, 256(sp)",

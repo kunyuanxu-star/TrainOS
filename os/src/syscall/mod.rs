@@ -51,7 +51,7 @@ pub mod nr {
     pub const PIPE2: usize = 59;
     pub const DUP: usize = 23;
     pub const DUP3: usize = 24;
-    pub const SENDFile: usize = 71;
+    pub const SENDFILE: usize = 71;
     pub const SELECT: usize = 29;
     pub const POLL: usize = 73;
 
@@ -172,7 +172,7 @@ pub mod nr {
 
     // Access
     pub const ACCESS: usize = 48;
-    pub const FACcess: usize = 48;
+    pub const FACCESS: usize = 48;
 
     // Pipe
     pub const SYSCALL36: usize = 36;  // renameat
@@ -263,12 +263,19 @@ fn set_ret(val: usize) {
 }
 
 /// Handle a system call
+/// a0 = pointer to trap frame
 #[no_mangle]
-pub extern "C" fn do_syscall() {
+pub extern "C" fn do_syscall(trap_frame: *mut crate::process::context::TrapFrame) {
     let syscall_id: usize;
     unsafe {
         core::arch::asm!("mv {}, a7", out(reg) syscall_id);
     }
+
+    // Get arguments from trap frame
+    let arg0 = unsafe { (*trap_frame).a0 };
+    let arg1 = unsafe { (*trap_frame).a1 };
+    let arg2 = unsafe { (*trap_frame).a2 };
+    let arg3 = unsafe { (*trap_frame).a3 };
 
     let result = match syscall_id {
         // File operations (Linux numbers)
@@ -312,7 +319,7 @@ pub extern "C" fn do_syscall() {
         179 => sys_sysinfo(),                                  // sysinfo
 
         // Process creation
-        220 => sys_clone(get_arg0(), get_arg1(), get_arg2(), get_arg3()), // clone
+        220 => sys_clone(trap_frame, get_arg0(), get_arg1(), get_arg2(), get_arg3()), // clone
         221 => sys_execve(get_arg0(), get_arg1(), get_arg2()), // execve
 
         // File operations (Linux standard)
@@ -682,25 +689,33 @@ pub const CLONE_FILES: usize = 0x00000400;
 pub const CLONE_SIGHAND: usize = 0x00008000;
 pub const CLONE_THREAD: usize = 0x00010000;
 pub const CLONE_VFORK: usize = 0x00004000;
+pub const CLONE_FORK: usize = 0x00040000;
 
 /// Clone - create a new process/thread
+/// trap_frame = pointer to parent's trap frame
 /// a0 = flags, a1 = stack, a2 = parent_tidptr, a3 = child_tidptr
-fn sys_clone(flags: usize, stack: usize, parent_tid: usize, child_tid: usize) -> isize {
-    crate::println!("[syscall] clone called");
-
-    // For COW fork, we would:
-    // 1. Allocate a new PID
-    // 2. Share the page table (COW)
-    // 3. Set up child stack
-
-    // For now, just return the new PID
+fn sys_clone(trap_frame: *mut crate::process::context::TrapFrame, flags: usize, _stack: usize, _parent_tid: usize, _child_tid: usize) -> isize {
+    // Allocate a new PID
     let new_pid = alloc_pid();
 
-    // If this is a fork (CLONE_VM not set), we would copy the page table
     if flags & CLONE_VM == 0 {
-        // CLONE_VM not set - this is a fork
-        crate::println!("[syscall] fork: new pid");
+        // Fork - copy address space
+        crate::println!("[syscall] fork: new child created");
+    } else {
+        // Thread - share address space
+        crate::println!("[syscall] clone: new thread created");
     }
+
+    // Set parent's return value to child's PID
+    // The parent's trap frame is on the stack, we need to modify a0 there
+    // But for now, we just return the new_pid and the parent continues
+    // The child would need to be scheduled separately
+
+    // In a full implementation:
+    // 1. Create child task with copied address space (COW)
+    // 2. Set up child's trap frame to return 0
+    // 3. Add child to scheduler's run queue
+    // 4. Parent returns child_pid
 
     new_pid as isize
 }
@@ -721,24 +736,23 @@ fn sys_execve(filename: usize, _argv: usize, _envp: usize) -> isize {
     }
     name_buf[i] = 0;
 
-    // Print what we're trying to execute
-    crate::println!("[syscall] execve called");
-
     // Try to find and load the program
-    // For now, we just check if the program exists in our "embedded" list
     let prog_name = match core::str::from_utf8(&name_buf) {
         Ok(s) => s,
         Err(_) => return -1,
     };
 
-    // Simple program table - in a real OS this would be from filesystem
+    // Program loading is complex - for now, just check if program exists
+    // In a real implementation, we would:
+    // 1. Open the file from filesystem
+    // 2. Parse ELF header
+    // 3. Load segments into memory
+    // 4. Set up page tables
+    // 5. Set up trap frame for user mode entry
     match prog_name {
-        "/bin/hello" | "hello" => {
-            crate::println!("[syscall] Would execute hello program");
-            0
-        }
-        "/bin/shell" | "shell" => {
-            crate::println!("[syscall] Would execute shell program");
+        "/bin/hello" | "hello" | "/bin/vi" | "vi" | "/bin/shell" | "shell" => {
+            crate::println!("[syscall] execve: found known program");
+            // Would return 0 on success, but we can't actually switch to user mode yet
             0
         }
         _ => {

@@ -200,10 +200,13 @@ _wait4:
     ret
 
 # _clone - Create a new process/thread
+# a0 = flags, a1 = stack, a2 = parent_tid, a3 = child_tid
 .global _clone
 .type _clone, @function
 _clone:
-    syscall1 SYS_clone, a0
+    # Linux clone syscall: a7=220, args: a0=flags, a1=stack, a2=parent_tid, a3=child_tid
+    li a7, 220
+    ecall
     ret
 
 # _execve - Execute program

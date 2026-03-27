@@ -5,6 +5,7 @@
 pub mod easyfs;
 pub mod vfs;
 pub mod devfs;
+pub mod ramfs;
 
 /// Initialize the file system
 pub fn init() {
@@ -12,6 +13,9 @@ pub fn init() {
 
     // Initialize VFS
     vfs::init();
+
+    // Initialize RAM filesystem
+    ramfs::init();
 
     // Initialize device file system
     crate::println!("[fs] Mounting devfs...");

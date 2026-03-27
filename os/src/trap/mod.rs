@@ -61,8 +61,9 @@ pub fn init() {
 }
 
 /// Handle a trap - called from assembly trap entry
+/// a0 = pointer to trap frame on stack
 #[no_mangle]
-extern "C" fn handle_trap() {
+extern "C" fn handle_trap(trap_frame: *mut crate::process::context::TrapFrame) {
     #[allow(deprecated)]
     let scause = riscv::register::scause::read();
 
@@ -95,8 +96,8 @@ extern "C" fn handle_trap() {
         TrapCause::Exception(ex) => {
             match ex {
                 ExceptionCause::EcallFromUser | ExceptionCause::EcallFromSupervisor => {
-                    // Handle system call
-                    crate::syscall::do_syscall();
+                    // Handle system call - pass trap frame pointer
+                    crate::syscall::do_syscall(trap_frame);
                 }
                 _ => {
                     crate::println!("[trap] Exception occurred");

@@ -117,19 +117,23 @@ const PAGE_SIZE: usize = 4096;
 pub struct TaskManager {
     /// Maximum number of tasks
     max_tasks: usize,
-    /// Task array
-    tasks: &'static mut [Option<TaskControlBlock>],
+    /// Task array (owned, not borrowed)
+    tasks: [Option<TaskControlBlock>; 64],
 }
 
 impl TaskManager {
-    /// Create a new task manager
-    pub fn new() -> Self {
-        // This is a simplified version - in a real OS we would
-        // allocate this from kernel heap
-        static mut TASK_SPACE: [Option<TaskControlBlock>; 64] = [None; 64];
+    /// Create a new task manager (const-compatible)
+    pub const fn new() -> Self {
         Self {
             max_tasks: 64,
-            tasks: unsafe { &mut TASK_SPACE },
+            tasks: [None; 64],
+        }
+    }
+
+    /// Initialize the idle task at index 0
+    pub fn init_idle_task(&mut self) {
+        if self.tasks[0].is_none() {
+            self.tasks[0] = Some(TaskControlBlock::new(0));
         }
     }
 

@@ -7,11 +7,37 @@ pub mod processor;
 pub mod scheduler;
 pub mod context;
 
+use spin::Mutex;
+use task::TaskManager;
+use scheduler::Scheduler;
+
+/// Global task manager - const so can be used in static initialization
+static TASK_MANAGER: Mutex<TaskManager> = Mutex::new(TaskManager::new());
+
+/// Global scheduler - const so can be used in static initialization
+static GLOBAL_SCHEDULER: Mutex<Scheduler> = Mutex::new(Scheduler::new());
+
 /// Initialize the process management subsystem
 pub fn init() {
     crate::println!("[process] Initializing process management...");
+
+    // Initialize task manager with idle task
+    let mut manager = TASK_MANAGER.lock();
+    manager.init_idle_task();
+    crate::println!("[process] Task manager initialized");
+
     crate::println!("[process] Creating idle task...");
     crate::println!("[process] OK");
+}
+
+/// Get the global task manager
+pub fn get_task_manager() -> &'static Mutex<TaskManager> {
+    &TASK_MANAGER
+}
+
+/// Get the global scheduler
+pub fn get_scheduler() -> &'static Mutex<Scheduler> {
+    &GLOBAL_SCHEDULER
 }
 
 /// Run the first user process

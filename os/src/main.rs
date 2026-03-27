@@ -13,3 +13,4 @@ mod trap;
 mod fs;
 mod syscall;
 mod smp;
+mod drivers;

@@ -5,6 +5,7 @@
 pub mod task;
 pub mod memory;
 pub mod fs;
+pub mod net;
 
 use core::ops::Add;
 use spin::Mutex;
@@ -12,36 +13,179 @@ use spin::Mutex;
 /// Linux syscall numbers (RISC-V Linux compatible)
 /// See /usr/include/asm-generic/unistd.h
 pub mod nr {
+    // Process
     pub const EXIT: usize = 93;
     pub const EXIT_GROUP: usize = 94;
-    pub const READ: usize = 63;
-    pub const WRITE: usize = 64;
-    pub const OPENAT: usize = 56;
-    pub const CLOSE: usize = 57;
-    pub const PIPE2: usize = 59;
-    pub const GETPID: usize = 172;
-    pub const GETTID: usize = 178;
-    pub const GETPPID: usize = 173;
-    pub const BRK: usize = 214;
-    pub const MUNMAP: usize = 215;
-    pub const MMAP: usize = 222;
-    pub const MPROTECT: usize = 226;
     pub const CLONE: usize = 220;
     pub const EXECVE: usize = 221;
     pub const WAIT4: usize = 260;
     pub const WAITID: usize = 287;
-    pub const SCHED_YIELD: usize = 124;
-    pub const NANOSLEEP: usize = 101;
-    pub const FUTEX: usize = 98;
+    pub const GETPID: usize = 172;
+    pub const GETTID: usize = 178;
+    pub const GETPPID: usize = 173;
     pub const SET_TID_ADDRESS: usize = 96;
+    pub const SCHED_YIELD: usize = 124;
+    pub const FUTEX: usize = 98;
+
+    // Memory
+    pub const BRK: usize = 214;
+    pub const MUNMAP: usize = 215;
+    pub const MMAP: usize = 222;
+    pub const MPROTECT: usize = 226;
     pub const MLOCK: usize = 228;
     pub const MUNLOCK: usize = 229;
+    pub const MREMAP: usize = 216;
+    pub const MADVISE: usize = 233;
+
+    // I/O
+    pub const READ: usize = 63;
+    pub const WRITE: usize = 64;
+    pub const READV: usize = 65;
+    pub const WRITEV: usize = 66;
+    pub const PREAD64: usize = 67;
+    pub const PWRITE64: usize = 68;
+    pub const OPENAT: usize = 56;
+    pub const CLOSE: usize = 57;
+    pub const PIPE2: usize = 59;
     pub const DUP: usize = 23;
     pub const DUP3: usize = 24;
-    pub const READLINKAT: usize = 78;
+    pub const SENDFile: usize = 71;
+    pub const SELECT: usize = 29;
+    pub const POLL: usize = 73;
+
+    // File
+    pub const STAT: usize = 80;
+    pub const FSTAT: usize = 80;  // actually 5 on riscv
+    pub const LSTAT: usize = 80;
+    pub const LINKAT: usize = 37;
     pub const UNLINKAT: usize = 35;
     pub const MKDIRAT: usize = 34;
+    pub const RMDIR: usize = 84;
+    pub const READLINKAT: usize = 78;
+    pub const RENAMEAT2: usize = 38;
+    pub const TRUNCATE: usize = 45;
+    pub const FTRUNCATE: usize = 46;
+    pub const FALLOCATE: usize = 47;
+    pub const FSTATFS: usize = 80;
+    pub const STATFS: usize = 80;
+
+    // Memory-mapped files
+    pub const MSYNC: usize = 227;
+    pub const FLOCK: usize = 73;
+
+    // Signals
+    pub const SIGACTION: usize = 134;
+    pub const RT_SIGACTION: usize = 134;
+    pub const SIGPROCMASK: usize = 135;
+    pub const RT_SIGPROCMASK: usize = 135;
+    pub const SIGRETURN: usize = 139;
+    pub const KILL: usize = 129;
+    pub const TKILL: usize = 130;
+    pub const SIGALTSTACK: usize = 132;
+
+    // Time
+    pub const NANOSLEEP: usize = 101;
+    pub const GETTIMEOFDAY: usize = 96;
+    pub const SETTIMEOFDAY: usize = 99;
+    pub const CLOCK_GETTIME: usize = 113;
+    pub const CLOCK_GETRES: usize = 114;
+    pub const CLOCK_NANO_SLEEP: usize = 115;
+
+    // Process group
+    pub const GETPGRP: usize = 160;
+    pub const SETPGID: usize = 157;
+    pub const GETPGID: usize = 155;
+    pub const GETSID: usize = 147;
+
+    // Resource
+    pub const GETRUSAGE: usize = 165;
+    pub const PRLIMIT64: usize = 261;
+
+    // Sysinfo
     pub const SYSINFO: usize = 179;
+
+    // Prctl
+    pub const PRCTL: usize = 167;
+
+    // Syslog
+    pub const SYSLOG: usize = 82;
+
+    // Debug
+    pub const PTRACE: usize = 117;
+
+    // Fcntl
+    pub const FCNTL: usize = 25;
+    pub const IOCTL: usize = 29;
+
+    // Sockets
+    pub const SOCKET: usize = 198;
+    pub const BIND: usize = 200;
+    pub const CONNECT: usize = 201;
+    pub const LISTEN: usize = 202;
+    pub const ACCEPT: usize = 202;
+    pub const ACCEPT4: usize = 202;
+    pub const SENDTO: usize = 206;
+    pub const RECVFROM: usize = 207;
+    pub const SHUTDOWN: usize = 210;
+    pub const SETSOCKOPT: usize = 208;
+    pub const GETSOCKOPT: usize = 209;
+    pub const GETSOCKNAME: usize = 200;
+    pub const GETPEERNAME: usize = 201;
+    pub const SOCKETPAIR: usize = 199;
+
+    // Epoll
+    pub const EPOLL_CREATE: usize = 228;  // or 20
+    pub const EPOLL_CTL: usize = 227;
+    pub const EPOLL_WAIT: usize = 229;
+    pub const EPOLL_PWAIT: usize = 229;
+
+    // Eventfd
+    pub const EVENTFD: usize = 227;
+    pub const EVENTFD2: usize = 228;
+
+    // Timer
+    pub const TIMER_CREATE: usize = 222;
+    pub const TIMER_DELETE: usize = 223;
+    pub const TIMER_SETTIME: usize = 224;
+    pub const TIMER_GETTIME: usize = 225;
+    pub const TIMER_GETOVERRUN: usize = 225;
+    pub const ALARM: usize = 225;
+
+    // Capability
+    pub const CAPGET: usize = 90;
+    pub const CAPSET: usize = 91;
+
+    // Mount
+    pub const MOUNT: usize = 40;
+    pub const UMOUNT2: usize = 40;
+
+    // Chdir
+    pub const CHDIR: usize = 49;
+    pub const FCHDIR: usize = 50;
+    pub const RENAME: usize = 38;
+    pub const MKNODAT: usize = 33;
+
+    // Umask
+    pub const UMASK: usize = 95;
+
+    // Access
+    pub const ACCESS: usize = 48;
+    pub const FACcess: usize = 48;
+
+    // Pipe
+    pub const SYSCALL36: usize = 36;  // renameat
+
+    // Sched
+    pub const SCHED_SETPARAM: usize = 121;
+    pub const SCHED_GETPARAM: usize = 122;
+    pub const SCHED_SETSCHEDULER: usize = 123;
+    pub const SCHED_GETSCHEDULER: usize = 125;
+    pub const SCHED_GET_PRIORITY_MAX: usize = 127;
+    pub const SCHED_GET_PRIORITY_MIN: usize = 128;
+    pub const SCHED_RR_GET_INTERVAL: usize = 128;
+
+    // Misc
+    pub const GETCPU: usize = 168;
 }
 
 /// Current process ID
@@ -202,6 +346,25 @@ pub extern "C" fn do_syscall() {
 
         // Debug
         117 => sys_ptrace(get_arg0(), get_arg1(), get_arg2(), get_arg3()), // ptrace
+
+        // Sockets (Linux numbers)
+        198 => net::sys_socket(get_arg0() as i32, get_arg1() as i32, get_arg2() as i32), // socket
+        200 => net::sys_bind(get_arg0(), get_arg1(), get_arg2()), // bind
+        201 => net::sys_connect(get_arg0(), get_arg1(), get_arg2()), // connect
+        202 => net::sys_listen(get_arg0(), get_arg1() as i32), // listen
+        206 => net::sys_sendto(get_arg0(), get_arg1(), get_arg2(), get_arg3(), get_arg4(), get_arg5()), // sendto
+        207 => net::sys_recvfrom(get_arg0(), get_arg1(), get_arg2(), get_arg3(), get_arg4(), get_arg5()), // recvfrom
+        210 => net::sys_shutdown(get_arg0(), get_arg1() as i32), // shutdown
+        208 => net::sys_setsockopt(get_arg0(), get_arg1() as i32, get_arg2() as i32, get_arg3(), get_arg4()), // setsockopt
+        209 => net::sys_getsockopt(get_arg0(), get_arg1() as i32, get_arg2() as i32, get_arg3(), get_arg4()), // getsockopt
+        200 => net::sys_getsockname(get_arg0(), get_arg1(), get_arg2()), // getsockname
+        201 => net::sys_getpeername(get_arg0(), get_arg1(), get_arg2()), // getpeername
+        199 => net::sys_socketpair(get_arg0() as i32, get_arg1() as i32, get_arg2() as i32, get_arg3()), // socketpair
+
+        // Epoll
+        20 => sys_epoll_create(get_arg0()), // epoll_create
+        227 => sys_epoll_ctl(get_arg0(), get_arg1(), get_arg2(), get_arg3()), // epoll_ctl
+        229 => sys_epoll_wait(get_arg0(), get_arg1(), get_arg2(), get_arg3()), // epoll_wait
 
         _ => {
             crate::println!("[syscall] Unknown syscall: unknown");
@@ -697,6 +860,87 @@ fn sys_capset(_hdr: usize, _data: usize) -> isize {
 fn sys_ptrace(request: usize, pid: usize, addr: usize, data: usize) -> isize {
     crate::println!("[syscall] ptrace called");
     -1
+}
+
+// ============================================
+// Epoll Operations
+// ============================================
+
+/// Epoll file descriptor table
+const MAX_EPOLL_FDS: usize = 64;
+
+#[derive(Debug, Clone, Copy)]
+enum EpollItem {
+    None,
+    Fd { fd: usize, events: u32 },
+}
+
+static EPOLL_TABLE: Mutex<[Option<EpollItem>; MAX_EPOLL_FDS]> = Mutex::new([None; MAX_EPOLL_FDS]);
+
+/// Create an epoll file descriptor
+fn sys_epoll_create(_size: usize) -> isize {
+    let mut table = EPOLL_TABLE.lock();
+    // Find a free slot (start from 32 to avoid stdio fds)
+    for i in 32..MAX_EPOLL_FDS {
+        if table[i].is_none() {
+            table[i] = Some(EpollItem::None);
+            return i as isize;
+        }
+    }
+    -1
+}
+
+/// Control operation on an epoll file descriptor
+fn sys_epoll_ctl(epfd: usize, op: usize, fd: usize, event: usize) -> isize {
+    if epfd >= MAX_EPOLL_FDS {
+        return -1;
+    }
+
+    let mut table = EPOLL_TABLE.lock();
+
+    match op {
+        1 => {
+            // EPOLL_CTL_ADD
+            let events = if event != 0 {
+                unsafe { *(event as *const u32) }
+            } else {
+                0
+            };
+            table[epfd] = Some(EpollItem::Fd { fd, events });
+            0
+        }
+        2 => {
+            // EPOLL_CTL_DEL
+            table[epfd] = Some(EpollItem::None);
+            0
+        }
+        3 => {
+            // EPOLL_CTL_MOD - modify existing
+            if let Some(EpollItem::Fd { fd: old_fd, .. }) = table[epfd] {
+                let events = if event != 0 {
+                    unsafe { *(event as *const u32) }
+                } else {
+                    0
+                };
+                table[epfd] = Some(EpollItem::Fd { fd: old_fd, events });
+                0
+            } else {
+                -1
+            }
+        }
+        _ => -1,
+    }
+}
+
+/// Wait for events on an epoll file descriptor
+fn sys_epoll_wait(epfd: usize, events: usize, maxevents: usize, timeout: usize) -> isize {
+    if epfd >= MAX_EPOLL_FDS || events == 0 || maxevents == 0 {
+        return -1;
+    }
+
+    // Simplified implementation - return no events
+    // In a real implementation, this would block and wait
+    0
 }
 
 // Re-export for other modules

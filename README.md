@@ -63,13 +63,25 @@ TrainOS/
 │       ├── console.rs   # SBI-based console output
 │       ├── memory/      # Memory management (Sv39, allocator)
 │       ├── process/     # Process/task management
-│       ├── fs/          # File system (EasyFS structures)
-│       ├── syscall/     # System call handling
+│       ├── fs/          # File system (VFS, devfs, easyfs)
+│       ├── syscall/     # System call handling (Linux-compatible)
+│       │   ├── mod.rs   # Main dispatcher
+│       │   ├── memory.rs # Memory syscalls
+│       │   ├── fs.rs    # File syscalls
+│       │   ├── task.rs  # Task-related syscalls
+│       │   └── net.rs   # Socket syscalls
 │       ├── trap/        # Trap/interrupt handling
-│       └── smp/         # SMP multi-core support
-│           ├── cpu.rs   # Per-CPU structures
-│           ├── hart.rs  # HART management
-│           └── ipi.rs   # Inter-processor interrupts
+│       ├── smp/         # SMP multi-core support
+│       │   ├── cpu.rs   # Per-CPU structures
+│       │   ├── hart.rs  # HART management
+│       │   └── ipi.rs   # Inter-processor interrupts
+│       └── drivers/     # Device drivers
+│           ├── mod.rs   # Driver framework
+│           ├── virtio/   # VirtIO core
+│           ├── virtio_blk.rs # Block device driver
+│           ├── virtio_net.rs  # Network device driver
+│           ├── pci.rs    # PCI bus driver
+│           └── interrupt.rs # Interrupt handling
 ├── user/                # User space programs
 │   └── src/
 │       └── main.rs      # Hello world program
@@ -100,6 +112,11 @@ TrainOS/
   - VFS (Virtual File System) layer with unified inode/file interface
   - Device file system (devfs) with /dev/null, /dev/zero, /dev/random, /dev/console
   - EasyFS structures (superblock, inode, directory entries)
+- **Device Drivers**:
+  - VirtIO block device driver (virtio-blk) for storage
+  - VirtIO network device driver (virtio-net) for networking
+  - PCI bus driver for device discovery
+  - Interrupt handling infrastructure (PLIC support)
 
 ### Linux Syscall Compatibility
 
@@ -108,13 +125,17 @@ TrainOS implements Linux-compatible syscall numbers for easier porting:
 | Category | Syscalls |
 |----------|----------|
 | Process | exit, exit_group, getpid, gettid, getppid, clone, wait4, waitid, execve, ptrace |
-| Memory | brk, mmap, munmap, mprotect, madvise, mlock, munlock |
-| I/O | read, write, readv, writev, poll, select, sendfile, pipe2, dup, dup3 |
-| File | openat, close, linkat, unlinkat, mkdirat, readlinkat |
-| Signal | sigaction, kill, sigreturn |
-| Time | nanosleep, clock_gettime, gettimeofday |
-| Process Control | sched_yield, set_tid_address, futex, sysinfo |
-| Misc | ioctl, fcntl, prlimit64 |
+| Memory | brk, mmap, munmap, mprotect, mremap, madvise, mlock, munlock, msync |
+| I/O | read, write, readv, writev, poll, select, sendfile, pipe2, dup, dup3, pread64, pwrite64 |
+| File | openat, close, linkat, unlinkat, mkdirat, readlinkat, renameat2, truncate, ftruncate |
+| Socket | socket, bind, connect, listen, accept, sendto, recvfrom, shutdown, setsockopt, getsockopt, getsockname, getpeername, socketpair |
+| Epoll | epoll_create, epoll_ctl, epoll_wait |
+| Signal | sigaction, sigprocmask, sigreturn, kill, tkill, sigaltstack |
+| Time | nanosleep, clock_gettime, clock_getres, gettimeofday, settimeofday |
+| Process Control | sched_yield, sched_setparam, sched_getparam, set_tid_address, futex, sysinfo |
+| Process Group | getpgrp, setpgid, getpgid, getsid |
+| Resource | getrusage, prlimit64 |
+| Misc | ioctl, fcntl, prctl, syslog, getcpu |
 
 ### VFS Layer
 

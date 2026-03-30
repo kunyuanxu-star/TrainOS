@@ -105,40 +105,8 @@ pub fn set_timer_relative(us: u64) {
 
 /// Initialize the CLINT timer
 pub fn clint_init() {
-    // Set a short initial timer using SBI - this will fire after 10 seconds
-    // Using SBI ensures RustSBI handles the timer properly
+    // Set a short initial timer - this will fire after 10 seconds
     set_timer_relative(10_000_000); // 10 seconds
-
-    // Print "timer armed\n"
-    unsafe {
-        core::arch::asm!(
-            "li a7, 1",
-            "li a0, 116", // 't'
-            "ecall",
-            "li a0, 105", // 'i'
-            "ecall",
-            "li a0, 109", // 'm'
-            "ecall",
-            "li a0, 101", // 'e'
-            "ecall",
-            "li a0, 114", // 'r'
-            "ecall",
-            "li a0, 32",  // ' '
-            "ecall",
-            "li a0, 97",  // 'a'
-            "ecall",
-            "li a0, 114", // 'r'
-            "ecall",
-            "li a0, 109", // 'm'
-            "ecall",
-            "li a0, 101", // 'e'
-            "ecall",
-            "li a0, 100", // 'd'
-            "ecall",
-            "li a0, 10",  // '\n'
-            "ecall"
-        );
-    }
 
     // Enable timer interrupt in sie (Supervisor Interrupt Enable)
     // STIE bit (bit 5) enables supervisor timer interrupts

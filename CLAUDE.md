@@ -15,13 +15,14 @@ TrainOS is an educational operating system written in Rust for RISC-V 64-bit arc
 - Basic fork (sys_clone) implementation with COW semantics
 - TaskControlBlock with kernel stack + trap frame allocation
 - Trap handling, timer interrupts, syscall dispatch
-- VFS, RAM filesystem, TCP/IP stack (stub)
+- VFS, RAM filesystem
 - Basic syscalls: read, write, getpid, sched_yield, exit, clone
 - User mode return via return_to_user function (integrated in scheduler)
 - Sv39 page table with COW support
+- ELF binary loader infrastructure
 
 **Working**: Debug mode runs successfully with full boot sequence.
-**Issue**: Timer interrupt does not fire in QEMU with RustSBI-QEMU. This prevents preemption and multi-tasking. The OS boots and runs but idle task stays on wfi.
+**Issue**: Timer interrupt does not fire in QEMU with RustSBI-QEMU. This prevents preemption and multi-tasking.
 
 ### Build & Run
 
@@ -62,11 +63,12 @@ RustSBI → Boot 1 → memory init → SMP init (SXCIE) →
 | `os/src/process/context.rs` | TrapFrame, TaskContext, context_switch, return_to_user asm |
 | `os/src/process/scheduler.rs` | MLFQ scheduler implementation |
 | `os/src/trap/mod.rs` | Trap handling, timer interrupts, handle_trap |
-| `os/src/syscall/mod.rs` | Syscall dispatcher, sys_clone, sys_execve, sys_exit |
+| `os/src/syscall/mod.rs` | Syscall dispatcher, sys_clone, sys_execve (stub) |
 | `os/src/memory/Sv39.rs` | Sv39 page table, COW support, handle_cow_page |
 | `os/src/drivers/interrupt.rs` | CLINT timer, PLIC interrupts |
 | `os/src/vfs/mod.rs` | Virtual File System |
 | `os/src/fs/ramfs.rs` | RAM filesystem |
+| `os/src/elf.rs` | ELF binary loader |
 
 ## Context Switch Flow
 
@@ -84,7 +86,7 @@ RustSBI → Boot 1 → memory init → SMP init (SXCIE) →
 6. Set sstatus (SPP=0 for user mode, SPIE=1, SIE=0)
 7. Return to user mode via sret
 
-### Scheduler Flow (timer interrupt)
+### Scheduler Flow (timer interrupt - NOT WORKING)
 1. Timer interrupt fires → trap entry saves registers to trap frame
 2. handle_trap() called → CURRENT_TRAP_FRAME set
 3. handle_timer_interrupt() → schedule_preempt()
@@ -94,26 +96,28 @@ RustSBI → Boot 1 → memory init → SMP init (SXCIE) →
 
 ## Timer Interrupt Issue
 
-The timer interrupt is set via SBI_SET_TIMER but does not fire in QEMU with RustSBI-QEMU 0.2.0-alpha.10. This prevents preemption and multi-tasking.
+**Status**: NOT WORKING - Timer interrupt does not fire in QEMU with RustSBI-QEMU 0.2.0-alpha.10
 
 **Symptoms**: OS boots and runs idle task on wfi, but timer interrupt never fires despite being armed.
 
-**Possible causes**:
-- QEMU virt CLINT emulation issue with RustSBI
-- SBI timer function not properly emulated by RustSBI-QEMU
-- Timebase/clock configuration issue
-- Interrupt delegation issue (mideleg.stimer should be set)
+**Debug Attempts**:
+- Tried direct CLINT access (set_mtimecmp)
+- Tried SBI_SET_TIMER via ecall
+- Verified STIE bit is set in sie
+- Verified mideleg has stimer delegated
+- QEMU debug output shows only supervisor_ecall, no timer interrupts
+
+**Root Cause**: Likely QEMU/RustSBI compatibility issue with CLINT timer emulation.
 
 **Workaround**: Currently using wfi (wait for interrupt) in idle task, but timer-based preemption doesn't work.
 
 ## Next Steps (Priority Order)
 
-1. **Debug timer interrupt** - Timer doesn't fire, prevents preemption
-2. **Install RISC-V toolchain** - Build user programs
-3. **ELF loading** - Load ELF binaries into user space
-4. **Test user mode return** - Verify return_to_user works correctly
+1. **Install RISC-V toolchain** - Build user programs (blocker: no toolchain)
+2. **Complete sys_execve implementation** - Load ELF into user address space
+3. **Test user mode return** - Verify return_to_user works correctly
+4. **Debug timer interrupt** - Or find alternative scheduling approach
 5. **Fix release mode** - spin::Mutex optimization issue
-6. **Complete COW fork** - Full copy-on-write fork implementation
 
 ## Development Notes
 
@@ -121,29 +125,24 @@ The timer interrupt is set via SBI_SET_TIMER but does not fire in QEMU with Rust
 - Debug mode: All boot stages complete, scheduler runs, idle task runs on wfi
 - Release mode: Hang in process::init(), likely spin::Mutex issue
 
-### Timer Interrupt Debugging
-- Using SBI_SET_TIMER (a7=0, a0=target_time) via ecall
-- Also tried direct CLINT access (set_mtimecmp)
-- Timer armed but never fires in QEMU
-- Only supervisor_ecall seen in QEMU interrupt debug output (-d int)
-- mideleg shows stimer is delegated: ssoft, stimer, sext (0x1666)
+### RISC-V Toolchain
+- Not installed yet
+- Need to run `user/build-toolchain.sh` to download prebuilt toolchain
+- Or install via package manager: `riscv64-unknown-elf-gcc`
 
-### spin::Mutex Issues
-Release mode hang seems related to spin::Mutex at opt-level=2. Possible causes:
-- Memory ordering issues
-- Lock elision optimization
-- Static initialization order (FIO)
-- Try opt-level=1 or different Mutex crate
-
-### User Mode Return Requirements
-1. Valid page table with user mappings (Sv39::UserAddressSpace)
-2. Trap frame set up: sepc=user_pc, sstatus spp=0, spie=1, sie=0
-3. User stack pointer set (user_sp)
-4. SATP register set to user's page table (satp)
-5. Return via sret (using return_to_user assembly)
+### User Program Structure
+User programs in `user/`:
+- `user/src/hello.rs` - Hello world program
+- `user/src/shell.rs` - Simple shell
+- `user/src/vi.rs` - VI-like text editor
 
 ### Syscall Implementation
-- sys_clone: Creates child process with COW address space, child returns 0, parent returns child PID
-- sys_exit: Halts the process (currently just loops on wfi)
-- sys_getpid: Returns current PID from CURRENT_PID
-- sys_sched_yield: Signals schedule request (but needs timer interrupt to work)
+- sys_clone: Creates child process with COW address space
+- sys_execve: Stub - needs full implementation to load ELF
+- sys_exit: Halts the process
+- sys_sched_yield: Signals schedule request
+
+### ELF Loading
+- ELF structures defined in `elf.rs` (Elf64Header, Elf64Phdr, etc.)
+- `load_elf()` function exists but not integrated with sys_execve
+- Needs: read from VFS, parse headers, set up page table, copy segments

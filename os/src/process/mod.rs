@@ -331,7 +331,6 @@ pub fn run_first_process() -> ! {
 
 /// Idle task - runs when no other tasks are runnable
 fn idle_task() {
-    // Simple idle task
     loop {
         unsafe {
             core::arch::asm!("wfi");

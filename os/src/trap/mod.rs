@@ -85,14 +85,12 @@ extern "C" fn handle_trap(trap_frame: *mut crate::process::context::TrapFrame) {
     // Also set the kernel stack top
     {
         let mut kstack = crate::process::KERNEL_STACK_TOP.lock();
-        // The sp at this point is the kernel stack pointer (after the trap frame was pushed)
-        // We need to get it from the trap frame that was passed
-        // Actually, we need to get the sp from the context
         unsafe {
             let sp = (*trap_frame).sp;
             *kstack = Some(sp);
         }
     }
+
     #[allow(deprecated)]
     let scause = riscv::register::scause::read();
 

@@ -17,12 +17,21 @@ TrainOS is an educational operating system written in Rust for RISC-V 64-bit arc
 - Trap handling, timer interrupts, syscall dispatch
 - VFS, RAM filesystem
 - Basic syscalls: read, write, getpid, sched_yield, exit, clone
-- User mode return via return_to_user function (integrated in scheduler)
+- User mode return via return_to_user function (FIXED: register offsets bug)
 - Sv39 page table with COW support
 - ELF binary loader infrastructure
+- RISC-V toolchain installed (xPack v12.3.0-2)
+- User programs compiled (hello, shell, vi) for RISC-V
 
 **Working**: Debug mode runs successfully with full boot sequence.
 **Issue**: Timer interrupt does not fire in QEMU with RustSBI-QEMU.
+
+### Recent Fixes
+
+**return_to_user register offsets (2026-03-30)**:
+- Fixed bug in `os/src/process/context.rs` where assembly was loading registers with incorrect offsets
+- TrapFrame layout: ra(0), sp(8), gp(16), tp(24), t0(32), ... but assembly was loading gp from offset 8, tp from 16, etc.
+- This bug would have caused incorrect register values when returning to user mode
 
 ### Build & Run
 
@@ -99,11 +108,26 @@ RustSBI → Boot 1 → memory init → SMP init (SXCIE) →
 
 ## Next Steps (Priority Order)
 
-1. **Install RISC-V toolchain** - Build user programs (no toolchain yet)
-2. **Complete sys_execve implementation** - Load ELF into user address space
-3. **Test user mode return** - Verify return_to_user works correctly
-4. **Investigate timer issue further** - Try different QEMU versions or OpenSBI
-5. **Fix release mode** - spin::Mutex optimization issue
+1. **Complete sys_execve implementation** - Load ELF into user address space
+2. **Test user mode return** - Verify return_to_user works correctly
+3. **Investigate timer issue further** - Try different QEMU versions or OpenSBI
+4. **Fix release mode** - spin::Mutex optimization issue
+
+## RISC-V Toolchain (INSTALLED)
+
+**xPack RISC-V Embedded GCC v12.3.0-2** installed at:
+- `downloads/xpack-riscv-none-elf-gcc-12.3.0-2/`
+
+**User programs** (built for riscv64gc-unknown-none-elf):
+- `target/riscv64gc-unknown-none-elf/release/hello` (ELF)
+- `target/riscv64gc-unknown-none-elf/release/hello.bin` (raw binary, 6.6KB)
+
+**Toolchain usage**:
+```bash
+export PATH="$PWD/downloads/xpack-riscv-none-elf-gcc-12.3.0-2/bin:$PATH"
+riscv-none-elf-gcc --version
+riscv-none-elf-objcopy -O binary input.elf output.bin
+```
 
 ## Development Notes
 
@@ -111,10 +135,10 @@ RustSBI → Boot 1 → memory init → SMP init (SXCIE) →
 - Debug mode: All boot stages complete, scheduler runs, idle task runs on wfi
 - Release mode: Hang in process::init(), likely spin::Mutex issue
 
-### RISC-V Toolchain
-- Not installed yet
-- Need to run `user/build-toolchain.sh` to download prebuilt toolchain
-- Or install via package manager: `riscv64-unknown-elf-gcc`
+### RISC-V Toolchain (xPack v12.3.0-2)
+- Toolchain installed at `downloads/xpack-riscv-none-elf-gcc-12.3.0-2/`
+- Binaries: riscv-none-elf-gcc, riscv-none-elf-as, riscv-none-elf-ld, riscv-none-elf-objcopy, etc.
+- User programs can be built with: `cargo build --target riscv64gc-unknown-none-elf --release -p user`
 
 ### QEMU Configuration
 - Machine: virt

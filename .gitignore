@@ -1,8 +1,12 @@
 # Build output
 target/
 
-# RustSBI firmware (built from rustsbi-qemu)
+# RustSBI firmware (large binary, built externally)
 rustsbi-qemu.bin
+rustsbi-qemu-new.bin
+
+# Downloads (large toolchain ~460MB)
+downloads/
 
 # IDE
 .vscode/

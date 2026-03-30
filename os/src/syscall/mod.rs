@@ -640,8 +640,9 @@ fn sys_nanosleep(_req: usize, _rem: usize) -> isize {
 
 /// Yield the CPU to scheduler
 pub fn sys_sched_yield() -> isize {
-    // For now, just return success
-    // In a real implementation, this would reschedule
+    // Signal that we want to yield - this will trigger a reschedule
+    // The actual switch happens in the trap return path
+    crate::process::request_schedule();
     0
 }
 

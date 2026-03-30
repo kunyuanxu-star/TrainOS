@@ -97,17 +97,55 @@ pub fn set_mtimecmp(value: u64) {
 
 /// Set timer to fire after `us` microseconds
 pub fn set_timer_relative(us: u64) {
-    let mtime = get_mtime();
-    set_mtimecmp(mtime.wrapping_add(us * 10));  // 10 MHz in QEMU virt
+    // Use SBI to set timer - more portable
+    // SBI legacy timer function: a7=0, a0=target time
+    let target = get_mtime().wrapping_add(us * 10);  // 10 MHz in QEMU virt
+    unsafe {
+        core::arch::asm!(
+            "li a7, 0",
+            "mv a0, {0}",
+            "ecall",
+            in(reg) target
+        );
+    }
 }
 
 /// Initialize the CLINT timer
 pub fn clint_init() {
-    crate::println!("[clint] Initializing CLINT timer");
+    // Set a short initial timer using SBI - this will fire after 10 seconds
+    // Using SBI ensures RustSBI handles the timer properly
+    set_timer_relative(10_000_000); // 10 seconds
 
-    // Set a short initial timer to test timer interrupts
-    // This will fire soon after boot
-    set_timer_relative(1_000_000); // 1 second initial timer
+    // Print "timer armed\n"
+    unsafe {
+        core::arch::asm!(
+            "li a7, 1",
+            "li a0, 116", // 't'
+            "ecall",
+            "li a0, 105", // 'i'
+            "ecall",
+            "li a0, 109", // 'm'
+            "ecall",
+            "li a0, 101", // 'e'
+            "ecall",
+            "li a0, 114", // 'r'
+            "ecall",
+            "li a0, 32",  // ' '
+            "ecall",
+            "li a0, 97",  // 'a'
+            "ecall",
+            "li a0, 114", // 'r'
+            "ecall",
+            "li a0, 109", // 'm'
+            "ecall",
+            "li a0, 101", // 'e'
+            "ecall",
+            "li a0, 100", // 'd'
+            "ecall",
+            "li a0, 10",  // '\n'
+            "ecall"
+        );
+    }
 
     // Enable timer interrupt in sie (Supervisor Interrupt Enable)
     // STIE bit (bit 5) enables supervisor timer interrupts
@@ -121,8 +159,6 @@ pub fn clint_init() {
         sie |= 1 << 1;  // SSIE = Supervisor Software Interrupt Enable
         core::arch::asm!("csrw sie, {}", in(reg) sie);
     }
-
-    crate::println!("[clint] Timer interrupts enabled");
 }
 
 /// Clear the pending timer interrupt

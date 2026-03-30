@@ -169,6 +169,55 @@ impl TaskControlBlock {
         }
     }
 
+    /// Set up the trap frame for kernel thread entry
+    pub fn setup_kernel_trap_frame(&mut self, entry: usize) {
+        if !self.trap_frame.is_null() {
+            // For kernel thread, we need sepc = entry point
+            // sp = kernel_sp (top of kernel stack)
+            // sstatus = SPP = 1 (supervisor mode), SPIE = 1 (enable interrupts)
+            let tf = TrapFrame {
+                ra: 0,
+                sp: self.kernel_sp,
+                gp: 0,
+                tp: 0,
+                t0: 0,
+                t1: 0,
+                t2: 0,
+                s0: 0,
+                s1: 0,
+                a0: 0,
+                a1: 0,
+                a2: 0,
+                a3: 0,
+                a4: 0,
+                a5: 0,
+                a6: 0,
+                a7: 0,
+                s2: 0,
+                s3: 0,
+                s4: 0,
+                s5: 0,
+                s6: 0,
+                s7: 0,
+                s8: 0,
+                s9: 0,
+                s10: 0,
+                s11: 0,
+                t3: 0,
+                t4: 0,
+                t5: 0,
+                t6: 0,
+                sepc: entry,
+                sstatus: 0x00040022, // SPP = 1 (supervisor), SPIE = 1, SIE = 1
+            };
+            unsafe {
+                core::ptr::write(self.trap_frame, tf);
+            }
+            // Also set user_pc as the entry point (for TaskContext initialization)
+            self.user_pc = entry;
+        }
+    }
+
     /// Add a child process ID
     pub fn add_child(&mut self, pid: usize) {
         if self.child_count < 16 {

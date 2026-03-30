@@ -53,18 +53,18 @@ core::arch::global_asm!(
     "    sd t4, 216(sp)",
     "    sd t5, 224(sp)",
     "    sd t6, 232(sp)",
-    // Save sp at offset 240, sepc at 248, sstatus at 256 (but we sub 256 so -8)
+    // Save sepc at offset 240, sstatus at offset 248 (matches TrapFrame struct)
     "    csrr t0, sepc",
-    "    sd t0, 248(sp)",
+    "    sd t0, 240(sp)",
     "    csrr t0, sstatus",
-    "    sd t0, 256(sp)",
+    "    sd t0, 248(sp)",
     // Call the Rust trap handler with sp as argument (pointer to trap frame)
     "    mv a0, sp",
     "    call handle_trap",
-    // Restore registers
-    "    ld t0, 256(sp)",
-    "    csrw sstatus, t0",
+    // Restore registers (note: sepc was saved at 240, sstatus at 248)
     "    ld t0, 248(sp)",
+    "    csrw sstatus, t0",
+    "    ld t0, 240(sp)",
     "    csrw sepc, t0",
     "    ld ra, 0(sp)",
     "    ld gp, 8(sp)",

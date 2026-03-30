@@ -130,6 +130,15 @@ extern "C" fn handle_trap(trap_frame: *mut crate::process::context::TrapFrame) {
                 ExceptionCause::EcallFromUser | ExceptionCause::EcallFromSupervisor => {
                     // Handle system call - pass trap frame pointer
                     crate::syscall::do_syscall(trap_frame);
+
+                    // Check if a schedule was requested (e.g., from sys_sched_yield)
+                    if *crate::process::SCHEDULE_REQUESTED.lock() {
+                        *crate::process::SCHEDULE_REQUESTED.lock() = false;
+                        // Perform the actual task switch
+                        crate::process::do_schedule(trap_frame);
+                        // Don't return normally - do_schedule has switched context
+                        return;
+                    }
                 }
                 ExceptionCause::PageFault => {
                     // Handle page fault - for COW fork and demand paging
@@ -146,7 +155,6 @@ extern "C" fn handle_trap(trap_frame: *mut crate::process::context::TrapFrame) {
             match intr {
                 InterruptCause::SupervisorTimer => {
                     // Timer interrupt - trigger scheduler preemption
-                    crate::println!("[trap] Timer interrupt");
                     handle_timer_interrupt();
                 }
                 InterruptCause::SupervisorSoftware => {

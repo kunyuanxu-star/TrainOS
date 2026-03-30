@@ -236,12 +236,12 @@ core::arch::global_asm!(
 /// a0 = pointer to old TaskContext (saves current state)
 /// a1 = pointer to new TaskContext (restores new state)
 #[inline(always)]
-pub unsafe fn context_switch(_old_ctx: *mut TaskContext, _new_ctx: *const TaskContext) {
-    core::arch::asm!(
-        "context_switch",
-        in("a0") _old_ctx,
-        in("a1") _new_ctx,
-    );
+pub unsafe fn context_switch(old_ctx: *mut TaskContext, new_ctx: *const TaskContext) {
+    // Call the assembly function defined in global_asm
+    extern "C" {
+        fn context_switch(old_ctx: *mut TaskContext, new_ctx: *const TaskContext);
+    }
+    context_switch(old_ctx, new_ctx);
 }
 
 /// Initialize a new task's context for first run
@@ -266,7 +266,7 @@ pub fn prepare_trap_frame(tf: &mut TrapFrame, pc: usize, sp: usize, a0: usize) {
 #[inline(always)]
 pub unsafe fn return_to_user(tf: *mut TrapFrame, satp: usize, sp: usize, pc: usize) {
     core::arch::asm!(
-        "return_to_user",
+        "call return_to_user",
         in("a0") tf,
         in("a1") satp,
         in("a2") sp,

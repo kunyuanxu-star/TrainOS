@@ -20,6 +20,7 @@ pub enum ExceptionCause {
     StoreFault,
     EcallFromUser,
     EcallFromSupervisor,
+    PageFault,
 }
 
 /// Interrupt causes
@@ -57,6 +58,9 @@ pub fn init() {
         );
     }
 
+    // Initialize CLINT timer
+    crate::drivers::interrupt::clint_init();
+
     crate::println!("[trap] OK");
 }
 
@@ -75,6 +79,9 @@ extern "C" fn handle_trap(trap_frame: *mut crate::process::context::TrapFrame) {
             3 => ExceptionCause::Breakpoint,
             5 => ExceptionCause::LoadFault,
             7 => ExceptionCause::StoreFault,
+            12 => ExceptionCause::PageFault,
+            13 => ExceptionCause::PageFault,
+            15 => ExceptionCause::PageFault,
             8 => ExceptionCause::EcallFromUser,
             9 => ExceptionCause::EcallFromSupervisor,
             _ => ExceptionCause::InstructionFault,
@@ -99,6 +106,11 @@ extern "C" fn handle_trap(trap_frame: *mut crate::process::context::TrapFrame) {
                     // Handle system call - pass trap frame pointer
                     crate::syscall::do_syscall(trap_frame);
                 }
+                ExceptionCause::PageFault => {
+                    // Handle page fault - for COW fork and demand paging
+                    crate::println!("[trap] Page fault occurred");
+                    handle_page_fault(trap_frame);
+                }
                 _ => {
                     crate::println!("[trap] Exception occurred");
                     loop {}
@@ -108,12 +120,57 @@ extern "C" fn handle_trap(trap_frame: *mut crate::process::context::TrapFrame) {
         TrapCause::Interrupt(intr) => {
             match intr {
                 InterruptCause::SupervisorTimer => {
-                    // Timer interrupt - for preemption
+                    // Timer interrupt - trigger scheduler preemption
+                    crate::println!("[trap] Timer interrupt");
+                    handle_timer_interrupt();
                 }
-                _ => {
-                    // Other interrupts
+                InterruptCause::SupervisorSoftware => {
+                    // Software interrupt (IPI) - could be used for cross-CPU signals
+                    crate::println!("[trap] Software interrupt");
+                }
+                InterruptCause::SupervisorExternal => {
+                    // External interrupt (PLIC) - device interrupt
+                    handle_external_interrupt();
                 }
             }
         }
+    }
+}
+
+/// Handle timer interrupt - trigger task scheduling
+fn handle_timer_interrupt() {
+    // Re-arm the timer for the next quantum
+    // Use 10ms time slice
+    crate::drivers::interrupt::set_timer_relative(10_000);  // 10ms in microseconds
+
+    // Request the scheduler to preempt the current task
+    crate::process::schedule_preempt();
+}
+
+/// Handle external (device) interrupt via PLIC
+fn handle_external_interrupt() {
+    // Claim the interrupt from PLIC
+    let irq = crate::drivers::interrupt::plic_claim();
+
+    if irq != 0 {
+        // Handle the IRQ
+        crate::drivers::interrupt::handle_irq(irq);
+
+        // Complete the interrupt
+        crate::drivers::interrupt::plic_complete(irq);
+    }
+}
+
+/// Handle page fault - for COW fork and demand paging
+fn handle_page_fault(_trap_frame: *mut crate::process::context::TrapFrame) {
+    #[allow(deprecated)]
+    let stval: usize = riscv::register::stval::read();
+
+    crate::println!("[trap] Page fault occurred");
+
+    // Try to handle COW page
+    if !crate::memory::Sv39::handle_cow_page(stval) {
+        crate::println!("[trap] Failed to handle page fault");
+        loop {}
     }
 }

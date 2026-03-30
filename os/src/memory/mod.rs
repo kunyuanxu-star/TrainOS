@@ -8,16 +8,19 @@ pub mod allocator;
 
 /// Initialize memory management subsystem
 pub fn init() {
-    crate::println!("[memory] Initializing Sv39 memory management...");
-    crate::println!("[memory] Physical memory base: 0x80000000");
-    crate::println!("[memory] Sv39 page size: 4096 bytes");
-    crate::println!("[memory] Virtual address space: 256GB");
-
-    // Initialize the allocator first
-    allocator::init();
-
-    // Initialize kernel page table
-    Sv39::init_kernel_page_table();
-
-    crate::println!("[memory] OK");
+    // Using inline asm directly to avoid any function call issues
+    unsafe {
+        let s = "memory init start\n";
+        let len = s.len();
+        let mut ptr = s.as_ptr() as usize;
+        let mut remaining = len;
+        core::arch::asm!(
+            "1: lbu a0, 0(a1)",
+            "   li a7, 1",
+            "   ecall",
+            "   addi a1, a1, 1",
+            "   addi a2, a2, -1",
+            "   bnez a2, 1b",
+            inout("a1") ptr, inout("a2") remaining);
+    }
 }

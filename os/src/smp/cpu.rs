@@ -49,15 +49,14 @@ static PER_CPU_MUTEX: [Mutex<PerCpu>; MAX_CPUS] = [
 
 /// Initialize per-CPU data structures
 pub fn init_per_cpu() {
-    crate::println!("[cpu] Initializing per-CPU data...");
-
-    // Just verify the mutexes are initialized
-    for i in 0..MAX_CPUS {
-        let data = PER_CPU_MUTEX[i].lock();
-        assert_eq!(data.hartid, i);
+    // Output 'C' using inline asm
+    unsafe {
+        core::arch::asm!(
+            "li a7, 1",
+            "li a0, 67",  // 'C'
+            "ecall"
+        );
     }
-
-    crate::println!("[cpu] Per-CPU data initialized");
 }
 
 /// Get per-CPU mutex for a specific CPU

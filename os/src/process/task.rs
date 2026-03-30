@@ -11,6 +11,7 @@ pub enum TaskStatus {
     Running,
     Blocked,
     Exited,
+    Zombie,  // Task exited but not yet reaped by parent
 }
 
 /// Task ID (PID)
@@ -54,6 +55,12 @@ pub struct TaskControlBlock {
     pub heap_start: usize,
     /// Kernel heap end
     pub heap_end: usize,
+    /// Is this a user task (vs kernel thread)?
+    pub is_user_task: bool,
+    /// Children list (PIDs of child processes)
+    pub children: [Option<usize>; 16],
+    /// Number of children
+    pub child_count: usize,
 }
 
 impl TaskControlBlock {
@@ -69,8 +76,11 @@ impl TaskControlBlock {
             exit_code: None,
             ctx: TaskContext::new(0, 0),
             trap_frame: core::ptr::null_mut(),
-            heap_start: 0,
-            heap_end: 0,
+            heap_start: crate::syscall::memory::INITIAL_BRK,
+            heap_end: crate::syscall::memory::INITIAL_BRK,
+            is_user_task: false,
+            children: [None; 16],
+            child_count: 0,
         }
     }
 
@@ -81,6 +91,7 @@ impl TaskControlBlock {
         task.user_sp = sp;
         task.satp = satp;
         task.status = TaskStatus::Ready;
+        task.is_user_task = true;
         task
     }
 
@@ -96,6 +107,11 @@ impl TaskControlBlock {
         self.status = TaskStatus::Blocked;
     }
 
+    pub fn set_zombie(&mut self, code: i32) {
+        self.status = TaskStatus::Zombie;
+        self.exit_code = Some(code);
+    }
+
     pub fn set_exited(&mut self, code: i32) {
         self.status = TaskStatus::Exited;
         self.exit_code = Some(code);
@@ -108,10 +124,33 @@ impl TaskControlBlock {
             self.kernel_sp = addr + PAGE_SIZE;
         }
     }
+
+    /// Add a child process ID
+    pub fn add_child(&mut self, pid: usize) {
+        if self.child_count < 16 {
+            self.children[self.child_count] = Some(pid);
+            self.child_count += 1;
+        }
+    }
+
+    /// Remove a child (when it exits)
+    pub fn remove_child(&mut self, pid: usize) {
+        for i in 0..self.child_count {
+            if self.children[i] == Some(pid) {
+                self.children[i] = None;
+                break;
+            }
+        }
+    }
+
+    /// Get parent PID
+    pub fn get_parent_pid(&self) -> Option<usize> {
+        self.parent_id.map(|id| id.as_usize())
+    }
 }
 
 /// Page size for stacks
-const PAGE_SIZE: usize = 4096;
+pub const PAGE_SIZE: usize = 4096;
 
 /// Task manager - manages all tasks in the system
 pub struct TaskManager {

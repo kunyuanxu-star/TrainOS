@@ -17,13 +17,17 @@ static CURRENT_HARTID: Mutex<usize> = Mutex::new(0);
 /// Initialize SMP subsystem
 /// Called early during boot to detect and configure cores
 pub fn init() {
-    crate::println!("[smp] Initializing SMP subsystem...");
+    // Output 'S' using inline asm
+    unsafe {
+        core::arch::asm!(
+            "li a7, 1",
+            "li a0, 83",  // 'S'
+            "ecall"
+        );
+    }
 
     // Detect number of HARTs from DT
     detect_harts();
-
-    let harts = *HART_COUNT.lock();
-    crate::println!("[smp] Detected HARTs");
 
     // Initialize per-CPU structures for each hart
     cpu::init_per_cpu();
@@ -31,21 +35,27 @@ pub fn init() {
     // Set up IPI (Inter-Processor Interrupt) handling
     ipi::init();
 
-    crate::println!("[smp] SMP initialization complete");
+    // Output 'E' for end
+    unsafe {
+        core::arch::asm!(
+            "li a7, 1",
+            "li a0, 69",  // 'E'
+            "ecall"
+        );
+    }
 }
 
 /// Detect available HARTs
 /// In QEMU virt machine, we typically have 1 HART unless otherwise configured
 fn detect_harts() {
-    // For now, default to 1 HART (UP system)
-    // In a real implementation, we would parse the DT/ACPI tables
-    let mut count = HART_COUNT.lock();
-    *count = 1;
-
-    // If we had multiple HARTs, we would set up them here:
-    // - Each HART needs its own stack
-    // - Each HART needs to know where to jump during startup
-    // - We need to use IPI to wake up secondary HARTs
+    // For now, just output a single 'X' to confirm we reached here
+    unsafe {
+        core::arch::asm!(
+            "li a7, 1",
+            "li a0, 88",  // 'X'
+            "ecall"
+        );
+    }
 }
 
 /// Get the current HART ID

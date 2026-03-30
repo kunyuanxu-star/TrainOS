@@ -668,3 +668,62 @@ pub fn enable_sv39() {
         }
     }
 }
+
+// ============================================
+// COW (Copy-on-Write) Page Handling
+// ============================================
+
+/// Handle a COW page fault
+/// Returns true if the page was successfully handled
+pub fn handle_cow_page(fault_addr: usize) -> bool {
+    let va = VirtAddr::new(fault_addr & !0xFFF);  // Page-aligned
+
+    let mut pt = KERNEL_PAGE_TABLE.lock();
+    if let Some(ref mut pt_manager) = *pt {
+        // Check if this is a COW page
+        if pt_manager.is_cow(va) {
+            // This is a COW page - need to copy it
+            if let Some(result) = pt_manager.translate(va) {
+                let old_pa = result.pa;
+
+                // Allocate a new physical page
+                if let Some(new_pa) = crate::memory::allocator::alloc_page() {
+                    // Copy the content
+                    unsafe {
+                        let src = old_pa.as_ptr::<u8>();
+                        let dst = new_pa as *mut u8;
+                        core::ptr::copy_nonoverlapping(src, dst, PAGE_SIZE);
+                    }
+
+                    // Unmap the old COW page
+                    if pt_manager.unmap(va).is_ok() {
+                        // Map the new page as writable
+                        if pt_manager.map(va, PhysAddr::new(new_pa), PTEFlags::user_rw()).is_ok() {
+                            crate::println!("[vm] COW page broken");
+                            return true;
+                        }
+                    }
+                }
+            }
+        } else {
+            // Not a COW page - might be a demand page
+            // For now, try to allocate and zero a new page
+            if let Some(new_pa) = crate::memory::allocator::alloc_page() {
+                unsafe {
+                    // Zero the new page
+                    let dst = new_pa as *mut u8;
+                    core::ptr::write_bytes(dst, 0, PAGE_SIZE);
+                }
+
+                if pt_manager.unmap(va).is_ok() {
+                    if pt_manager.map(va, PhysAddr::new(new_pa), PTEFlags::user_rw()).is_ok() {
+                        crate::println!("[vm] Demand page allocated");
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+
+    false
+}

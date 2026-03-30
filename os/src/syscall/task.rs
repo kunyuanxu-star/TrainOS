@@ -2,47 +2,10 @@
 //!
 //! Implements process/thread-related syscalls
 
-/// Task (process/thread) control block
-#[derive(Debug, Clone, Copy)]
-pub struct TaskControlBlock {
-    /// Task ID
-    pub pid: usize,
-    /// Parent task ID
-    pub ppid: usize,
-    /// Task state
-    pub state: TaskState,
-    /// User stack pointer
-    pub sp: usize,
-    /// Program counter
-    pub pc: usize,
-    /// Kernel stack pointer
-    pub kernel_sp: usize,
-    /// Exit code (if exited)
-    pub exit_code: Option<i32>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum TaskState {
-    Running,
-    Ready,
-    Sleeping,
-    Zombie,
-    Stopped,
-}
-
-impl TaskControlBlock {
-    pub fn new(pid: usize, ppid: usize) -> Self {
-        Self {
-            pid,
-            ppid,
-            state: TaskState::Ready,
-            sp: 0,
-            pc: 0,
-            kernel_sp: 0,
-            exit_code: None,
-        }
-    }
-}
+// Re-export the process TaskControlBlock for use in syscalls
+pub use crate::process::task::TaskControlBlock as SysTaskControlBlock;
+pub use crate::process::task::TaskStatus as TaskState;
+pub use crate::process::task::TaskId as SysTaskId;
 
 /// Clone flags
 pub const CLONE_VM: usize = 0x00000100;       // Share virtual memory
@@ -60,3 +23,6 @@ pub const CLONE_PARENT_SETTID: usize = 0x00100000; // Set parent TID
 pub const CLONE_CHILD_CLEARTID: usize = 0x00200000; // Clear child TID
 pub const CLONE_CHILD_SETTID: usize = 0x01000000;  // Set child TID
 pub const CLONE_SIGNAL: usize = 0x02000000;        // Signal to deliver
+
+// Fork flags (for compatibility)
+pub const SIGCHLD: usize = 17;

@@ -114,32 +114,116 @@ fn panic(_info: &core::panic::PanicInfo) -> ! {
 /// Main entry point called from assembly
 #[no_mangle]
 extern "C" fn rust_main() -> ! {
-    // Test with println!
-    crate::println!("========================================");
-    crate::println!("  trainOS is booting!");
-    crate::println!("========================================");
-    crate::println!("  RISC-V64 Architecture");
-    crate::println!("  Sv39 Virtual Memory");
-    crate::println!("========================================");
-    crate::println!();
+    // Output "Boot 1" using volatile inline asm to prevent optimization
+    unsafe {
+        let s = "Boot 1\r\n";
+        let len = s.len();
+        let mut ptr = s.as_ptr() as usize;
+        let mut remaining = len;
+        core::arch::asm!(
+            "1: lbu a0, 0(a1)",
+            "   li a7, 1",
+            "   ecall",
+            "   addi a1, a1, 1",
+            "   addi a2, a2, -1",
+            "   bnez a2, 1b",
+            inout("a1") ptr, inout("a2") remaining);
+    }
 
     // Initialize memory management
     crate::memory::init();
 
+    // Output "After memory init" directly
+    unsafe {
+        let s = "After memory init\r\n";
+        let len = s.len();
+        let mut ptr = s.as_ptr() as usize;
+        let mut remaining = len;
+        core::arch::asm!(
+            "1: lbu a0, 0(a1)",
+            "   li a7, 1",
+            "   ecall",
+            "   addi a1, a1, 1",
+            "   addi a2, a2, -1",
+            "   bnez a2, 1b",
+            inout("a1") ptr, inout("a2") remaining);
+    }
+
     // Initialize SMP (multi-core) support
     crate::smp::init();
+
+    // Output "Boot 3" directly
+    unsafe {
+        let s = "Boot 3\r\n";
+        let len = s.len();
+        let mut ptr = s.as_ptr() as usize;
+        let mut remaining = len;
+        core::arch::asm!(
+            "1: lbu a0, 0(a1)",
+            "   li a7, 1",
+            "   ecall",
+            "   addi a1, a1, 1",
+            "   addi a2, a2, -1",
+            "   bnez a2, 1b",
+            inout("a1") ptr, inout("a2") remaining);
+    }
 
     // Initialize process management
     crate::process::init();
 
+    // Output "Boot 4" directly
+    unsafe {
+        let s = "Boot 4\r\n";
+        let len = s.len();
+        let mut ptr = s.as_ptr() as usize;
+        let mut remaining = len;
+        core::arch::asm!(
+            "1: lbu a0, 0(a1)",
+            "   li a7, 1",
+            "   ecall",
+            "   addi a1, a1, 1",
+            "   addi a2, a2, -1",
+            "   bnez a2, 1b",
+            inout("a1") ptr, inout("a2") remaining);
+    }
+
     // Initialize trap handling
     crate::trap::init();
+
+    // Output "Boot 5" directly
+    unsafe {
+        let s = "Boot 5\r\n";
+        let len = s.len();
+        let mut ptr = s.as_ptr() as usize;
+        let mut remaining = len;
+        core::arch::asm!(
+            "1: lbu a0, 0(a1)",
+            "   li a7, 1",
+            "   ecall",
+            "   addi a1, a1, 1",
+            "   addi a2, a2, -1",
+            "   bnez a2, 1b",
+            inout("a1") ptr, inout("a2") remaining);
+    }
 
     // Initialize file system
     crate::fs::init();
 
-    crate::println!("[OK] All subsystems initialized");
-    crate::println!();
+    // Output "Boot 6" directly
+    unsafe {
+        let s = "Boot 6\r\n";
+        let len = s.len();
+        let mut ptr = s.as_ptr() as usize;
+        let mut remaining = len;
+        core::arch::asm!(
+            "1: lbu a0, 0(a1)",
+            "   li a7, 1",
+            "   ecall",
+            "   addi a1, a1, 1",
+            "   addi a2, a2, -1",
+            "   bnez a2, 1b",
+            inout("a1") ptr, inout("a2") remaining);
+    }
 
     // Run the first process
     crate::process::run_first_process();

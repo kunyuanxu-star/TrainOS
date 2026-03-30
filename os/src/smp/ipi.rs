@@ -36,15 +36,14 @@ static IPI_PENDING: Mutex<[bool; 8]> = Mutex::new([false; 8]);
 
 /// Initialize IPI handling
 pub fn init() {
-    crate::println!("[ipi] Initializing IPI subsystem...");
-
-    // Clear any pending IPIs
-    let mut pending = IPI_PENDING.lock();
-    for i in 0..8 {
-        pending[i] = false;
+    // Output 'I' using inline asm
+    unsafe {
+        core::arch::asm!(
+            "li a7, 1",
+            "li a0, 73",  // 'I'
+            "ecall"
+        );
     }
-
-    crate::println!("[ipi] IPI subsystem initialized");
 }
 
 /// Send an IPI to a specific CPU

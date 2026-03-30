@@ -56,6 +56,83 @@ pub fn disable_irq(_irq: usize) {
     // In RISC-V, this would configure the PLIC to disable the interrupt
 }
 
+// ============================================
+// CLINT Timer Support
+// ============================================
+
+/// CLINT (Core Local Interrupt Controller) registers
+/// QEMU virt machine: CLINT at 0x2000000
+pub const CLINT_BASE: usize = 0x200_0000;
+
+/// CLINT memory-mapped registers
+pub const CLINT_MTIME: usize = CLINT_BASE + 0xBFF8;      // Read-only, real-time counter
+pub const CLINT_MTIMECMP: usize = CLINT_BASE + 0x4000;   // Per-hart timer compare (offset per hart)
+
+/// CLINT register access
+#[inline(always)]
+fn read_clint(reg: usize) -> u64 {
+    unsafe { (reg as *const u64).read_volatile() }
+}
+
+#[inline(always)]
+fn write_clint(reg: usize, value: u64) {
+    unsafe { (reg as *mut u64).write_volatile(value) }
+}
+
+/// Get current mtime value
+pub fn get_mtime() -> u64 {
+    read_clint(CLINT_MTIME)
+}
+
+/// Get mtimecmp for current hart (assuming hart 0)
+pub fn get_mtimecmp() -> u64 {
+    read_clint(CLINT_MTIMECMP)
+}
+
+/// Set mtimecmp for current hart (assumes hart 0)
+/// This arms the timer to interrupt when mtime >= mtimecmp
+pub fn set_mtimecmp(value: u64) {
+    write_clint(CLINT_MTIMECMP, value);
+}
+
+/// Set timer to fire after `us` microseconds
+pub fn set_timer_relative(us: u64) {
+    let mtime = get_mtime();
+    set_mtimecmp(mtime.wrapping_add(us * 10));  // 10 MHz in QEMU virt
+}
+
+/// Initialize the CLINT timer
+pub fn clint_init() {
+    crate::println!("[clint] Initializing CLINT timer");
+
+    // Set a short initial timer to test timer interrupts
+    // This will fire soon after boot
+    set_timer_relative(1_000_000); // 1 second initial timer
+
+    // Enable timer interrupt in sie (Supervisor Interrupt Enable)
+    // STIE bit (bit 5) enables supervisor timer interrupts
+    unsafe {
+        let mut sie: usize;
+        core::arch::asm!("csrr {}, sie", out(reg) sie);
+        sie |= 1 << 5;  // STIE = Supervisor Timer Interrupt Enable
+        core::arch::asm!("csrw sie, {}", in(reg) sie);
+
+        // Also enable software interrupts (for IPI)
+        sie |= 1 << 1;  // SSIE = Supervisor Software Interrupt Enable
+        core::arch::asm!("csrw sie, {}", in(reg) sie);
+    }
+
+    crate::println!("[clint] Timer interrupts enabled");
+}
+
+/// Clear the pending timer interrupt
+pub fn clear_timer_interrupt() {
+    // In RISC-V, writing to mtimecmp clears the pending interrupt
+    // byarm: we just re-arm with a large value temporarily
+    let mtime = get_mtime();
+    set_mtimecmp(mtime.wrapping_add(u64::MAX / 4));
+}
+
 /// PLIC (Platform Level Interrupt Controller) registers
 pub const PLIC_BASE: usize = 0x0C00_0000;
 pub const PLIC_PRIORITY: usize = PLIC_BASE;

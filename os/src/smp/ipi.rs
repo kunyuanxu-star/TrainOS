@@ -47,7 +47,7 @@ pub fn init() {
 }
 
 /// Send an IPI to a specific CPU
-pub fn send_ipi(hartid: usize, msg: IpiMsg) {
+pub fn send_ipi(hartid: usize, _msg: IpiMsg) {
     if hartid >= 8 {
         return;
     }

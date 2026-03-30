@@ -153,8 +153,8 @@ impl PseudoHeader {
 /// Process incoming TCP packet
 pub fn tcp_input(
     buffer: &mut NetBuffer,
-    src_ip: IpAddr,
-    dst_ip: IpAddr,
+    _src_ip: IpAddr,
+    _dst_ip: IpAddr,
 ) -> bool {
     let ip_len = 14 + 20; // Ethernet + IPv4
     if buffer.len < ip_len + 20 {
@@ -164,12 +164,12 @@ pub fn tcp_input(
     let tcp_data = &buffer.data[ip_len..];
     let header = unsafe { &*(tcp_data.as_ptr() as *const TcpHeader) };
 
-    let src_port = header.src_port_u16();
+    let _src_port = header.src_port_u16();
     let dst_port = header.dst_port_u16();
-    let seq = header.seq_num_u32();
-    let ack = header.ack_num_u32();
+    let _seq = header.seq_num_u32();
+    let _ack = header.ack_num_u32();
     let flags = header.flags();
-    let data_len = buffer.len - ip_len - header.data_offset();
+    let _data_len = buffer.len - ip_len - header.data_offset();
 
     crate::println!("[tcp] packet received");
 

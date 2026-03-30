@@ -272,10 +272,10 @@ pub extern "C" fn do_syscall(trap_frame: *mut crate::process::context::TrapFrame
     }
 
     // Get arguments from trap frame
-    let arg0 = unsafe { (*trap_frame).a0 };
-    let arg1 = unsafe { (*trap_frame).a1 };
-    let arg2 = unsafe { (*trap_frame).a2 };
-    let arg3 = unsafe { (*trap_frame).a3 };
+    let _arg0 = unsafe { (*trap_frame).a0 };
+    let _arg1 = unsafe { (*trap_frame).a1 };
+    let _arg2 = unsafe { (*trap_frame).a2 };
+    let _arg3 = unsafe { (*trap_frame).a3 };
 
     let result = match syscall_id {
         // File operations (Linux numbers)
@@ -411,7 +411,7 @@ fn advance_sepc() {
 // File Operations
 // ============================================
 
-fn sys_read(fd: usize, buf: usize, count: usize) -> isize {
+fn sys_read(fd: usize, _buf: usize, _count: usize) -> isize {
     // For stdin (fd 0), return EOF for now (no keyboard input)
     if fd == 0 {
         // In a real implementation, this would read from keyboard
@@ -545,8 +545,8 @@ fn sys_fchdir(_fd: usize) -> isize {
 // ============================================
 
 /// Exit the current process
-pub fn sys_exit(code: usize) -> ! {
-    let pid = *CURRENT_PID.lock();
+pub fn sys_exit(_code: usize) -> ! {
+    let _pid = *CURRENT_PID.lock();
     crate::println!("[syscall] Process exiting");
     crate::println!("[syscall] Process halted");
     loop {
@@ -605,7 +605,7 @@ fn sys_set_tid_address(_addr: usize) -> isize {
 /// _pid: -1 means wait for any child, >0 means wait for specific child
 /// status_addr: where to store exit status
 /// options: WNOHANG to not block, WUNTRACED, etc.
-fn sys_wait4(_pid: usize, status_addr: usize, options: usize, _rusage: usize) -> isize {
+fn sys_wait4(_pid: usize, status_addr: usize, _options: usize, _rusage: usize) -> isize {
     // For now, just return no children
     // In a full implementation:
     // 1. Find a child in Zombie state
@@ -771,7 +771,7 @@ fn sys_clone(trap_frame: *mut crate::process::context::TrapFrame, flags: usize, 
 
         // Add child to scheduler
         let mut scheduler = crate::process::get_scheduler().lock();
-        if let Some(tid) = scheduler.add_task(child_tcb) {
+        if let Some(_tid) = scheduler.add_task(child_tcb) {
             crate::println!("[syscall] clone: child added to scheduler");
         }
     } else {
@@ -855,14 +855,14 @@ pub struct Sigaction {
 type SigHandler = extern "C" fn(signal: usize);
 
 /// Set a signal handler
-fn sys_sigaction(sig: usize, act: usize, oldact: usize) -> isize {
+fn sys_sigaction(_sig: usize, _act: usize, _oldact: usize) -> isize {
     crate::println!("[syscall] sigaction called");
     // Not fully implemented yet
     0
 }
 
 /// Send a signal to a process
-fn sys_kill(pid: usize, sig: usize) -> isize {
+fn sys_kill(_pid: usize, _sig: usize) -> isize {
     crate::println!("[syscall] kill called");
     0
 }
@@ -877,7 +877,7 @@ fn sys_signalfd(fd: usize, _mask: usize, _flags: usize) -> isize {
 // ============================================
 
 /// Readv - read from multiple buffers
-fn sys_readv(fd: usize, iov: usize, iovcnt: usize) -> isize {
+fn sys_readv(_fd: usize, _iov: usize, _iovcnt: usize) -> isize {
     crate::println!("[syscall] readv called");
     -1
 }
@@ -907,7 +907,7 @@ fn sys_writev(fd: usize, iov: usize, iovcnt: usize) -> isize {
 }
 
 /// Sendfile - transfer data between file descriptors
-fn sys_sendfile(out_fd: usize, in_fd: usize, _offset: usize, count: usize) -> isize {
+fn sys_sendfile(out_fd: usize, _in_fd: usize, _offset: usize, count: usize) -> isize {
     if out_fd != 1 && out_fd != 2 {
         return -1;
     }
@@ -926,14 +926,14 @@ fn sys_sendfile(out_fd: usize, in_fd: usize, _offset: usize, count: usize) -> is
 }
 
 /// Poll - wait for events on file descriptors
-fn sys_poll(fds: usize, nfds: usize, timeout: isize) -> isize {
+fn sys_poll(_fds: usize, _nfds: usize, _timeout: isize) -> isize {
     crate::println!("[syscall] poll called");
     // Simplified: return 0 (no events)
     0
 }
 
 /// Select - synchronous I/O multiplexing
-fn sys_select(nfds: usize, readfds: usize, writefds: usize, exceptfds: usize, timeout: usize) -> isize {
+fn sys_select(_nfds: usize, _readfds: usize, _writefds: usize, _exceptfds: usize, _timeout: usize) -> isize {
     crate::println!("[syscall] select called");
     0
 }
@@ -943,7 +943,7 @@ fn sys_select(nfds: usize, readfds: usize, writefds: usize, exceptfds: usize, ti
 // ============================================
 
 /// Create a file descriptor with specific flags
-fn sys_dup3(oldfd: usize, newfd: usize, flags: usize) -> isize {
+fn sys_dup3(oldfd: usize, _newfd: usize, _flags: usize) -> isize {
     crate::println!("[syscall] dup3 called");
     if oldfd <= 2 {
         oldfd as isize
@@ -953,7 +953,7 @@ fn sys_dup3(oldfd: usize, newfd: usize, flags: usize) -> isize {
 }
 
 /// fcntl - file control
-fn sys_fcntl(fd: usize, cmd: usize, arg: usize) -> isize {
+fn sys_fcntl(fd: usize, cmd: usize, _arg: usize) -> isize {
     match cmd {
         0 => fd as isize,  // F_DUPFD
         1 => {
@@ -977,7 +977,7 @@ fn sys_fcntl(fd: usize, cmd: usize, arg: usize) -> isize {
 }
 
 /// ioctl - device control
-fn sys_ioctl(fd: usize, request: usize, arg: usize) -> isize {
+fn sys_ioctl(_fd: usize, _request: usize, _arg: usize) -> isize {
     crate::println!("[syscall] ioctl called");
     0
 }
@@ -987,7 +987,7 @@ fn sys_ioctl(fd: usize, request: usize, arg: usize) -> isize {
 // ============================================
 
 /// Get current time
-fn sys_gettimeofday(tv: usize, tz: usize) -> isize {
+fn sys_gettimeofday(tv: usize, _tz: usize) -> isize {
     crate::println!("[syscall] gettimeofday called");
     // Return dummy values
     if tv != 0 {
@@ -1005,7 +1005,7 @@ fn sys_settimeofday(_tv: usize, _tz: usize) -> isize {
 }
 
 /// Clock_gettime
-fn sys_clock_gettime(clockid: usize, tp: usize) -> isize {
+fn sys_clock_gettime(_clockid: usize, tp: usize) -> isize {
     crate::println!("[syscall] clock_gettime called");
     if tp != 0 {
         unsafe {
@@ -1026,18 +1026,18 @@ fn sys_getpgrp() -> isize {
 }
 
 /// Set process group ID
-fn sys_setpgid(pid: usize, pgid: usize) -> isize {
+fn sys_setpgid(_pid: usize, _pgid: usize) -> isize {
     crate::println!("[syscall] setpgid called");
     0
 }
 
 /// Getrusage - get resource usage
-fn sys_getrusage(who: usize, usage: usize) -> isize {
+fn sys_getrusage(_who: usize, usage: usize) -> isize {
     crate::println!("[syscall] getrusage called");
     // Return zeros
     if usage != 0 {
         let ptr = usage as *mut u64;
-        for i in 0..16 {
+        for _i in 0..16 {
             unsafe { ptr.write(0); }
         }
     }
@@ -1067,7 +1067,7 @@ fn sys_capset(_hdr: usize, _data: usize) -> isize {
 // ============================================
 
 /// ptrace - process trace
-fn sys_ptrace(request: usize, pid: usize, addr: usize, data: usize) -> isize {
+fn sys_ptrace(_request: usize, _pid: usize, _addr: usize, _data: usize) -> isize {
     crate::println!("[syscall] ptrace called");
     -1
 }
@@ -1143,7 +1143,7 @@ fn sys_epoll_ctl(epfd: usize, op: usize, fd: usize, event: usize) -> isize {
 }
 
 /// Wait for events on an epoll file descriptor
-fn sys_epoll_wait(epfd: usize, events: usize, maxevents: usize, timeout: usize) -> isize {
+fn sys_epoll_wait(epfd: usize, events: usize, maxevents: usize, _timeout: usize) -> isize {
     if epfd >= MAX_EPOLL_FDS || events == 0 || maxevents == 0 {
         return -1;
     }

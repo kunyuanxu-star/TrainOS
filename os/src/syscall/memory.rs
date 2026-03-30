@@ -45,7 +45,7 @@ impl MappedRegion {
 }
 
 /// Mmap syscall
-pub fn sys_mmap(addr: usize, len: usize, prot: usize, flags: usize, fd: usize, _offset: usize) -> isize {
+pub fn sys_mmap(addr: usize, len: usize, prot: usize, flags: usize, _fd: usize, _offset: usize) -> isize {
     // Validate length
     if len == 0 {
         return -1;
@@ -106,7 +106,7 @@ fn find_empty_slot() -> Option<&'static Mutex<[Option<MappedRegion>; 64]>> {
 }
 
 /// Munmap syscall
-pub fn sys_munmap(addr: usize, len: usize) -> isize {
+pub fn sys_munmap(addr: usize, _len: usize) -> isize {
     if addr == 0 {
         return 0;  //munmap(0, 0) is valid no-op
     }
@@ -122,7 +122,7 @@ pub fn sys_munmap(addr: usize, len: usize) -> isize {
 }
 
 /// Mprotect syscall
-pub fn sys_mprotect(addr: usize, len: usize, prot: usize) -> isize {
+pub fn sys_mprotect(_addr: usize, _len: usize, _prot: usize) -> isize {
     crate::println!("[mprotect] Called");
 
     // In a real implementation, this would modify the page table entries

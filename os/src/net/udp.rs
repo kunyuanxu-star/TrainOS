@@ -34,7 +34,7 @@ impl UdpHeader {
 /// Process incoming UDP packet
 pub fn udp_input(
     buffer: &mut NetBuffer,
-    src_ip: IpAddr,
+    _src_ip: IpAddr,
     _dst_ip: IpAddr,
 ) -> bool {
     let header_len = 14 + 20; // Ethernet + IPv4
@@ -45,9 +45,9 @@ pub fn udp_input(
     let udp_data = &buffer.data[header_len..];
     let header = unsafe { &*(udp_data.as_ptr() as *const UdpHeader) };
 
-    let src_port = header.src_port_u16();
+    let _src_port = header.src_port_u16();
     let dst_port = header.dst_port_u16();
-    let udp_len = header.length_u16() as usize;
+    let _udp_len = header.length_u16() as usize;
 
     crate::println!("[udp] packet received");
 
@@ -68,8 +68,8 @@ pub fn udp_input(
 /// Build UDP header and payload
 pub fn udp_output(
     buffer: &mut NetBuffer,
-    src_ip: IpAddr,
-    dst_ip: IpAddr,
+    _src_ip: IpAddr,
+    _dst_ip: IpAddr,
     src_port: u16,
     dst_port: u16,
     payload: &[u8],

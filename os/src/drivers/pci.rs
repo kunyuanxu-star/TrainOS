@@ -2,7 +2,6 @@
 //!
 //! Provides PCI device discovery and configuration
 
-use spin::Mutex;
 
 /// PCI configuration space
 pub const PCI_CONFIG_ADDRESS: usize = 0xCF8;

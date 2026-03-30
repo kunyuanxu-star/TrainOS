@@ -82,12 +82,12 @@ impl VirtioBlkDevice {
     }
 
     /// Read a device register
-    fn read_reg(&self, offset: usize) -> u32 {
+    fn read_reg(&self, _offset: usize) -> u32 {
         unsafe { (self.base_addr as *const u32).read_volatile() }
     }
 
     /// Write a device register
-    fn write_reg(&self, offset: usize, val: u32) {
+    fn write_reg(&self, _offset: usize, val: u32) {
         unsafe { (self.base_addr as *mut u32).write_volatile(val) }
     }
 
@@ -147,7 +147,7 @@ impl VirtioBlkDevice {
     }
 
     /// Read sectors from the device
-    pub fn read_sectors(&mut self, sector: u64, count: usize, buf: &mut [u8]) -> Result<usize, &'static str> {
+    pub fn read_sectors(&mut self, _sector: u64, count: usize, buf: &mut [u8]) -> Result<usize, &'static str> {
         if !self.initialized {
             return Err("Device not initialized");
         }

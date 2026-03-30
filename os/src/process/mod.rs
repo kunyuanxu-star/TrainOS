@@ -10,7 +10,6 @@ pub mod context;
 use spin::Mutex;
 use task::{TaskControlBlock, TaskId};
 use scheduler::Scheduler;
-use context::{TaskContext, TrapFrame};
 
 /// Global task manager - const so can be used in static initialization
 static TASK_MANAGER: Mutex<TaskManager> = Mutex::new(TaskManager::new());
@@ -189,7 +188,7 @@ pub fn schedule_preempt() {
 
         // Put current task back in queue if it was running and should preempt
         if should_preempt {
-            let mut sched_task = scheduler::SchedTask::new(*task);
+            let _sched_task = scheduler::SchedTask::new(*task);
             scheduler.yield_current();
         }
     }
@@ -225,7 +224,7 @@ pub fn schedule() {
     if let Some(mut task) = current_task.take() {
         if task.status == task::TaskStatus::Ready {
             task.status = task::TaskStatus::Ready;
-            let mut sched_task = scheduler::SchedTask::new(task);
+            let _sched_task = scheduler::SchedTask::new(task);
             scheduler.yield_current();
         }
     }
@@ -332,6 +331,7 @@ pub fn run_first_process() -> ! {
 
 /// Idle task - runs when no other tasks are runnable
 fn idle_task() {
+    // Simple idle task
     loop {
         unsafe {
             core::arch::asm!("wfi");
@@ -359,7 +359,7 @@ fn start_scheduler() {
     crate::println!("[sched] Starting scheduler");
 
     // Create idle task as the only task (kernel thread)
-    if let Some(_tid) = create_process(idle_task as usize, 0x80020000, false) {
+    if let Some(_tid) = create_process(idle_task as *const () as usize, 0x80020000, false) {
         crate::println!("[sched] Idle task created");
     }
 

@@ -97,17 +97,10 @@ pub fn set_mtimecmp(value: u64) {
 
 /// Set timer to fire after `us` microseconds
 pub fn set_timer_relative(us: u64) {
-    // Use SBI to set timer - more portable
-    // SBI legacy timer function: a7=0, a0=target time
-    let target = get_mtime().wrapping_add(us * 10);  // 10 MHz in QEMU virt
-    unsafe {
-        core::arch::asm!(
-            "li a7, 0",
-            "mv a0, {0}",
-            "ecall",
-            in(reg) target
-        );
-    }
+    // Read current mtime and set mtimecmp directly
+    let mtime = get_mtime();
+    let target = mtime.wrapping_add(us * 10);  // 10 MHz in QEMU virt
+    set_mtimecmp(target);
 }
 
 /// Initialize the CLINT timer

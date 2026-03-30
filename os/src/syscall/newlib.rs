@@ -118,7 +118,7 @@ pub extern "C" fn _close(fd: i32) -> i32 {
 /// Read from file (newlib syscall)
 /// Returns number of bytes read or -1 on error
 #[no_mangle]
-pub extern "C" fn _read(fd: i32, buf: *mut u8, count: usize) -> i32 {
+pub extern "C" fn _read(fd: i32, _buf: *mut u8, _count: usize) -> i32 {
     if fd < 0 || fd as usize >= MAX_FD {
         return -1;
     }
@@ -181,7 +181,7 @@ pub extern "C" fn _write(fd: i32, buf: *const u8, count: usize) -> i32 {
 
 /// Seek in file (newlib syscall)
 #[no_mangle]
-pub extern "C" fn _lseek(fd: i32, offset: isize, whence: i32) -> isize {
+pub extern "C" fn _lseek(fd: i32, _offset: isize, _whence: i32) -> isize {
     // Most devices don't support seeking
     let fd_usize = fd as usize;
     if fd >= 3 && fd_usize < MAX_FD {
@@ -215,7 +215,7 @@ pub extern "C" fn _fstat(fd: i32, stat_buf: *mut StatBuf) -> i32 {
 
 /// Stat - get file status by path (newlib syscall)
 #[no_mangle]
-pub extern "C" fn _stat(path: *const u8, stat_buf: *mut StatBuf) -> i32 {
+pub extern "C" fn _stat(_path: *const u8, stat_buf: *mut StatBuf) -> i32 {
     unsafe {
         (*stat_buf).st_mode = 0x2000;  // S_IFCHR
         (*stat_buf).st_size = 0;
@@ -422,7 +422,7 @@ pub extern "C" fn _fork() -> i32 {
 
 /// Execve (newlib syscall)
 #[no_mangle]
-pub extern "C" fn _execve(path: *const u8, argv: *const *const u8, _envp: *const *const u8) -> i32 {
+pub extern "C" fn _execve(path: *const u8, _argv: *const *const u8, _envp: *const *const u8) -> i32 {
     // Read path
     let mut path_buf = [0u8; 256];
     let mut i = 0;
@@ -436,7 +436,7 @@ pub extern "C" fn _execve(path: *const u8, argv: *const *const u8, _envp: *const
         }
     }
 
-    let path_str = core::str::from_utf8(&path_buf[..i]).unwrap_or("");
+    let _path_str = core::str::from_utf8(&path_buf[..i]).unwrap_or("");
     crate::println!("[newlib] _execve called");
 
     // Would load and execute program here

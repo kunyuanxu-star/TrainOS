@@ -150,8 +150,8 @@ pub fn arp_input(buffer: &mut NetBuffer, iface: &NetInterface) -> bool {
     }
 
     let op = header.op_u16();
-    let sender_ip = header.sender_ip();
-    let sender_mac = MacAddr(header.sender_mac);
+    let _sender_ip = header.sender_ip();
+    let _sender_mac = MacAddr(header.sender_mac);
     let target_ip = header.target_ip();
 
     crate::println!(

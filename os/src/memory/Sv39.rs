@@ -524,7 +524,7 @@ impl PageTableManager {
     }
 
     /// Walk to a PTE at the given level (read-only)
-    fn walk_pte_readonly<'a>(&self, parent: &'a PageTableEntry, level: usize) -> Option<&'a PageTable> {
+    fn walk_pte_readonly<'a>(&self, parent: &'a PageTableEntry, _level: usize) -> Option<&'a PageTable> {
         if parent.is_valid() && !parent.is_leaf() {
             let ptr = parent.ppn.to_pa() as *const PageTable;
             Some(unsafe { &*ptr })
@@ -534,7 +534,7 @@ impl PageTableManager {
     }
 
     /// Walk to a PTE at the given level
-    fn walk_pte<'a>(&self, parent: &'a PageTableEntry, level: usize) -> Option<&'a mut PageTable> {
+    fn walk_pte<'a>(&self, parent: &'a PageTableEntry, _level: usize) -> Option<&'a mut PageTable> {
         if parent.is_valid() && !parent.is_leaf() {
             let ptr = parent.ppn.to_pa() as *mut PageTable;
             Some(unsafe { &mut *ptr })

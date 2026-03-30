@@ -220,7 +220,7 @@ pub fn load_elf(data: &[u8]) -> Result<usize, ElfResult> {
 
     // Calculate total pages needed
     let total_size = max_vaddr - min_vaddr;
-    let pages_needed = (total_size + PAGE_SIZE - 1) / PAGE_SIZE;
+    let _pages_needed = (total_size + PAGE_SIZE - 1) / PAGE_SIZE;
 
     crate::println!("[elf] Loading bytes and pages from vaddr");
 

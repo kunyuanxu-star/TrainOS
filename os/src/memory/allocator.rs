@@ -154,8 +154,8 @@ impl BitmapPageAllocator {
         let total_bits = self.bitmap.len() * 64;
 
         for i in 0..total_bits {
-            let bitmap_idx = i / 64;
-            let bit_idx = i % 64;
+            let _bitmap_idx = i / 64;
+            let _bit_idx = i % 64;
 
             // Check if we have enough consecutive free pages starting here
             let mut found = true;

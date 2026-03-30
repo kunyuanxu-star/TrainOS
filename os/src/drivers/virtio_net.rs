@@ -61,12 +61,12 @@ impl VirtioNetDevice {
     }
 
     /// Read a device register
-    fn read_reg(&self, offset: usize) -> u32 {
+    fn read_reg(&self, _offset: usize) -> u32 {
         unsafe { (self.base_addr as *const u32).read_volatile() }
     }
 
     /// Write a device register
-    fn write_reg(&self, offset: usize, val: u32) {
+    fn write_reg(&self, _offset: usize, val: u32) {
         unsafe { (self.base_addr as *mut u32).write_volatile(val) }
     }
 

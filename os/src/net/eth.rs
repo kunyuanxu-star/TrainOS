@@ -106,7 +106,7 @@ impl<'a> EthFrameBuilder<'a> {
 }
 
 /// Process incoming Ethernet frame
-pub fn eth_input(buffer: &mut NetBuffer, iface: &NetInterface) -> bool {
+pub fn eth_input(buffer: &mut NetBuffer, _iface: &NetInterface) -> bool {
     // Parse the Ethernet header
     let frame = match EthFrame::parse(&buffer.data[..buffer.len]) {
         Some(f) => f,

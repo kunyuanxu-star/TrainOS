@@ -3,9 +3,6 @@
 //! Implements process/thread-related syscalls
 
 // Re-export the process TaskControlBlock for use in syscalls
-pub use crate::process::task::TaskControlBlock as SysTaskControlBlock;
-pub use crate::process::task::TaskStatus as TaskState;
-pub use crate::process::task::TaskId as SysTaskId;
 
 /// Clone flags
 pub const CLONE_VM: usize = 0x00000100;       // Share virtual memory

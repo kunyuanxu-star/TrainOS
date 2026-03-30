@@ -107,28 +107,22 @@ impl Default for TaskManager {
 
 /// Initialize the process management subsystem
 pub fn init() {
-    crate::println!("[process] Initializing process management...");
-    crate::println!("[process] About to lock TASK_MANAGER...");
+    crate::println!("[process] Init start");
 
     // Initialize task manager with idle task
     let mut manager = TASK_MANAGER.lock();
-    crate::println!("[process] TASK_MANAGER locked");
     manager.init_idle_task();
     drop(manager);
-
-    crate::println!("[process] About to lock TASK_MANAGER again...");
 
     // Get idle task and set as current
     let manager = TASK_MANAGER.lock();
     if let Some(idle_task) = manager.get_task(0) {
         let mut current = CURRENT_TASK.lock();
         *current = Some(*idle_task);
-        crate::println!("[process] Current task set");
     }
     drop(manager);
 
-    crate::println!("[process] Task manager initialized");
-    crate::println!("[process] OK");
+    crate::println!("[process] Init OK");
 }
 
 /// Get the global task manager
@@ -300,19 +294,9 @@ pub fn create_process(entry: usize, stack: usize, is_user: bool) -> Option<TaskI
 
 /// Initialize and run the first process
 pub fn run_first_process() -> ! {
-    crate::println!("[process] Starting init process...");
+    crate::println!("[run] Starting first process");
 
-    // Create an idle task loop
-    // For now, just run in kernel mode
-    crate::println!();
-    crate::println!("========================================");
-    crate::println!("  trainOS is running!");
-    crate::println!("========================================");
-
-    // Test basic functionality
-    test_basic_syscalls();
-
-    // Enable interrupts and start the scheduler
+    // Start the scheduler
     start_scheduler();
 
     // Should never reach here
@@ -325,41 +309,15 @@ pub fn run_first_process() -> ! {
 
 /// Test task that prints a message
 fn test_task() {
-    crate::println!("[test] Test task is running!");
-    crate::println!("[test] This confirms scheduler is working");
-}
-
-/// Test basic syscalls
-fn test_basic_syscalls() {
-    crate::println!("[process] Testing basic syscalls...");
-
-    // Test write
-    let msg = b"Hello from trainOS kernel!\n";
-    let _ret = crate::syscall::sys_write(1, msg.as_ptr() as usize, msg.len());
-
-    // Test getpid
-    let pid = crate::syscall::sys_getpid();
-    crate::println!("[process] getpid returned");
-    crate::println!("[process] Basic syscalls working!");
-
-    // Test sched_yield
-    let _ret = crate::syscall::sys_sched_yield();
-    crate::println!("[process] sched_yield working!");
+    crate::println!("[test] Test task running");
 }
 
 /// Start the scheduler and run tasks
 fn start_scheduler() {
-    crate::println!("[process] Starting scheduler...");
+    crate::println!("[sched] Starting scheduler");
 
     // Create a simple init task (kernel thread for now)
-    // User tasks require proper address space setup which we don't have yet
     if let Some(_tid) = create_process(test_task as usize, 0x80020000, false) {
-        crate::println!("[process] Created init task");
+        crate::println!("[sched] Task created");
     }
-
-    // Set up timer for periodic scheduling
-    // Timer is already set up in trap::init() via clint_init()
-
-    crate::println!("[process] Scheduler started");
-    crate::println!("[process] Timer interrupts enabled for preemption");
 }

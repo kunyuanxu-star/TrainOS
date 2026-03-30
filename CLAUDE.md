@@ -10,7 +10,7 @@ TrainOS is an educational operating system written in Rust for RISC-V 64-bit arc
 ### Phase 1: Make It Runnable (In Progress)
 
 **Completed**:
-- Timer interrupt initialization (clint_init)
+- Timer interrupt initialization (clint_init) - ISSUE: Not firing in QEMU
 - Context switch in scheduler with trap frame handling
 - Basic fork (sys_clone) implementation with COW semantics
 - TaskControlBlock with kernel stack + trap frame allocation
@@ -22,7 +22,7 @@ TrainOS is an educational operating system written in Rust for RISC-V 64-bit arc
 - ELF binary loader infrastructure
 
 **Working**: Debug mode runs successfully with full boot sequence.
-**Issue**: Timer interrupt does not fire in QEMU with RustSBI-QEMU. This prevents preemption and multi-tasking.
+**Issue**: Timer interrupt does not fire in QEMU with RustSBI-QEMU.
 
 ### Build & Run
 
@@ -70,53 +70,39 @@ RustSBI → Boot 1 → memory init → SMP init (SXCIE) →
 | `os/src/fs/ramfs.rs` | RAM filesystem |
 | `os/src/elf.rs` | ELF binary loader |
 
-## Context Switch Flow
+## Timer Interrupt Issue (UNRESOLVED)
 
-### Kernel Thread (context_switch)
-1. Save callee-saved registers to old context (ra, sp, s0-s11)
-2. Load callee-saved registers from new context
-3. Return to new context's ra (which is the task entry point)
+**Status**: Timer interrupt does NOT fire in QEMU with RustSBI-QEMU v0.1.1
 
-### User Task (return_to_user)
-1. Set new page table (satp)
-2. Flush TLB (sfence.vma)
-3. Set sepc to user program counter
-4. Set sp to user stack
-5. Restore registers from trap frame
-6. Set sstatus (SPP=0 for user mode, SPIE=1, SIE=0)
-7. Return to user mode via sret
+**Attempts to fix**:
+1. ✅ Updated from RustSBI-QEMU v0.2.0-alpha.10 to v0.1.1 - No change
+2. ✅ Tried direct CLINT access (set_mtimecmp) - No change
+3. ✅ Tried SBI_SET_TIMER via ecall - No change
+4. ✅ Verified STIE bit is set in sie register - Confirmed
+5. ✅ Verified mideleg has stimer delegated (0x1666) - Confirmed
+6. ✅ Tried different timebase frequencies (10MHz, 100MHz) - No change
+7. ✅ Tried ACLINT option (-machine aclint=true) - No change
+8. ✅ Tried RTC configuration options - No change
+9. ✅ QEMU debug output shows only supervisor_ecall, NO timer interrupts
 
-### Scheduler Flow (timer interrupt - NOT WORKING)
-1. Timer interrupt fires → trap entry saves registers to trap frame
-2. handle_trap() called → CURRENT_TRAP_FRAME set
-3. handle_timer_interrupt() → schedule_preempt()
-4. schedule_preempt(): save current task's trap frame, fetch next task
-5. Copy next task's trap frame to current trap frame location
-6. Return from trap via sret
+**Analysis**:
+- The timer is being set correctly (mtimecmp is written)
+- Interrupts are properly delegated to supervisor mode (mideleg.stimer = 1)
+- Timer interrupt enable bit is set (sie.stie = 1)
+- But the timer interrupt never fires in QEMU
 
-## Timer Interrupt Issue
+**Root Cause**: Likely QEMU's CLINT timer emulation issue when using RustSBI as firmware.
+- QEMU may not be correctly emulating the timer hardware
+- Or there may be a timing issue where the timer fires before the OS is ready to handle it
 
-**Status**: NOT WORKING - Timer interrupt does not fire in QEMU with RustSBI-QEMU 0.2.0-alpha.10
-
-**Symptoms**: OS boots and runs idle task on wfi, but timer interrupt never fires despite being armed.
-
-**Debug Attempts**:
-- Tried direct CLINT access (set_mtimecmp)
-- Tried SBI_SET_TIMER via ecall
-- Verified STIE bit is set in sie
-- Verified mideleg has stimer delegated
-- QEMU debug output shows only supervisor_ecall, no timer interrupts
-
-**Root Cause**: Likely QEMU/RustSBI compatibility issue with CLINT timer emulation.
-
-**Workaround**: Currently using wfi (wait for interrupt) in idle task, but timer-based preemption doesn't work.
+**Workaround**: OS runs idle task on wfi, but timer-based preemption doesn't work.
 
 ## Next Steps (Priority Order)
 
-1. **Install RISC-V toolchain** - Build user programs (blocker: no toolchain)
+1. **Install RISC-V toolchain** - Build user programs (no toolchain yet)
 2. **Complete sys_execve implementation** - Load ELF into user address space
 3. **Test user mode return** - Verify return_to_user works correctly
-4. **Debug timer interrupt** - Or find alternative scheduling approach
+4. **Investigate timer issue further** - Try different QEMU versions or OpenSBI
 5. **Fix release mode** - spin::Mutex optimization issue
 
 ## Development Notes
@@ -130,19 +116,14 @@ RustSBI → Boot 1 → memory init → SMP init (SXCIE) →
 - Need to run `user/build-toolchain.sh` to download prebuilt toolchain
 - Or install via package manager: `riscv64-unknown-elf-gcc`
 
-### User Program Structure
-User programs in `user/`:
-- `user/src/hello.rs` - Hello world program
-- `user/src/shell.rs` - Simple shell
-- `user/src/vi.rs` - VI-like text editor
+### QEMU Configuration
+- Machine: virt
+- BIOS: rustsbi-qemu.bin (v0.1.1)
+- CLINT: 0x2000000 (verified in PMP configuration)
+- Timebase: 10 MHz (default)
 
 ### Syscall Implementation
 - sys_clone: Creates child process with COW address space
 - sys_execve: Stub - needs full implementation to load ELF
-- sys_exit: Halts the process
-- sys_sched_yield: Signals schedule request
-
-### ELF Loading
-- ELF structures defined in `elf.rs` (Elf64Header, Elf64Phdr, etc.)
-- `load_elf()` function exists but not integrated with sys_execve
-- Needs: read from VFS, parse headers, set up page table, copy segments
+- sys_exit: Halts the process (loops on wfi)
+- sys_sched_yield: Signals schedule request (but timer needed for actual preemption)

@@ -99,7 +99,7 @@ pub fn set_mtimecmp(value: u64) {
 pub fn set_timer_relative(us: u64) {
     // Read current mtime and set mtimecmp directly
     let mtime = get_mtime();
-    let target = mtime.wrapping_add(us * 10);  // 10 MHz in QEMU virt
+    let target = mtime.wrapping_add(us * 10);  // 10 MHz timebase
     set_mtimecmp(target);
 }
 

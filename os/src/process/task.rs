@@ -118,10 +118,54 @@ impl TaskControlBlock {
     }
 
     /// Allocate kernel stack for this task
+    /// Also reserves space for the trap frame at the top of the stack
     pub fn alloc_kernel_stack(&mut self) {
         // Allocate a page for kernel stack
         if let Some(addr) = crate::memory::allocator::alloc_page() {
-            self.kernel_sp = addr + PAGE_SIZE;
+            // The kernel stack grows down, trap frame is at the top
+            let stack_top = addr + PAGE_SIZE;
+            self.kernel_sp = stack_top;
+
+            // Reserve space for trap frame at top of kernel stack
+            // We'll use the top portion for the trap frame
+            let trap_frame_size = core::mem::size_of::<crate::process::context::TrapFrame>();
+            self.trap_frame = (stack_top - trap_frame_size) as *mut TrapFrame;
+
+            // Initialize the trap frame to zero
+            unsafe {
+                core::ptr::write_bytes(self.trap_frame as *mut u8, 0, trap_frame_size);
+            }
+        }
+    }
+
+    /// Create a new user address space for this task
+    pub fn create_user_address_space(&mut self) -> bool {
+        if let Some(mut user_space) = crate::memory::Sv39::UserAddressSpace::new() {
+            // Set up user stack
+            if let Ok(stack_top) = user_space.setup_user_stack() {
+                self.user_sp = stack_top;
+            }
+
+            // Set the SATP for this address space
+            self.satp = user_space.get_satp();
+            self.is_user_task = true;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Set up the trap frame for user mode entry
+    pub fn setup_trap_frame(&mut self, entry: usize, sp: usize, arg0: usize) {
+        if !self.trap_frame.is_null() {
+            let mut tf = crate::process::context::TrapFrame::new_user_entry(entry, sp, arg0);
+            // SPP = 0 (user mode), SPIE = 1, SIE = 0
+            tf.sstatus = 0x00000020;
+            unsafe {
+                core::ptr::write(self.trap_frame, tf);
+            }
+            self.user_pc = entry;
+            self.user_sp = sp;
         }
     }
 

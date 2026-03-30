@@ -173,6 +173,65 @@ core::arch::global_asm!(
     "    ret",
 );
 
+/// Assembly for returning to user mode via sret
+/// This switches to the new page table and returns to user mode
+core::arch::global_asm!(
+    ".globl return_to_user",
+    ".type return_to_user, @function",
+    "return_to_user:",
+    // a0 = trap frame pointer
+    // a1 = new satp value
+    // a2 = new sp
+    // a3 = new pc (sepc)
+    // Save old trap frame sp
+    "   mv t0, sp",
+    // Set new page table (satp)
+    "   csrw satp, a1",
+    // Flush TLB
+    "   sfence.vma zero, zero",
+    // Set up sepc to the user program counter
+    "   csrw sepc, a3",
+    // Set up sp to user stack
+    "   mv sp, a2",
+    // Restore trap frame registers
+    "   ld ra, 0(a0)",
+    "   ld gp, 8(a0)",
+    "   ld tp, 16(a0)",
+    "   ld t0, 24(a0)",
+    "   ld t1, 32(a0)",
+    "   ld t2, 40(a0)",
+    "   ld s0, 48(a0)",
+    "   ld s1, 56(a0)",
+    "   ld a0, 64(a0)",
+    "   ld a1, 72(a0)",
+    "   ld a2, 80(a0)",
+    "   ld a3, 88(a0)",
+    "   ld a4, 96(a0)",
+    "   ld a5, 104(a0)",
+    "   ld a6, 112(a0)",
+    "   ld a7, 120(a0)",
+    "   ld s2, 128(a0)",
+    "   ld s3, 136(a0)",
+    "   ld s4, 144(a0)",
+    "   ld s5, 152(a0)",
+    "   ld s6, 160(a0)",
+    "   ld s7, 168(a0)",
+    "   ld s8, 176(a0)",
+    "   ld s9, 184(a0)",
+    "   ld s10, 192(a0)",
+    "   ld s11, 200(a0)",
+    "   ld t3, 208(a0)",
+    "   ld t4, 216(a0)",
+    "   ld t5, 224(a0)",
+    "   ld t6, 232(a0)",
+    // Set sstatus: SPP=0 (user mode), SPIE=1, SIE=0
+    // SPP is bit 8, SPIE is bit 5
+    "   li t0, 0x00000020",
+    "   csrw sstatus, t0",
+    // Return to user mode
+    "   sret",
+);
+
 /// Switch from one task to another
 /// a0 = pointer to old TaskContext (saves current state)
 /// a1 = pointer to new TaskContext (restores new state)
@@ -198,4 +257,31 @@ pub fn prepare_trap_frame(tf: &mut TrapFrame, pc: usize, sp: usize, a0: usize) {
     tf.a0 = a0;
     // SPP = 0 (user mode), SPIE = 1, SIE = 0
     tf.sstatus = 0x00000020;
+}
+
+/// Return to user mode
+/// # Safety
+/// This function switches to user mode and should only be called after
+/// proper setup of the trap frame and page table.
+#[inline(always)]
+pub unsafe fn return_to_user(tf: *mut TrapFrame, satp: usize, sp: usize, pc: usize) {
+    core::arch::asm!(
+        "return_to_user",
+        in("a0") tf,
+        in("a1") satp,
+        in("a2") sp,
+        in("a3") pc,
+    );
+}
+
+/// Switch page table (satp)
+#[inline(always)]
+pub fn switch_page_table(satp: usize) {
+    unsafe {
+        core::arch::asm!(
+            "csrw satp, {0}",
+            "sfence.vma zero, zero",
+            in(reg) satp,
+        );
+    }
 }

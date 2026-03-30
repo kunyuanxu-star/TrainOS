@@ -727,3 +727,122 @@ pub fn handle_cow_page(fault_addr: usize) -> bool {
 
     false
 }
+
+// ============================================
+// User Address Space Management
+// ============================================
+
+/// User address space configuration
+pub struct UserAddressSpace {
+    /// Page table manager for this address space
+    pub pt_manager: PageTableManager,
+    /// SATP value for this address space
+    pub satp: usize,
+    /// User heap start
+    pub heap_start: usize,
+    /// User heap end (current brk)
+    pub heap_end: usize,
+    /// User stack base
+    pub stack_base: usize,
+    /// User stack size
+    pub stack_size: usize,
+}
+
+impl UserAddressSpace {
+    /// Create a new user address space
+    /// Maps kernel as global, and sets up user space as non-global
+    pub fn new() -> Option<Self> {
+        let pt_manager = PageTableManager::new();
+        let satp = 8usize << 60 | pt_manager.root_ppn().0;
+
+        // Default user address space layout:
+        // 0x0000000000000000 - 0x00003FFFFFFFFFFF (user space, 128GB)
+        // We only map a portion for now
+
+        // User heap starts after code/data (we'll set this during exec)
+        // User stack at high address (0x3FFFFFFFE80 = near top of 48-bit user VA)
+
+        Some(Self {
+            pt_manager,
+            satp,
+            heap_start: 0x00400000 + 0x100000, // After first 1MB (text, data, bss)
+            heap_end: 0x00400000 + 0x100000,
+            stack_base: 0x3FFFFFFFE80,  // Near top of user VA
+            stack_size: 0x200000,        // 2MB stack
+        })
+    }
+
+    /// Map a user page with COW (Copy-on-Write) semantics
+    /// The page is readable but not writable - writes trigger COW fault
+    pub fn map_user_cow(&mut self, va: VirtAddr, pa: PhysAddr) -> Result<(), MapError> {
+        self.pt_manager.map(va, pa, PTEFlags::user_cow())
+    }
+
+    /// Map a user page as writable (used after COW break)
+    pub fn map_user_writable(&mut self, va: VirtAddr, pa: PhysAddr) -> Result<(), MapError> {
+        self.pt_manager.map(va, pa, PTEFlags::user_rw())
+    }
+
+    /// Map a user page as readable+executable (for code)
+    pub fn map_user_rx(&mut self, va: VirtAddr, pa: PhysAddr) -> Result<(), MapError> {
+        self.pt_manager.map(va, pa, PTEFlags::user_rx())
+    }
+
+    /// Allocate and map a user page
+    /// Returns the virtual address of the allocated page
+    pub fn alloc_user_page(&mut self, va: VirtAddr) -> Result<PhysAddr, MapError> {
+        let pa = crate::memory::allocator::alloc_page()
+            .ok_or(MapError::NoMemory)?;
+
+        // Zero the page
+        unsafe {
+            core::ptr::write_bytes(pa as *mut u8, 0, PAGE_SIZE);
+        }
+
+        self.map_user_cow(va, PhysAddr::new(pa))?;
+        Ok(PhysAddr::new(pa))
+    }
+
+    /// Set up the initial user stack
+    pub fn setup_user_stack(&mut self) -> Result<usize, MapError> {
+        let stack_top = self.stack_base + self.stack_size;
+
+        // Allocate and map stack pages (growing down from stack_top)
+        let pages = self.stack_size / PAGE_SIZE;
+        for i in 0..pages {
+            let va = VirtAddr::new(stack_top - (i + 1) * PAGE_SIZE);
+            let pa = crate::memory::allocator::alloc_page()
+                .ok_or(MapError::NoMemory)?;
+
+            // Zero the page
+            unsafe {
+                core::ptr::write_bytes(pa as *mut u8, 0, PAGE_SIZE);
+            }
+
+            self.map_user_writable(va, PhysAddr::new(pa))?;
+        }
+
+        Ok(stack_top)
+    }
+
+    /// Get the SATP value for this address space
+    pub fn get_satp(&self) -> usize {
+        self.satp
+    }
+}
+
+/// Copy a user address space for fork (COW semantics)
+/// Both parent and child share the same physical pages initially,
+/// but writes will trigger a page fault and page copy.
+/// Returns the new page table manager and SATP value
+pub fn copy_user_address_space() -> Option<(PageTableManager, usize)> {
+    // For now, this is a simplified implementation
+    // In a full implementation, we would walk the parent's page table
+    // and create COW mappings in the child's page table
+
+    let new_pt = PageTableManager::new();
+    let satp = 8usize << 60 | new_pt.root_ppn().0;
+
+    Some((new_pt, satp))
+}
+

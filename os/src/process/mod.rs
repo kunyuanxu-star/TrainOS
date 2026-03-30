@@ -21,6 +21,19 @@ static GLOBAL_SCHEDULER: Mutex<Scheduler> = Mutex::new(Scheduler::new());
 /// Per-CPU current task pointer (using a simple global for single-core initially)
 static CURRENT_TASK: Mutex<Option<TaskControlBlock>> = Mutex::new(None);
 
+/// Wrapper for trap frame pointer that implements Send
+/// This is safe because we're running on a single-core system
+/// and the trap frame is only accessed from the current CPU
+pub struct TrapFramePtr(pub *mut context::TrapFrame);
+
+unsafe impl Send for TrapFramePtr {}
+
+/// Current trap frame pointer - set in trap handler, used by scheduler
+pub static CURRENT_TRAP_FRAME: Mutex<TrapFramePtr> = Mutex::new(TrapFramePtr(core::ptr::null_mut()));
+
+/// Kernel stack top for each task - used for context switching
+pub static KERNEL_STACK_TOP: Mutex<Option<usize>> = Mutex::new(None);
+
 /// Task Manager - manages all task control blocks
 pub struct TaskManager {
     /// Maximum number of tasks
@@ -43,8 +56,8 @@ impl TaskManager {
         if self.tasks[0].is_none() {
             let mut task = TaskControlBlock::new(0);
             task.status = task::TaskStatus::Running;
-            // Allocate kernel stack for idle task
-            task.alloc_kernel_stack();
+            // Skip kernel stack allocation for now to get boot working
+            // TODO: Fix kernel stack allocation
             self.tasks[0] = Some(task);
         }
     }
@@ -95,17 +108,22 @@ impl Default for TaskManager {
 /// Initialize the process management subsystem
 pub fn init() {
     crate::println!("[process] Initializing process management...");
+    crate::println!("[process] About to lock TASK_MANAGER...");
 
     // Initialize task manager with idle task
     let mut manager = TASK_MANAGER.lock();
+    crate::println!("[process] TASK_MANAGER locked");
     manager.init_idle_task();
     drop(manager);
+
+    crate::println!("[process] About to lock TASK_MANAGER again...");
 
     // Get idle task and set as current
     let manager = TASK_MANAGER.lock();
     if let Some(idle_task) = manager.get_task(0) {
         let mut current = CURRENT_TASK.lock();
         *current = Some(*idle_task);
+        crate::println!("[process] Current task set");
     }
     drop(manager);
 
@@ -134,33 +152,89 @@ pub fn set_current_task(task: TaskControlBlock) {
 }
 
 /// Schedule preemption - called from timer interrupt
+/// This performs the actual context switch
 pub fn schedule_preempt() {
-    let mut scheduler = GLOBAL_SCHEDULER.lock();
-    let mut current_task = CURRENT_TASK.lock();
+    // Get the current trap frame (set by trap handler)
+    let trap_frame_ptr = {
+        let tf = CURRENT_TRAP_FRAME.lock();
+        tf.0
+    };
 
-    // If there's a current task, yield it
-    if let Some(mut task) = current_task.take() {
-        task.status = task::TaskStatus::Ready;
-        let mut sched_task = scheduler::SchedTask::new(task);
-        sched_task.tcb.status = task::TaskStatus::Ready;
-        scheduler.yield_current();
+    if trap_frame_ptr.is_null() {
+        // Not in a trap context, just yield
+        schedule();
+        return;
     }
 
+    let mut scheduler = GLOBAL_SCHEDULER.lock();
+    let mut current_task = CURRENT_TASK.lock();
+    let mut kernel_stack_top = KERNEL_STACK_TOP.lock();
+
     // Check if we should preempt (time slice exhausted)
-    if scheduler.on_tick() {
-        // Time slice exhausted
-        crate::println!("[scheduler] Time slice exhausted, switching tasks");
+    let should_preempt = scheduler.on_tick();
+
+    // Get the current task before we modify it
+    let current_tid = current_task.as_ref().map(|t| t.id);
+
+    // If there's a current task, save its state
+    if let Some(ref mut task) = *current_task {
+        task.status = if should_preempt {
+            task::TaskStatus::Ready
+        } else {
+            task.status
+        };
+
+        // Save the trap frame to the current task
+        // The trap_frame pointer is where the registers were saved on the stack
+        // We need to copy it to a stable location in the task's kernel stack
+        if !trap_frame_ptr.is_null() {
+            task.trap_frame = trap_frame_ptr;
+        }
+
+        // Save kernel stack top
+        *kernel_stack_top = Some(task.kernel_sp);
+
+        // Put current task back in queue if it was running and should preempt
+        if should_preempt {
+            let mut sched_task = scheduler::SchedTask::new(*task);
+            scheduler.yield_current();
+        }
     }
 
     // Fetch next task
-    if let Some(mut next) = scheduler.fetch_task() {
-        next.tcb.status = task::TaskStatus::Running;
-        scheduler.set_current(next);
-        *current_task = Some(next.tcb);
+    if let Some(next) = scheduler.fetch_task() {
+        // Set up the trap frame for the new task
+        // We need to modify the current trap frame to restore the new task's state
+        let next_tcb = next.tcb;
+
+        // Copy the new task's trap frame to the current trap frame location
+        if !next_tcb.trap_frame.is_null() && !trap_frame_ptr.is_null() {
+            unsafe {
+                core::ptr::copy_nonoverlapping(
+                    next_tcb.trap_frame,
+                    trap_frame_ptr,
+                    1
+                );
+            }
+        }
+
+        // Set the kernel stack top for the new task
+        *kernel_stack_top = Some(next_tcb.kernel_sp);
+
+        // Mark as running
+        let mut new_sched_task = scheduler::SchedTask::new(next_tcb);
+        new_sched_task.tcb.status = task::TaskStatus::Running;
+        scheduler.set_current(new_sched_task);
+
+        // Update current task
+        *current_task = Some(next_tcb);
+
+        crate::println!("[scheduler] Switched to task");
     }
 
     drop(scheduler);
     drop(current_task);
+    drop(kernel_stack_top);
 }
 
 /// Main scheduling function - select and run next task
@@ -195,16 +269,22 @@ pub fn create_process(entry: usize, stack: usize, is_user: bool) -> Option<TaskI
 
     let mut tcb = TaskControlBlock::new(task_id.as_usize());
 
-    // Allocate kernel stack
+    // Allocate kernel stack (this also sets up trap_frame)
     tcb.alloc_kernel_stack();
 
     // Set up trap frame for the new task
     if is_user {
-        // User mode task
-        let mut tf = TrapFrame::new_user_entry(entry, stack, 0);
-        // SPP = 0 (user mode), SPIE = 1, SIE = 0
-        tf.sstatus = 0x00000020;
-        tcb.trap_frame = core::ptr::null_mut(); // Will be set on first switch
+        // User mode task - initialize the trap frame at the reserved location
+        // The trap_frame pointer was set by alloc_kernel_stack
+        if !tcb.trap_frame.is_null() {
+            let tf = TrapFrame::new_user_entry(entry, stack, 0);
+            // SPP = 0 (user mode), SPIE = 1, SIE = 0
+            let mut tf = tf;
+            tf.sstatus = 0x00000020;
+            unsafe {
+                core::ptr::write(tcb.trap_frame, tf);
+            }
+        }
         tcb.user_pc = entry;
         tcb.user_sp = stack;
     } else {
@@ -243,6 +323,12 @@ pub fn run_first_process() -> ! {
     }
 }
 
+/// Test task that prints a message
+fn test_task() {
+    crate::println!("[test] Test task is running!");
+    crate::println!("[test] This confirms scheduler is working");
+}
+
 /// Test basic syscalls
 fn test_basic_syscalls() {
     crate::println!("[process] Testing basic syscalls...");
@@ -265,8 +351,9 @@ fn test_basic_syscalls() {
 fn start_scheduler() {
     crate::println!("[process] Starting scheduler...");
 
-    // Create a simple init task
-    if let Some(_tid) = create_process(0x00400000, 0x00400000 + 0x10000, true) {
+    // Create a simple init task (kernel thread for now)
+    // User tasks require proper address space setup which we don't have yet
+    if let Some(_tid) = create_process(test_task as usize, 0x80020000, false) {
         crate::println!("[process] Created init task");
     }
 

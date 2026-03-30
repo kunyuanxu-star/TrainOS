@@ -33,21 +33,18 @@ pub enum InterruptCause {
 
 /// Initialize trap handling
 pub fn init() {
-    crate::println!("[trap] Initializing trap handling...");
-    crate::println!("[trap] Setting up sstatus, stvec...");
+    // Skip println for now to avoid potential issues
+    // crate::println!("[trap] Initializing trap handling...");
 
-    // Set stvec to trap handler entry point
-    // Using Direct mode: stvec points to a single entry point
+    // Set stvec to trap handler entry point using inline asm
     extern "C" {
         fn __trap_entry();
     }
     unsafe {
-        // Set stvec: bits[1:0] = mode (0=Direct), bits[MAX:2] = address
         let stvec_val = __trap_entry as *const () as usize;
         core::arch::asm!("csrw stvec, {0}", in(reg) stvec_val);
 
-        // Enable interrupts - set SIE bit (Supervisor Interrupt Enable) in sstatus
-        // SIE is bit 1 in sstatus
+        // Enable interrupts - set SIE bit in sstatus
         let sie_bit = 1usize << 1;
         core::arch::asm!(
             "csrr t0, sstatus",
@@ -58,16 +55,44 @@ pub fn init() {
         );
     }
 
-    // Initialize CLINT timer
+    // Initialize CLINT timer for preemption
     crate::drivers::interrupt::clint_init();
 
-    crate::println!("[trap] OK");
+    // Print OK using inline asm
+    unsafe {
+        core::arch::asm!(
+            "li a7, 1",
+            "li a0, 79",  // 'O'
+            "ecall",
+            "li a0, 75",  // 'K'
+            "ecall",
+            "li a0, 10",  // '\n'
+            "ecall"
+        );
+    }
 }
 
 /// Handle a trap - called from assembly trap entry
 /// a0 = pointer to trap frame on stack
 #[no_mangle]
 extern "C" fn handle_trap(trap_frame: *mut crate::process::context::TrapFrame) {
+    // Set the current trap frame pointer for the scheduler
+    {
+        let mut current_tf = crate::process::CURRENT_TRAP_FRAME.lock();
+        *current_tf = crate::process::TrapFramePtr(trap_frame);
+    }
+
+    // Also set the kernel stack top
+    {
+        let mut kstack = crate::process::KERNEL_STACK_TOP.lock();
+        // The sp at this point is the kernel stack pointer (after the trap frame was pushed)
+        // We need to get it from the trap frame that was passed
+        // Actually, we need to get the sp from the context
+        unsafe {
+            let sp = (*trap_frame).sp;
+            *kstack = Some(sp);
+        }
+    }
     #[allow(deprecated)]
     let scause = riscv::register::scause::read();
 

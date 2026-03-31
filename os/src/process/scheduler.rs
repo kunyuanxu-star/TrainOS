@@ -260,6 +260,12 @@ impl Scheduler {
         }
     }
 
+    /// Yield with a specific task to add back to queue
+    pub fn yield_current_with_task(&mut self, task: SchedTask) {
+        // Just push the task to its priority queue
+        let _ = self.queues[task.priority].push(task);
+    }
+
     /// Block the current task (waiting for I/O, etc.)
     pub fn block_current(&mut self) {
         if let Some(mut current) = self.current.take() {

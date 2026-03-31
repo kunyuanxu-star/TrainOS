@@ -95,12 +95,23 @@ pub fn set_mtimecmp(value: u64) {
     write_clint(CLINT_MTIMECMP, value);
 }
 
-/// Set timer to fire after `us` microseconds
+/// Set timer to fire after `us` microseconds using SBI_SET_TIMER
 pub fn set_timer_relative(us: u64) {
-    // Read current mtime and set mtimecmp directly
+    // Read current mtime and calculate target
     let mtime = get_mtime();
     let target = mtime.wrapping_add(us * 10);  // 10 MHz timebase
-    set_mtimecmp(target);
+
+    // Use SBI_SET_TIMER instead of direct CLINT access for compatibility
+    // SBI function ID 0 = SET_TIMER
+    // a0 = time value (absolute mtimecmp)
+    unsafe {
+        core::arch::asm!(
+            "li a7, 0",
+            "mv a0, {0}",
+            "ecall",
+            in(reg) target
+        );
+    }
 }
 
 /// Initialize the CLINT timer

@@ -244,44 +244,76 @@ pub fn schedule() {
 /// This is called after a syscall that requested a schedule (like sys_sched_yield)
 /// trap_frame: the current trap frame (on kernel stack)
 pub fn do_schedule(trap_frame: *mut context::TrapFrame) {
-    let mut scheduler = GLOBAL_SCHEDULER.lock();
-    let mut current_task = CURRENT_TASK.lock();
+    crate::println!("[scheduler] do_schedule called");
 
-    // Save current task's trap frame
-    if let Some(ref mut task) = *current_task {
-        // Save the current trap frame state to the task's saved trap frame
-        // The trap_frame points to the kernel stack where registers were saved
-        if !trap_frame.is_null() {
-            task.trap_frame = trap_frame;
-        }
-        // Mark as ready for next time
-        task.status = task::TaskStatus::Ready;
+    // For kernel threads, we need to use context_switch, not trap frame copying
+    // The trap frame has the state at the point of ecall, but we need to save
+    // the kernel thread's TaskContext (callee-saved registers)
+
+    let mut scheduler = GLOBAL_SCHEDULER.lock();
+
+    // Take the current task (we'll put it back if needed)
+    let mut current_tcb_opt = CURRENT_TASK.lock().take();
+
+    if let Some(ref mut current_tcb) = current_tcb_opt {
+        // Save current task's status
+        current_tcb.status = task::TaskStatus::Ready;
+        crate::println!("[scheduler] Saving current task");
     }
 
-    // Fetch next task
-    if let Some(next) = scheduler.fetch_task() {
-        let next_tcb = next.tcb;
+    // Fetch next task from scheduler
+    let next_opt = scheduler.fetch_task();
+    if next_opt.is_some() {
+        crate::println!("[scheduler] Fetched next task");
+    } else {
+        crate::println!("[scheduler] No next task found");
+    }
 
-        // Copy next task's saved trap frame to current trap frame location
-        // This way, when we return via sret, we restore next task's state
-        if !next_tcb.trap_frame.is_null() && !trap_frame.is_null() {
-            unsafe {
-                core::ptr::copy_nonoverlapping(
-                    next_tcb.trap_frame,
-                    trap_frame,
-                    1
-                );
-            }
+    if let Some(next_sched_task) = next_opt {
+        let mut next_tcb = next_sched_task.tcb;
+        next_tcb.status = task::TaskStatus::Running;
+
+        // Create a new TaskContext for the current task to save its state
+        // This represents where we were when we called sched_yield
+        let mut saved_ctx = context::TaskContext::new(0, 0);
+
+        // Initialize the next task's context if needed
+        // For first run, this sets ra = entry point and sp = kernel stack top
+        context::init_task_context(&mut next_tcb.ctx, next_tcb.user_pc, next_tcb.kernel_sp);
+
+        // Put current task back into scheduler's queue
+        if let Some(mut curr) = current_tcb_opt.take() {
+            curr.status = task::TaskStatus::Ready;
+            let sched_task = scheduler::SchedTask::new(curr);
+            scheduler.yield_current_with_task(sched_task);
         }
 
-        // Update current task
-        *current_task = Some(next_tcb);
+        // Set next task as current
+        *CURRENT_TASK.lock() = Some(next_tcb);
 
-        crate::println!("[scheduler] Switched to task");
+        crate::println!("[scheduler] Switching via context_switch");
+
+        // Perform context switch - this saves current state and jumps to next task
+        unsafe {
+            context::context_switch(&mut saved_ctx, &next_tcb.ctx);
+        }
+
+        // When we return from context_switch, we're back in the previous task
+        // (the one that called sched_yield)
+        crate::println!("[scheduler] Returned from context_switch");
+
+        // Save the state of the task that just returned
+        if let Some(ref mut prev_tcb) = *CURRENT_TASK.lock() {
+            prev_tcb.status = task::TaskStatus::Ready;
+        }
+    } else {
+        // No next task - put current back
+        if let Some(curr) = current_tcb_opt.take() {
+            *CURRENT_TASK.lock() = Some(curr);
+        }
     }
 
     drop(scheduler);
-    drop(current_task);
 }
 
 /// Create a new process (fork)
@@ -330,11 +362,16 @@ pub fn run_first_process() -> ! {
 }
 
 /// Idle task - runs when no other tasks are runnable
+/// Note: Using busy loop instead of wfi because timer interrupt doesn't work in QEMU
 fn idle_task() {
+    let mut counter: usize = 0;
     loop {
-        unsafe {
-            core::arch::asm!("wfi");
+        counter += 1;
+        if counter % 1000 == 0 {
+            crate::println!("[idle] idle task running");
         }
+        // Yield to allow other tasks to run
+        crate::syscall::sys_sched_yield();
     }
 }
 
@@ -357,9 +394,28 @@ fn test_task() {
 fn start_scheduler() {
     crate::println!("[sched] Starting scheduler");
 
-    // Create idle task as the only task (kernel thread)
+    // Create idle task (kernel thread)
     if let Some(_tid) = create_process(idle_task as *const () as usize, 0x80020000, false) {
         crate::println!("[sched] Idle task created");
+    }
+
+    // Create a test task that yields
+    fn test_task() {
+        static mut COUNT: usize = 0;
+        loop {
+            unsafe {
+                COUNT += 1;
+                if COUNT % 10 == 0 {
+                    crate::println!("[test] Task cycle");
+                }
+            }
+            // Yield to allow scheduler to switch tasks
+            crate::syscall::sys_sched_yield();
+        }
+    }
+
+    if let Some(_tid) = create_process(test_task as *const () as usize, 0x80020000, false) {
+        crate::println!("[sched] Test task created");
     }
 
     // Fetch the first task to run

@@ -57,51 +57,27 @@ pub fn disable_irq(_irq: usize) {
 }
 
 // ============================================
-// CLINT Timer Support
+// Timer Support via SBI (works with both CLINT and ACLINT)
 // ============================================
 
-/// CLINT (Core Local Interrupt Controller) registers
-/// QEMU virt machine: CLINT at 0x2000000
-pub const CLINT_BASE: usize = 0x200_0000;
-
-/// CLINT memory-mapped registers
-pub const CLINT_MTIME: usize = CLINT_BASE + 0xBFF8;      // Read-only, real-time counter
-pub const CLINT_MTIMECMP: usize = CLINT_BASE + 0x4000;   // Per-hart timer compare (offset per hart)
-
-/// CLINT register access
+/// Read the time CSR (mtime on RISC-V)
 #[inline(always)]
-fn read_clint(reg: usize) -> u64 {
-    unsafe { (reg as *const u64).read_volatile() }
-}
-
-#[inline(always)]
-fn write_clint(reg: usize, value: u64) {
-    unsafe { (reg as *mut u64).write_volatile(value) }
-}
-
-/// Get current mtime value
-pub fn get_mtime() -> u64 {
-    read_clint(CLINT_MTIME)
-}
-
-/// Get mtimecmp for current hart (assuming hart 0)
-pub fn get_mtimecmp() -> u64 {
-    read_clint(CLINT_MTIMECMP)
-}
-
-/// Set mtimecmp for current hart (assumes hart 0)
-/// This arms the timer to interrupt when mtime >= mtimecmp
-pub fn set_mtimecmp(value: u64) {
-    write_clint(CLINT_MTIMECMP, value);
+fn get_time() -> u64 {
+    let val: u64;
+    unsafe {
+        core::arch::asm!("csrr {0}, time", out(reg) val);
+    }
+    val
 }
 
 /// Set timer to fire after `us` microseconds using SBI_SET_TIMER
 pub fn set_timer_relative(us: u64) {
-    // Read current mtime and calculate target
-    let mtime = get_mtime();
-    let target = mtime.wrapping_add(us * 10);  // 10 MHz timebase
+    // Read current time and calculate target
+    let current = get_time();
+    // For 10MHz timebase: 10 ticks per microsecond
+    let target = current.wrapping_add(us * 10);
 
-    // Use SBI_SET_TIMER instead of direct CLINT access for compatibility
+    // Use SBI_SET_TIMER - this is the portable way that works with any SBI implementation
     // SBI function ID 0 = SET_TIMER
     // a0 = time value (absolute mtimecmp)
     unsafe {
@@ -114,10 +90,10 @@ pub fn set_timer_relative(us: u64) {
     }
 }
 
-/// Initialize the CLINT timer
+/// Initialize the timer for preemption
 pub fn clint_init() {
-    // Set a short initial timer - this will fire after 10 seconds
-    set_timer_relative(10_000_000); // 10 seconds
+    // Set initial timer - will fire after 10ms
+    set_timer_relative(10_000);
 
     // Enable timer interrupt in sie (Supervisor Interrupt Enable)
     // STIE bit (bit 5) enables supervisor timer interrupts
@@ -131,14 +107,6 @@ pub fn clint_init() {
         sie |= 1 << 1;  // SSIE = Supervisor Software Interrupt Enable
         core::arch::asm!("csrw sie, {}", in(reg) sie);
     }
-}
-
-/// Clear the pending timer interrupt
-pub fn clear_timer_interrupt() {
-    // In RISC-V, writing to mtimecmp clears the pending interrupt
-    // byarm: we just re-arm with a large value temporarily
-    let mtime = get_mtime();
-    set_mtimecmp(mtime.wrapping_add(u64::MAX / 4));
 }
 
 /// PLIC (Platform Level Interrupt Controller) registers

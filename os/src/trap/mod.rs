@@ -56,6 +56,7 @@ pub fn init() {
     }
 
     // Initialize CLINT timer for preemption
+    // Use a 100-second timer for testing
     crate::drivers::interrupt::clint_init();
 
     // Print OK using inline asm
@@ -130,8 +131,11 @@ extern "C" fn handle_trap(trap_frame: *mut crate::process::context::TrapFrame) {
                     crate::syscall::do_syscall(trap_frame);
 
                     // Check if a schedule was requested (e.g., from sys_sched_yield)
-                    if *crate::process::SCHEDULE_REQUESTED.lock() {
-                        *crate::process::SCHEDULE_REQUESTED.lock() = false;
+                    // Store guard in variable to avoid double-locking
+                    let mut schedule_guard = crate::process::SCHEDULE_REQUESTED.lock();
+                    if *schedule_guard {
+                        *schedule_guard = false;
+                        drop(schedule_guard);
                         // Perform the actual task switch
                         crate::process::do_schedule(trap_frame);
                         // Don't return normally - do_schedule has switched context
@@ -170,6 +174,9 @@ extern "C" fn handle_trap(trap_frame: *mut crate::process::context::TrapFrame) {
 
 /// Handle timer interrupt - trigger task scheduling
 fn handle_timer_interrupt() {
+    // Debug: print when timer interrupt fires
+    crate::print!("[trap] Timer interrupt!\r\n");
+
     // Re-arm the timer for the next quantum
     // Use 10ms time slice
     crate::drivers::interrupt::set_timer_relative(10_000);  // 10ms in microseconds

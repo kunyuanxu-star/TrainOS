@@ -640,9 +640,8 @@ fn sys_nanosleep(_req: usize, _rem: usize) -> isize {
 
 /// Yield the CPU to scheduler
 pub fn sys_sched_yield() -> isize {
-    // For now, just return without scheduling
-    // The timer interrupt (when working) will trigger the actual scheduling
-    // This allows the system to run even without working timer interrupts
+    // Request the scheduler to run and potentially switch to another task
+    crate::process::request_schedule();
     0
 }
 

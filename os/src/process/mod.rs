@@ -155,64 +155,63 @@ pub fn set_current_task(task: TaskControlBlock) {
 /// Schedule preemption - called from timer interrupt
 /// This performs the actual context switch
 pub fn schedule_preempt() {
-    // Get the current trap frame (set by trap handler)
-    let trap_frame_ptr = {
-        let tf = CURRENT_TRAP_FRAME.lock();
-        tf.0
-    };
-
-    if trap_frame_ptr.is_null() {
-        // Not in a trap context, just yield
-        schedule();
-        return;
-    }
-
     let mut scheduler = GLOBAL_SCHEDULER.lock();
-    let mut current_task = CURRENT_TASK.lock();
+    let current_tcb_opt = CURRENT_TASK.lock().take();
 
     // Check if we should preempt (time slice exhausted)
     let should_preempt = scheduler.on_tick();
 
-    // If there's a current task, save its state
-    if let Some(ref mut task) = *current_task {
-        task.status = if should_preempt {
-            task::TaskStatus::Ready
-        } else {
-            task.status
-        };
-
-        // Save the trap frame to the current task
-        if !trap_frame_ptr.is_null() {
-            task.trap_frame = trap_frame_ptr;
+    if !should_preempt {
+        // Put current task back if we aren't preempting
+        if let Some(t) = current_tcb_opt {
+            *CURRENT_TASK.lock() = Some(t);
         }
-
-        // Put current task back in queue if it was running and should preempt
-        if should_preempt {
-            let _sched_task = scheduler::SchedTask::new(*task);
-            scheduler.yield_current();
-        }
+        return;
     }
+
+    if current_tcb_opt.is_none() {
+        return;
+    }
+    let mut current_tcb = current_tcb_opt.unwrap();
+
+    // IMPORTANT: Save the context pointer BEFORE moving current_tcb to scheduler
+    // This is the bug fix - we need the pointer while current_tcb is still valid
+    let saved_ctx_ptr = &mut current_tcb.ctx as *mut context::TaskContext;
 
     // Fetch next task
-    if let Some(next) = scheduler.fetch_task() {
-        let next_tcb = next.tcb;
-
-        // Mark as running
-        let mut new_sched_task = scheduler::SchedTask::new(next_tcb);
-        new_sched_task.tcb.status = task::TaskStatus::Running;
-        scheduler.set_current(new_sched_task);
-
-        // Update current task
-        *current_task = Some(next_tcb);
-
-        crate::println!("[scheduler] Switched to task");
-        // NOTE: We don't copy trap_frame here - the actual switch happens
-        // when handle_trap returns via sret, which uses the trap_frame
-        // that was set during the trap entry
+    let next_opt = scheduler.fetch_task();
+    if next_opt.is_none() {
+        // No next task, put current back
+        *CURRENT_TASK.lock() = Some(current_tcb);
+        return;
     }
 
+    let mut next_tcb = next_opt.unwrap().tcb;
+
+    // Initialize next task's context if it's new (never run before, ctx.ra == 0)
+    if next_tcb.ctx.ra == 0 {
+        context::init_task_context(&mut next_tcb.ctx, next_tcb.user_pc, next_tcb.kernel_sp);
+    }
+
+    // Save current task's context and put it back in scheduler queue
+    current_tcb.status = task::TaskStatus::Ready;
+    let sched_task = scheduler::SchedTask::new(current_tcb);
+    scheduler.yield_current_with_task(sched_task);
+
+    // Update scheduler's current task
+    let mut new_sched_task = scheduler::SchedTask::new(next_tcb);
+    new_sched_task.tcb.status = task::TaskStatus::Running;
+    scheduler.set_current(new_sched_task);
+
+    // Update current task
+    *CURRENT_TASK.lock() = Some(next_tcb);
+
     drop(scheduler);
-    drop(current_task);
+
+    // Perform actual context switch - save current (via saved_ctx_ptr), load next
+    unsafe {
+        context::context_switch(saved_ctx_ptr, &next_tcb.ctx);
+    }
 }
 
 /// Main scheduling function - select and run next task
@@ -231,6 +230,7 @@ pub fn schedule() {
 
     // Fetch next task
     if let Some(mut next) = scheduler.fetch_task() {
+        crate::print!("[sched] switch\r\n");
         next.tcb.status = task::TaskStatus::Running;
         scheduler.set_current(next);
         *current_task = Some(next.tcb);
@@ -244,76 +244,62 @@ pub fn schedule() {
 /// This is called after a syscall that requested a schedule (like sys_sched_yield)
 /// trap_frame: the current trap frame (on kernel stack)
 pub fn do_schedule(trap_frame: *mut context::TrapFrame) {
-    crate::println!("[scheduler] do_schedule called");
-
-    // For kernel threads, we need to use context_switch, not trap frame copying
-    // The trap frame has the state at the point of ecall, but we need to save
-    // the kernel thread's TaskContext (callee-saved registers)
-
     let mut scheduler = GLOBAL_SCHEDULER.lock();
 
-    // Take the current task (we'll put it back if needed)
+    // Take the current task
     let mut current_tcb_opt = CURRENT_TASK.lock().take();
 
-    if let Some(ref mut current_tcb) = current_tcb_opt {
-        // Save current task's status
-        current_tcb.status = task::TaskStatus::Ready;
-        crate::println!("[scheduler] Saving current task");
+    if current_tcb_opt.is_none() {
+        return;
     }
+
+    let mut current_tcb = current_tcb_opt.unwrap();
+
+    // Mark current as ready and put back in scheduler
+    current_tcb.status = task::TaskStatus::Ready;
+    let sched_task = scheduler::SchedTask::new(current_tcb);
+    scheduler.yield_current_with_task(sched_task);
 
     // Fetch next task from scheduler
     let next_opt = scheduler.fetch_task();
-    if next_opt.is_some() {
-        crate::println!("[scheduler] Fetched next task");
-    } else {
-        crate::println!("[scheduler] No next task found");
+    if next_opt.is_none() {
+        // No next task - should not happen if idle task is always runnable
+        // Put current back
+        if let Some(curr) = scheduler.get_current_mut() {
+            curr.tcb.status = task::TaskStatus::Running;
+            *CURRENT_TASK.lock() = Some(curr.tcb);
+        }
+        return;
     }
 
-    if let Some(next_sched_task) = next_opt {
-        let mut next_tcb = next_sched_task.tcb;
-        next_tcb.status = task::TaskStatus::Running;
+    let mut next_tcb = next_opt.unwrap().tcb;
+    next_tcb.status = task::TaskStatus::Running;
 
-        // Create a new TaskContext for the current task to save its state
-        // This represents where we were when we called sched_yield
-        let mut saved_ctx = context::TaskContext::new(0, 0);
-
-        // Initialize the next task's context if needed
-        // For first run, this sets ra = entry point and sp = kernel stack top
+    // Initialize next task's context if it's new (never run before, ctx.ra == 0)
+    if next_tcb.ctx.ra == 0 {
         context::init_task_context(&mut next_tcb.ctx, next_tcb.user_pc, next_tcb.kernel_sp);
-
-        // Put current task back into scheduler's queue
-        if let Some(mut curr) = current_tcb_opt.take() {
-            curr.status = task::TaskStatus::Ready;
-            let sched_task = scheduler::SchedTask::new(curr);
-            scheduler.yield_current_with_task(sched_task);
-        }
-
-        // Set next task as current
-        *CURRENT_TASK.lock() = Some(next_tcb);
-
-        crate::println!("[scheduler] Switching via context_switch");
-
-        // Perform context switch - this saves current state and jumps to next task
-        unsafe {
-            context::context_switch(&mut saved_ctx, &next_tcb.ctx);
-        }
-
-        // When we return from context_switch, we're back in the previous task
-        // (the one that called sched_yield)
-        crate::println!("[scheduler] Returned from context_switch");
-
-        // Save the state of the task that just returned
-        if let Some(ref mut prev_tcb) = *CURRENT_TASK.lock() {
-            prev_tcb.status = task::TaskStatus::Ready;
-        }
-    } else {
-        // No next task - put current back
-        if let Some(curr) = current_tcb_opt.take() {
-            *CURRENT_TASK.lock() = Some(curr);
-        }
     }
+
+    // Set next task as current
+    *CURRENT_TASK.lock() = Some(next_tcb);
+    scheduler.set_current(scheduler::SchedTask::new(next_tcb));
+
+    // Save current task's context pointer (before we lose current_tcb)
+    let saved_ctx_ptr = &mut current_tcb.ctx as *mut context::TaskContext;
 
     drop(scheduler);
+
+    // Perform context switch - saves current state to saved_ctx_ptr, loads next
+    unsafe {
+        context::context_switch(saved_ctx_ptr, &next_tcb.ctx);
+    }
+
+    // When context_switch returns, we're back in the previous task
+    // The previous task's state was saved to its TCB's ctx field
+    // Mark it as ready so it can be scheduled again
+    if let Some(ref mut prev_tcb) = *CURRENT_TASK.lock() {
+        prev_tcb.status = task::TaskStatus::Ready;
+    }
 }
 
 /// Create a new process (fork)

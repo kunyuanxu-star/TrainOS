@@ -161,9 +161,10 @@ pub fn validate_elf(data: &[u8]) -> ElfResult {
     ElfResult::Success
 }
 
-/// Load an ELF file into memory
-/// Returns the entry point address on success
-pub fn load_elf(data: &[u8]) -> Result<usize, ElfResult> {
+/// Load an ELF file into user address space using Sv39 page tables
+/// Returns (entry_point, user_sp, satp) on success
+pub fn load_elf(data: &[u8], user_space: &mut crate::memory::Sv39::UserAddressSpace) -> Result<(usize, usize), ElfResult> {
+    // Returns (entry_point, user_sp)
     if data.len() < core::mem::size_of::<Elf64Header>() {
         return Err(ElfResult::InvalidFormat);
     }
@@ -176,11 +177,11 @@ pub fn load_elf(data: &[u8]) -> Result<usize, ElfResult> {
         e => return Err(e),
     }
 
-    crate::println!("[elf] Loading ELF executable");
+    crate::print!("[elf] Loading ELF\r\n");
 
     // Only support ET_EXEC (executable)
     if header.e_type != ET_EXEC {
-        crate::println!("[elf] Only ET_EXEC supported");
+        crate::print!("[elf] Only ET_EXEC supported\r\n");
         return Err(ElfResult::Unsupported);
     }
 
@@ -189,42 +190,7 @@ pub fn load_elf(data: &[u8]) -> Result<usize, ElfResult> {
     let phdr_size = header.e_phentsize as usize;
     let phdr_count = header.e_phnum as usize;
 
-    crate::println!("[elf] Program headers: count loaded");
-
-    // Track the lowest and highest virtual addresses for setup
-    let mut min_vaddr: usize = 0xFFFFFFFFFFFFFFFF;
-    let mut max_vaddr: usize = 0;
-
-    // First pass: calculate memory requirements
-    for i in 0..phdr_count {
-        let phdr: &Elf64Phdr = unsafe { &*(phdr_ptr.add(i * phdr_size) as *const Elf64Phdr) };
-
-        if phdr.p_type == PT_LOAD {
-            let vaddr = phdr.p_vaddr as usize;
-            let memsz = phdr.p_memsz as usize;
-            if vaddr < min_vaddr {
-                min_vaddr = vaddr;
-            }
-            if vaddr + memsz > max_vaddr {
-                max_vaddr = vaddr + memsz;
-            }
-        }
-    }
-
-    // For simplicity, use identity mapping: virtual = physical for user space
-    // In a full implementation, we would create a new address space for the user program
-    // User space starts at 0x0 and we map it to physical memory starting at USER_BASE
-
-    const USER_BASE: usize = 0x00400000;  // Typical user program base
-    const PAGE_SIZE: usize = 4096;
-
-    // Calculate total pages needed
-    let total_size = max_vaddr - min_vaddr;
-    let _pages_needed = (total_size + PAGE_SIZE - 1) / PAGE_SIZE;
-
-    crate::println!("[elf] Loading bytes and pages from vaddr");
-
-    // Load each segment and copy to physical memory (identity mapped for simplicity)
+    // Load each PT_LOAD segment
     for i in 0..phdr_count {
         let phdr: &Elf64Phdr = unsafe { &*(phdr_ptr.add(i * phdr_size) as *const Elf64Phdr) };
 
@@ -233,34 +199,96 @@ pub fn load_elf(data: &[u8]) -> Result<usize, ElfResult> {
             let vaddr = phdr.p_vaddr as usize;
             let filesz = phdr.p_filesz as usize;
             let memsz = phdr.p_memsz as usize;
+            let flags = phdr.p_flags;
 
-            crate::println!("[elf] Loading segment");
+            // Align vaddr to page boundary
+            let page_start = vaddr & !0xFFF;
+            let page_end = ((vaddr + memsz) + 4095) & !0xFFF;
+            let num_pages = (page_end - page_start) / 4096;
 
-            // For identity mapping, calculate physical destination
-            let phys_dest = USER_BASE + (vaddr - min_vaddr);
+            crate::print!("[elf] Loading segment\r\n");
 
-            // Copy file data to physical memory (assuming identity mapped)
-            let src_ptr = unsafe { data.as_ptr().add(file_offset) };
-            let dst_ptr = phys_dest as *mut u8;
+            // Map each page into user address space
+            for p in 0..num_pages {
+                let curr_vaddr = page_start + p * 4096;
 
-            unsafe {
-                // Copy the file data
-                core::ptr::copy_nonoverlapping(src_ptr, dst_ptr, filesz);
+                // Allocate physical page
+                if let Some(phys_page) = crate::memory::allocator::alloc_page() {
+                    // Determine page flags based on segment flags
+                    let executable = (flags & PF_X) != 0;
+                    let writable = (flags & PF_W) != 0;
 
-                // Zero out the BSS segment (memsz > filesz)
-                if memsz > filesz {
-                    core::ptr::write_bytes(dst_ptr.add(filesz), 0, memsz - filesz);
+                    // Map as user page (RX for code, RW for data)
+                    if executable {
+                        if user_space.map_user_rx(
+                            crate::memory::Sv39::VirtAddr::new(curr_vaddr),
+                            crate::memory::Sv39::PhysAddr::new(phys_page)
+                        ).is_err() {
+                            crate::print!("[elf] Failed to map page\r\n");
+                            return Err(ElfResult::LoadError);
+                        }
+                    } else if writable {
+                        if user_space.map_user_writable(
+                            crate::memory::Sv39::VirtAddr::new(curr_vaddr),
+                            crate::memory::Sv39::PhysAddr::new(phys_page)
+                        ).is_err() {
+                            crate::print!("[elf] Failed to map page\r\n");
+                            return Err(ElfResult::LoadError);
+                        }
+                    } else {
+                        if user_space.map_user_cow(
+                            crate::memory::Sv39::VirtAddr::new(curr_vaddr),
+                            crate::memory::Sv39::PhysAddr::new(phys_page)
+                        ).is_err() {
+                            crate::print!("[elf] Failed to map page\r\n");
+                            return Err(ElfResult::LoadError);
+                        }
+                    }
+
+                    // Copy data to the page
+                    let kernel_va = 0x80000000 + phys_page;
+                    let dst = kernel_va as *mut u8;
+
+                    // Calculate what to copy
+                    let offset_in_seg = if p == 0 { vaddr - page_start } else { 0 };
+                    let file_pos = file_offset + offset_in_seg;
+                    let copy_len = if p == 0 {
+                        filesz.min(4096 - offset_in_seg)
+                    } else if file_offset + p * 4096 < filesz + file_offset {
+                        4096
+                    } else {
+                        0
+                    };
+
+                    if copy_len > 0 && file_pos < data.len() {
+                        let src = unsafe { data.as_ptr().add(file_pos) };
+                        unsafe {
+                            core::ptr::copy_nonoverlapping(src, dst, copy_len);
+                            // Zero BSS portion if any
+                            if copy_len < 4096 {
+                                core::ptr::write_bytes(dst.add(copy_len), 0, 4096 - copy_len);
+                            }
+                        }
+                    } else {
+                        // BSS - zero the page
+                        unsafe {
+                            core::ptr::write_bytes(dst, 0, 4096);
+                        }
+                    }
+                } else {
+                    crate::print!("[elf] Out of memory\r\n");
+                    return Err(ElfResult::LoadError);
                 }
             }
-
-            crate::println!("[elf] Segment loaded to physical memory");
         }
     }
 
-    // Return entry point virtual address
-    // The actual execution would need to set up proper page tables and switch to user mode
-    crate::println!("[elf] Entry point loaded");
-    Ok(header.e_entry as usize)
+    // Set up user stack
+    let stack_top = user_space.setup_user_stack()
+        .map_err(|_| ElfResult::LoadError)?;
+
+    crate::print!("[elf] Loaded successfully\r\n");
+    Ok((header.e_entry as usize, stack_top - 16))
 }
 
 /// Get the entry point of an ELF file without loading it

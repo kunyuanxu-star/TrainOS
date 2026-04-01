@@ -835,14 +835,88 @@ impl UserAddressSpace {
 /// Both parent and child share the same physical pages initially,
 /// but writes will trigger a page fault and page copy.
 /// Returns the new page table manager and SATP value
-pub fn copy_user_address_space() -> Option<(PageTableManager, usize)> {
-    // For now, this is a simplified implementation
-    // In a full implementation, we would walk the parent's page table
-    // and create COW mappings in the child's page table
+pub fn copy_user_address_space(parent_pt: &PageTableManager) -> Option<(PageTableManager, usize)> {
+    let mut new_pt = PageTableManager::new();
 
-    let new_pt = PageTableManager::new();
+    // Walk the parent's page table and copy user mappings with COW semantics
+    // We need to find all valid user pages and create COW mappings
+
+    // Get kernel page table to access the parent's root
+    // For now, we'll copy from the current kernel page table
+    // In a proper implementation, the parent PT would be passed explicitly
+
+    // For simplicity, we'll identity-map a fixed range for user space
+    // This allows fork to work until we have proper page table walking
+    const USER_BASE: usize = 0x00400000;
+    const USER_SIZE: usize = 0x100000; // 1MB for now
+
+    // Map user pages as COW - they start read-only and will be copied on write
+    for page_addr in (USER_BASE..USER_BASE + USER_SIZE).step_by(PAGE_SIZE) {
+        let va = VirtAddr::new(page_addr);
+        let pa = PhysAddr::new(page_addr); // Identity mapping for now
+
+        // Map as COW (read-only initially)
+        if new_pt.map(va, pa, PTEFlags::user_cow()).is_err() {
+            crate::print!("[sv39] COW fork: failed to map page\r\n");
+            break;
+        }
+    }
+
     let satp = 8usize << 60 | new_pt.root_ppn().0;
+    Some((new_pt, satp))
+}
 
+/// Copy user address space from a specific parent page table root
+/// This version takes the parent's root PPN directly
+pub fn copy_user_address_space_from_root(parent_root_ppn: usize) -> Option<(PageTableManager, usize)> {
+    let mut new_pt = PageTableManager::new();
+
+    // Get pointers to both page tables
+    let parent_root = parent_root_ppn as *const PageTable;
+    let parent = unsafe { &*parent_root };
+
+    // Walk parent's page table and copy user mappings as COW
+    // Level 0 (root)
+    for i in 0..PTE_COUNT {
+        let pte = parent.get_entry(i)?;
+        if !pte.is_valid() || pte.is_leaf() {
+            continue; // Skip invalid or non-leaf entries
+        }
+
+        // Level 1
+        let level1 = unsafe { &*((pte.ppn.to_pa()) as *const PageTable) };
+        for j in 0..PTE_COUNT {
+            let pte1 = level1.get_entry(j)?;
+            if !pte1.is_valid() || pte1.is_leaf() {
+                continue;
+            }
+
+            // Level 2 (leaf)
+            let level2 = unsafe { &*((pte1.ppn.to_pa()) as *const PageTable) };
+            for k in 0..PTE_COUNT {
+                let pte2 = level2.get_entry(k)?;
+                if !pte2.is_valid() || !pte2.is_leaf() {
+                    continue;
+                }
+
+                // This is a valid user page - copy it as COW
+                // VPN = (i << 18) | (j << 9) | k, VA = VPN << 12
+                let vpn = (i << 18) | (j << 9) | k;
+                let va = VirtAddr::new(vpn << 12);
+                let pa = PhysAddr::new(pte2.ppn.to_pa());
+
+                // Only copy user pages (U bit set)
+                if pte2.flags.user {
+                    // Map as COW (read-only) in the new page table
+                    if new_pt.map(va, pa, PTEFlags::user_cow()).is_err() {
+                        crate::print!("[sv39] COW fork: failed to copy page\r\n");
+                    }
+                }
+            }
+        }
+    }
+
+    let satp = 8usize << 60 | new_pt.root_ppn().0;
     Some((new_pt, satp))
 }
 

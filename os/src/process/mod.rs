@@ -368,7 +368,7 @@ fn idle_task() {
     loop {
         counter += 1;
         if counter % 1000 == 0 {
-            crate::println!("[idle] idle task running");
+            crate::print!("[idle] idle task running\r\n");
         }
         // Yield to allow other tasks to run
         crate::syscall::sys_sched_yield();
@@ -382,7 +382,7 @@ fn test_task() {
         unsafe {
             COUNT += 1;
             if COUNT % 100 == 0 {
-                crate::println!("[test] Task cycle");
+                crate::print!("[test] Task cycle\r\n");
             }
         }
         // Yield to allow scheduler to switch tasks
@@ -392,39 +392,31 @@ fn test_task() {
 
 /// Start the scheduler and run tasks
 fn start_scheduler() {
-    crate::println!("[sched] Starting scheduler");
+    crate::print!("[sched] Starting scheduler\r\n");
 
     // Create idle task (kernel thread)
     if let Some(_tid) = create_process(idle_task as *const () as usize, 0x80020000, false) {
-        crate::println!("[sched] Idle task created");
+        crate::print!("[sched] Idle task created\r\n");
     }
 
     // Create a test task that yields
-    fn test_task() {
-        static mut COUNT: usize = 0;
-        loop {
-            unsafe {
-                COUNT += 1;
-                if COUNT % 10 == 0 {
-                    crate::println!("[test] Task cycle");
-                }
-            }
-            // Yield to allow scheduler to switch tasks
-            crate::syscall::sys_sched_yield();
-        }
-    }
-
     if let Some(_tid) = create_process(test_task as *const () as usize, 0x80020000, false) {
-        crate::println!("[sched] Test task created");
+        crate::print!("[sched] Test task created\r\n");
     }
 
     // Fetch the first task to run
     let first_task = {
         let mut scheduler = GLOBAL_SCHEDULER.lock();
-        scheduler.fetch_task()
+        crate::print!("[sched] About to fetch task\r\n");
+        let task = scheduler.fetch_task();
+        if task.is_none() {
+            crate::print!("[sched] fetch_task returned None!\r\n");
+        }
+        task
     };
 
     if let Some(sched_task) = first_task {
+        crate::print!("[sched] Fetched first task\r\n");
         let mut tcb = sched_task.tcb;
 
         // Set as current running task
@@ -442,6 +434,7 @@ fn start_scheduler() {
         if tcb.is_user_task {
             // For user tasks, use return_to_user to switch to user mode
             // This requires: trap_frame, satp, sp, pc
+            crate::print!("[sched] Switching to user task\r\n");
             unsafe {
                 context::return_to_user(
                     tcb.trap_frame,
@@ -459,20 +452,26 @@ fn start_scheduler() {
             // sp = kernel stack top
             context::init_task_context(&mut tcb.ctx, tcb.user_pc, tcb.kernel_sp);
 
+            crate::print!("[sched] About to context switch to task\r\n");
             // Create a dummy context for the boot code (we won't return to it)
             let mut boot_ctx: context::TaskContext = context::TaskContext::new(0, 0);
 
+            crate::print!("[sched] boot_ctx addr printed\r\n");
+            crate::print!("[sched] tcb.ctx addr printed\r\n");
             // Perform the actual context switch
             unsafe {
                 context::context_switch(&mut boot_ctx, &tcb.ctx);
             }
 
             // After context_switch returns, we're running in the new task
+            crate::print!("[sched] Returned from context switch\r\n");
             // But we shouldn't reach here normally - the task runs until it yields
             loop {
                 schedule();
             }
         }
+    } else {
+        crate::print!("[sched] No task to run!\r\n");
     }
 
     // Should never reach here if a task was switched to

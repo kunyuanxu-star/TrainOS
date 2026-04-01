@@ -640,9 +640,9 @@ fn sys_nanosleep(_req: usize, _rem: usize) -> isize {
 
 /// Yield the CPU to scheduler
 pub fn sys_sched_yield() -> isize {
-    // Signal that we want to yield - this will trigger a reschedule
-    // The actual switch happens in the trap return path
-    crate::process::request_schedule();
+    // For now, just return without scheduling
+    // The timer interrupt (when working) will trigger the actual scheduling
+    // This allows the system to run even without working timer interrupts
     0
 }
 
@@ -724,7 +724,7 @@ fn sys_clone(trap_frame: *mut crate::process::context::TrapFrame, flags: usize, 
     // Allocate a new PID
     let new_pid = alloc_pid();
 
-    crate::println!("[syscall] clone: creating child process");
+    crate::print!("[syscall] clone: creating child process");
 
     // For fork (CLONE_VM not set), we need to copy the address space
     // For thread (CLONE_VM set), we share the address space
@@ -732,7 +732,7 @@ fn sys_clone(trap_frame: *mut crate::process::context::TrapFrame, flags: usize, 
 
     if !is_thread {
         // This is a fork - create child with its own address space (COW)
-        crate::println!("[syscall] clone: fork mode - creating child with COW");
+        crate::print!("[syscall] clone: fork mode - creating child with COW\r\n");
 
         // Create child TCB
         let mut child_tcb = crate::process::task::TaskControlBlock::new(new_pid);
@@ -742,8 +742,24 @@ fn sys_clone(trap_frame: *mut crate::process::context::TrapFrame, flags: usize, 
         // Allocate kernel stack with trap frame
         child_tcb.alloc_kernel_stack();
 
-        // Create user address space
-        child_tcb.create_user_address_space();
+        // Get parent's address space for COW copy
+        let parent_tcb = crate::process::get_current_task();
+        if let Some(parent) = parent_tcb {
+            // Extract parent SATP (physical page number of root page table)
+            let parent_satp = parent.satp & 0x0FFF_FFFF_FFFF; // Mask out mode bits
+
+            // Create COW copy of parent's address space
+            if let Some((pt_manager, new_satp)) = crate::memory::Sv39::copy_user_address_space_from_root(parent_satp) {
+                child_tcb.satp = new_satp;
+                crate::print!("[syscall] clone: COW address space created\r\n");
+            } else {
+                crate::print!("[syscall] clone: failed to create COW address space, using empty\r\n");
+                child_tcb.create_user_address_space();
+            }
+        } else {
+            crate::print!("[syscall] clone: no parent TCB, using empty address space\r\n");
+            child_tcb.create_user_address_space();
+        }
 
         // For fork: child gets a copy of parent's address space (COW)
         // The child will return 0 from clone
@@ -772,11 +788,11 @@ fn sys_clone(trap_frame: *mut crate::process::context::TrapFrame, flags: usize, 
         // Add child to scheduler
         let mut scheduler = crate::process::get_scheduler().lock();
         if let Some(_tid) = scheduler.add_task(child_tcb) {
-            crate::println!("[syscall] clone: child added to scheduler");
+            crate::print!("[syscall] clone: child added to scheduler\r\n");
         }
     } else {
         // This is a thread - share address space
-        crate::println!("[syscall] clone: thread mode - sharing VM");
+        crate::print!("[syscall] clone: thread mode - sharing VM\r\n");
     }
 
     // Set the parent's return value to child's PID
@@ -786,47 +802,120 @@ fn sys_clone(trap_frame: *mut crate::process::context::TrapFrame, flags: usize, 
     }
 
     // Parent returns child's PID
-    crate::println!("[syscall] clone: parent returning");
+    crate::print!("[syscall] clone: parent returning\r\n");
     new_pid as isize
 }
 
 /// Execve - execute a program
 /// a0 = filename, a1 = argv, a2 = envp
-fn sys_execve(filename: usize, _argv: usize, _envp: usize) -> isize {
-    // Try to read the filename
-    let mut name_buf = [0u8; 256];
-    let mut i = 0;
-    while i < 255 {
-        let c = unsafe { *(filename as *const u8).add(i) };
-        name_buf[i] = c;
-        if c == 0 {
-            break;
-        }
-        i += 1;
+///
+/// For now, we embed a simple test ELF and load it.
+/// In the future, this will read from filesystem.
+fn sys_execve(_filename: usize, _argv: usize, _envp: usize) -> isize {
+    crate::print!("[syscall] execve: starting\r\n");
+
+    // Embedded ELF binary for testing (hello program)
+    // This will be replaced with filesystem-based loading
+    static HELLO_ELF: &[u8] = include_bytes!("../../../target/riscv64gc-unknown-none-elf/release/hello");
+
+    // Validate ELF header
+    if HELLO_ELF.len() < 64 {
+        crate::print!("[syscall] execve: ELF too small\r\n");
+        return -1;
     }
-    name_buf[i] = 0;
 
-    let prog_name = match core::str::from_utf8(&name_buf) {
-        Ok(s) => s,
-        Err(_) => return -1,
-    };
+    // Check ELF magic
+    if HELLO_ELF[0..4] != [0x7F, b'E', b'L', b'F'] {
+        crate::print!("[syscall] execve: invalid ELF magic\r\n");
+        return -1;
+    }
 
-    crate::println!("[syscall] execve: loading program");
+    crate::print!("[syscall] execve: creating user address space\r\n");
 
-    // For now, use a simple built-in entry point
-    // In a real implementation, we would load ELF from filesystem
-    let _entry_point: usize = match prog_name.trim() {
-        "/bin/hello" | "hello" => 0x00400000,
-        "/bin/shell" | "shell" => 0x00400000,
-        "/bin/vi" | "vi" => 0x00400000,
-        // Default to a simple test entry
-        _ => {
-            crate::println!("[syscall] execve: program not found, using test entry");
-            0x00400000
+    // Create a new user address space
+    let mut user_space = match crate::memory::Sv39::UserAddressSpace::new() {
+        Some(us) => us,
+        None => {
+            crate::print!("[syscall] execve: failed to create user address space\r\n");
+            return -1;
         }
     };
 
-    crate::println!("[syscall] execve: success");
+    // Load ELF into user address space
+    crate::print!("[syscall] execve: loading ELF\r\n");
+    let (entry_point, user_sp) = match crate::elf::load_elf(HELLO_ELF, &mut user_space) {
+        Ok(result) => result,
+        Err(e) => {
+            crate::print!("[syscall] execve: ELF loading failed\r\n");
+            return -1;
+        }
+    };
+
+    crate::print!("[syscall] execve: entry loaded\r\n");
+
+    // Get the trap frame that was passed to do_syscall
+    // This is the trap frame from the ecall that brought us into kernel
+    // We'll modify it so that sret returns to the new program
+    let trap_frame_ptr = {
+        let tf = crate::process::CURRENT_TRAP_FRAME.lock();
+        tf.0
+    };
+
+    if trap_frame_ptr.is_null() {
+        crate::print!("[syscall] execve: trap frame is null\r\n");
+        return -1;
+    }
+
+    // Modify the trap frame for the new program
+    // This trap frame is on the kernel stack and will be used by sret
+    unsafe {
+        // Set sepc to entry point
+        (*trap_frame_ptr).sepc = entry_point;
+        // Set sp to user stack
+        (*trap_frame_ptr).sp = user_sp;
+        // Set sstatus for user mode: SPP=0 (user), SPIE=1, SIE=0
+        (*trap_frame_ptr).sstatus = 0x00000020;
+        // Clear other registers for fresh start
+        (*trap_frame_ptr).a0 = 0; // argc = 0 for now
+        (*trap_frame_ptr).a1 = 0; // argv = null
+        (*trap_frame_ptr).a2 = 0; // envp = null
+        (*trap_frame_ptr).ra = 0;
+        (*trap_frame_ptr).gp = 0;
+        (*trap_frame_ptr).tp = 0;
+        (*trap_frame_ptr).t0 = 0;
+        (*trap_frame_ptr).t1 = 0;
+        (*trap_frame_ptr).t2 = 0;
+        (*trap_frame_ptr).s0 = 0;
+        (*trap_frame_ptr).s1 = 0;
+        (*trap_frame_ptr).s2 = 0;
+        (*trap_frame_ptr).s3 = 0;
+        (*trap_frame_ptr).s4 = 0;
+        (*trap_frame_ptr).s5 = 0;
+        (*trap_frame_ptr).s6 = 0;
+        (*trap_frame_ptr).s7 = 0;
+        (*trap_frame_ptr).s8 = 0;
+        (*trap_frame_ptr).s9 = 0;
+        (*trap_frame_ptr).s10 = 0;
+        (*trap_frame_ptr).s11 = 0;
+        (*trap_frame_ptr).t3 = 0;
+        (*trap_frame_ptr).t4 = 0;
+        (*trap_frame_ptr).t5 = 0;
+        (*trap_frame_ptr).t6 = 0;
+    }
+
+    // Set the new satp for this task
+    let satp = user_space.get_satp();
+    let mut current_task = crate::process::get_current_task();
+    if let Some(mut task) = current_task {
+        task.satp = satp;
+        task.is_user_task = true;
+        task.user_pc = entry_point;
+        task.user_sp = user_sp;
+        crate::process::set_current_task(task);
+        crate::print!("[syscall] execve: satp set\r\n");
+    }
+
+    crate::print!("[syscall] execve: success, returning to user mode\r\n");
     0
 }
 

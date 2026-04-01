@@ -5,7 +5,7 @@ TrainOS is an educational operating system written in Rust for RISC-V 64-bit arc
 
 **Goal**: Surpass Linux in kernel architecture, security, performance, and developer experience.
 
-## Current Status (2026-03-30)
+## Current Status (2026-03-31)
 
 ### Phase 1: Make It Runnable (In Progress)
 
@@ -24,7 +24,9 @@ TrainOS is an educational operating system written in Rust for RISC-V 64-bit arc
 - User programs compiled (hello, shell, vi) for RISC-V
 
 **Working**: Debug mode runs successfully with full boot sequence.
-**Issue**: Timer interrupt does not fire in QEMU with RustSBI-QEMU.
+**Issues**:
+1. Timer interrupt does not fire in QEMU with RustSBI-QEMU
+2. PageTable::new() hangs when trying to create user address space (write_bytes issue)
 
 ### Recent Fixes
 
@@ -108,10 +110,29 @@ RustSBI → Boot 1 → memory init → SMP init (SXCIE) →
 
 ## Next Steps (Priority Order)
 
-1. **Complete sys_execve implementation** - Load ELF into user address space
-2. **Test user mode return** - Verify return_to_user works correctly
-3. **Investigate timer issue further** - Try different QEMU versions or OpenSBI
-4. **Fix release mode** - spin::Mutex optimization issue
+1. **Debug PageTable::new() hang** - write_bytes hangs when creating user address space
+2. **Complete sys_execve implementation** - Load ELF into user address space
+3. **Test user mode return** - Verify return_to_user works correctly
+4. **Investigate timer issue further** - Try different QEMU versions or OpenSBI
+5. **Fix release mode** - spin::Mutex optimization issue
+
+## PageTable::new() Hang Issue (NEW - 2026-03-31)
+
+**Symptom**: When trying to create a new user address space, `PageTable::new()` hangs when calling `write_bytes(0, 1)` on the allocated page.
+
+**Observation**:
+- `alloc_page()` works and returns a valid address
+- Writing 1 byte via `ptr.write_bytes(0, 1)` hangs
+- This happens BEFORE any page table is created
+- Simple page allocation and writing work fine in other contexts
+
+**Analysis**:
+- The allocator's `base_page = 0x80000` starts at physical address 0x80000000 (kernel base)
+- First allocated page is at 0x80000000, which overlaps with kernel memory
+- But even simple writes to allocated pages work...
+- The hang is specifically in `PageTable::new()` -> `alloc_page()` -> `write_bytes(0, 1)`
+
+**Status**: Investigating - possibly related to memory alignment or lock ordering
 
 ## RISC-V Toolchain (INSTALLED)
 

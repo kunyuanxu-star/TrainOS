@@ -291,8 +291,11 @@ impl PageTable {
     /// Create a new empty page table (all invalid)
     pub fn new() -> &'static mut Self {
         // This should be called after allocating a physical page
-        let ptr = crate::memory::allocator::alloc_page()
-            .expect("Failed to allocate page table") as *mut PageTable;
+        let page = crate::memory::allocator::alloc_page();
+        if page.is_none() {
+            panic!("PageTable: failed to allocate page");
+        }
+        let ptr = page.unwrap() as *mut PageTable;
         unsafe {
             ptr.write_bytes(0, 1);
             &mut *ptr
@@ -349,8 +352,18 @@ impl PageTableManager {
     /// Create a new page table manager with a fresh root page table
     pub fn new() -> Self {
         let root_pt = PageTable::new();
+        let pa = root_pt as *const PageTable as usize;
+        let ppn = PhysAddr(pa).ppn();
         Self {
-            root_ppn: PhysAddr(root_pt as *const PageTable as usize).ppn(),
+            root_ppn: ppn,
+        }
+    }
+
+    /// Create a page table manager wrapping an existing root PPN
+    /// This is used to take over the page table from the bootloader
+    pub fn from_existing_root(root_ppn_val: usize) -> Self {
+        Self {
+            root_ppn: PPN(root_ppn_val),
         }
     }
 
@@ -365,7 +378,6 @@ impl PageTableManager {
         let ppn = pa.ppn();
 
         // Walk down the page table, creating levels as needed
-        // Returns (parent_ptr, entry_index) at each level
         let root_ptr = self.root_ppn.to_pa() as *mut PageTable;
 
         // Level 0
@@ -377,13 +389,15 @@ impl PageTableManager {
             if !pte.is_valid() {
                 // Create level 1 page table
                 let next_pt = PageTable::new();
-                let next_ppn = PhysAddr(next_pt as *const PageTable as usize).ppn();
+                let next_pa = next_pt as *const PageTable as usize;
+                let next_ppn = PhysAddr(next_pa).ppn();
                 pte.ppn = next_ppn;
                 pte.flags.valid = true;
                 pte.flags.read = true;
             }
 
-            let level1_ptr = pte.ppn.to_pa() as *mut PageTable;
+            let level1_pa = pte.ppn.to_pa();
+            let level1_ptr = level1_pa as *mut PageTable;
             let level1 = &mut *level1_ptr;
             let pte1 = level1.get_entry_mut(indices[1])
                 .ok_or(MapError::InvalidAddress)?;
@@ -391,13 +405,15 @@ impl PageTableManager {
             if !pte1.is_valid() {
                 // Create level 2 page table
                 let next_pt = PageTable::new();
-                let next_ppn = PhysAddr(next_pt as *const PageTable as usize).ppn();
+                let next_pa = next_pt as *const PageTable as usize;
+                let next_ppn = PhysAddr(next_pa).ppn();
                 pte1.ppn = next_ppn;
                 pte1.flags.valid = true;
                 pte1.flags.read = true;
             }
 
-            let level2_ptr = pte1.ppn.to_pa() as *mut PageTable;
+            let level2_pa = pte1.ppn.to_pa();
+            let level2_ptr = level2_pa as *mut PageTable;
             let level2 = &mut *level2_ptr;
             let pte2 = level2.get_entry_mut(indices[2])
                 .ok_or(MapError::InvalidAddress)?;
@@ -604,24 +620,29 @@ pub enum MapError {
 static KERNEL_PAGE_TABLE: Mutex<Option<PageTableManager>> = Mutex::new(None);
 
 /// Initialize the kernel page table
+/// We read the current SATP to get the existing page table from RustSBI
+/// and wrap it in our PageTableManager
 pub fn init_kernel_page_table() {
     crate::println!("[vm] Initializing kernel page table...");
-    let mut pt = KERNEL_PAGE_TABLE.lock();
-    *pt = Some(PageTableManager::new());
 
-    // Set up identity mapping for kernel (0x80000000 -> physical)
-    // This is a simplified version - in practice we'd map all of DRAM
-    if let Some(ref mut pt_manager) = *pt {
-        // Identity map the first 8MB for kernel (QEMU virt machine)
-        for i in 0..2048 {
-            let va = VirtAddr::new(0x80000000 + i * PAGE_SIZE);
-            let pa = PhysAddr::new(0x80000000 + i * PAGE_SIZE);
-            if pt_manager.map(va, pa, PTEFlags::kernel_rw()).is_err() {
-                break;
-            }
-        }
+    // Read the current SATP - Supervisor Address Translation and Protection
+    let satp: usize;
+    unsafe {
+        core::arch::asm!("csrr {0}, satp", out(reg) satp);
     }
+    crate::println!("[vm] SATP read completed");
 
+    // Extract PPN (physical page number) from SATP
+    // SATP format: [63:60] mode, [59:44] ASID, [43:0] PPN
+    // For Sv39, mode = 8
+    let root_ppn = satp & 0x0FFF_FFFF_FFFF;
+    crate::println!("[vm] Root PPN extracted");
+
+    // Create a PageTableManager wrapping the existing kernel page table
+    let pt_manager = PageTableManager::from_existing_root(root_ppn);
+    crate::println!("[vm] PageTableManager created");
+
+    *KERNEL_PAGE_TABLE.lock() = Some(pt_manager);
     crate::println!("[vm] Kernel page table initialized");
 }
 
@@ -749,27 +770,25 @@ pub struct UserAddressSpace {
 }
 
 impl UserAddressSpace {
-    /// Create a new user address space
-    /// Maps kernel as global, and sets up user space as non-global
+    /// Create a new user address space using the kernel page table
+    /// This ensures kernel mappings are available when in user mode
     pub fn new() -> Option<Self> {
-        let pt_manager = PageTableManager::new();
-        let satp = 8usize << 60 | pt_manager.root_ppn().0;
+        // Use the kernel page table's root PPN
+        let kernel_pt = KERNEL_PAGE_TABLE.lock();
+        if let Some(ref pt) = *kernel_pt {
+            let satp = 8usize << 60 | pt.root_ppn().0;
+            let pt_manager = PageTableManager::from_existing_root(pt.root_ppn().0);
 
-        // Default user address space layout:
-        // 0x0000000000000000 - 0x00003FFFFFFFFFFF (user space, 128GB)
-        // We only map a portion for now
-
-        // User heap starts after code/data (we'll set this during exec)
-        // User stack at high address (0x3FFFFFFFE80 = near top of 48-bit user VA)
-
-        Some(Self {
-            pt_manager,
-            satp,
-            heap_start: 0x00400000 + 0x100000, // After first 1MB (text, data, bss)
-            heap_end: 0x00400000 + 0x100000,
-            stack_base: 0x3FFFFFFFE80,  // Near top of user VA
-            stack_size: 0x200000,        // 2MB stack
-        })
+            return Some(Self {
+                pt_manager,
+                satp,
+                heap_start: 0x00400000 + 0x100000,
+                heap_end: 0x00400000 + 0x100000,
+                stack_base: 0x3FFFFFFFE80,
+                stack_size: 0x200000,
+            });
+        }
+        None
     }
 
     /// Map a user page with COW (Copy-on-Write) semantics
@@ -822,6 +841,38 @@ impl UserAddressSpace {
             self.map_user_writable(va, PhysAddr::new(pa))?;
         }
 
+        Ok(stack_top)
+    }
+
+    /// Set up the initial user stack at a high VA base
+    /// This version allows specifying a high VA base to avoid conflicts
+    pub fn setup_user_stack_high_va(&mut self, high_va_base: usize) -> Result<usize, MapError> {
+        // Use a fixed high stack address
+        // For Sv39, user VA space is 0x0 to 0x7FFFFFFFFFFF (48-bit with sign extension)
+        // Stack grows downward from stack_top
+        let stack_size = 0x40000; // 256KB stack (64 pages)
+        let stack_base = 0x3FFC00000usize;  // Page-aligned base
+        let stack_top = stack_base + stack_size;
+
+        crate::print!("[stack] setup\r\n");
+
+        // Allocate and map stack pages (growing down from stack_top)
+        let pages = stack_size / PAGE_SIZE;
+        for i in 0..pages {
+            let va = VirtAddr::new(stack_top - (i + 1) * PAGE_SIZE);
+
+            let pa = crate::memory::allocator::alloc_page()
+                .ok_or(MapError::NoMemory)?;
+
+            // Zero the page
+            unsafe {
+                core::ptr::write_bytes(pa as *mut u8, 0, PAGE_SIZE);
+            }
+
+            self.map_user_writable(va, PhysAddr::new(pa))?;
+        }
+
+        crate::print!("[stack] done\r\n");
         Ok(stack_top)
     }
 

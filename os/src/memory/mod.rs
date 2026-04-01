@@ -8,6 +8,9 @@ pub mod allocator;
 
 /// Initialize memory management subsystem
 pub fn init() {
+    // Initialize the kernel page table using the existing one from RustSBI
+    Sv39::init_kernel_page_table();
+
     // Using inline asm directly to avoid any function call issues
     unsafe {
         let s = "memory init start\n";

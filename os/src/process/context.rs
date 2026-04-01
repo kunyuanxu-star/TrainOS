@@ -183,12 +183,19 @@ core::arch::global_asm!(
     // a1 = new satp value
     // a2 = new sp
     // a3 = new pc (sepc)
-    // Save old trap frame sp
+    // Save kernel sp to t0
     "   mv t0, sp",
+    // Set sscratch to trap frame pointer (kernel stack)
+    // This is needed so that when a trap occurs in user mode,
+    // the CPU can find the kernel stack by exchanging sp and sscratch
+    "   mv t1, a0",
     // Set new page table (satp)
     "   csrw satp, a1",
     // Flush TLB
     "   sfence.vma zero, zero",
+    // Set sscratch to kernel trap frame pointer
+    // When trap occurs in user mode, CPU exchanges sp with sscratch
+    "   csrw sscratch, t1",
     // Set up sepc to the user program counter
     "   csrw sepc, a3",
     // Set up sp to user stack
@@ -200,7 +207,6 @@ core::arch::global_asm!(
     // s7(176), s8(184), s9(192), s10(200), s11(208), t3(216), t4(224),
     // t5(232), t6(240), sepc(248), sstatus(256)
     "   ld ra, 0(a0)",
-    "   ld sp, 8(a0)",
     "   ld gp, 16(a0)",
     "   ld tp, 24(a0)",
     "   ld t0, 32(a0)",
@@ -230,6 +236,7 @@ core::arch::global_asm!(
     "   ld t4, 224(a0)",
     "   ld t5, 232(a0)",
     "   ld t6, 240(a0)",
+    // Restore original sp (kernel sp) to t0 for now, but sp is already set to user sp above
     // Set sstatus: SPP=0 (user mode), SPIE=1, SIE=0
     // SPP is bit 8, SPIE is bit 5
     "   li t0, 0x00000020",

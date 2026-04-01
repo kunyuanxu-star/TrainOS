@@ -372,92 +372,86 @@ fn test_task() {
     }
 }
 
-/// Start the scheduler and run tasks
+/// Start the scheduler and run the first user process
 fn start_scheduler() {
-    crate::print!("[sched] Starting scheduler\r\n");
+    crate::println!("[sched] Starting scheduler");
 
-    // Create idle task (kernel thread)
-    if let Some(_tid) = create_process(idle_task as *const () as usize, 0x80020000, false) {
-        crate::print!("[sched] Idle task created\r\n");
-    }
+    // Embedded ELF binary for testing
+    static HELLO_ELF: &[u8] = include_bytes!("../../../target/riscv64gc-unknown-none-elf/release/hello");
 
-    // Create a test task that yields
-    if let Some(_tid) = create_process(test_task as *const () as usize, 0x80020000, false) {
-        crate::print!("[sched] Test task created\r\n");
-    }
-
-    // Fetch the first task to run
-    let first_task = {
-        let mut scheduler = GLOBAL_SCHEDULER.lock();
-        crate::print!("[sched] About to fetch task\r\n");
-        let task = scheduler.fetch_task();
-        if task.is_none() {
-            crate::print!("[sched] fetch_task returned None!\r\n");
+    // Create user address space
+    crate::println!("[sched] Creating user address space");
+    let mut user_space = match crate::memory::Sv39::UserAddressSpace::new() {
+        Some(us) => {
+            crate::println!("[sched] User address space created");
+            us
+        },
+        None => {
+            crate::println!("[sched] Failed to create user address space");
+            loop {}
         }
-        task
     };
 
-    if let Some(sched_task) = first_task {
-        crate::print!("[sched] Fetched first task\r\n");
-        let mut tcb = sched_task.tcb;
-
-        // Set as current running task
-        tcb.status = task::TaskStatus::Running;
-        {
-            let mut current = CURRENT_TASK.lock();
-            *current = Some(tcb);
-        }
-        {
-            let mut scheduler = GLOBAL_SCHEDULER.lock();
-            scheduler.set_current(scheduler::SchedTask::new(tcb));
-        }
-
-        // Check if this is a user task or kernel thread
-        if tcb.is_user_task {
-            // For user tasks, use return_to_user to switch to user mode
-            // This requires: trap_frame, satp, sp, pc
-            crate::print!("[sched] Switching to user task\r\n");
-            unsafe {
-                context::return_to_user(
-                    tcb.trap_frame,
-                    tcb.satp,
-                    tcb.user_sp,
-                    tcb.user_pc,
-                );
-            }
-            // Should never reach here
+    // Load ELF
+    crate::println!("[sched] Loading ELF");
+    let (entry_point, user_sp) = match crate::elf::load_elf(HELLO_ELF, &mut user_space) {
+        Ok(result) => {
+            crate::println!("[sched] ELF loaded successfully");
+            result
+        },
+        Err(e) => {
+            crate::println!("[sched] ELF loading failed");
             loop {}
-        } else {
-            // For kernel threads, use context_switch
-            // Initialize TaskContext for first run:
-            // ra = entry point (function to call)
-            // sp = kernel stack top
-            context::init_task_context(&mut tcb.ctx, tcb.user_pc, tcb.kernel_sp);
-
-            crate::print!("[sched] About to context switch to task\r\n");
-            // Create a dummy context for the boot code (we won't return to it)
-            let mut boot_ctx: context::TaskContext = context::TaskContext::new(0, 0);
-
-            crate::print!("[sched] boot_ctx addr printed\r\n");
-            crate::print!("[sched] tcb.ctx addr printed\r\n");
-            // Perform the actual context switch
-            unsafe {
-                context::context_switch(&mut boot_ctx, &tcb.ctx);
-            }
-
-            // After context_switch returns, we're running in the new task
-            crate::print!("[sched] Returned from context switch\r\n");
-            // But we shouldn't reach here normally - the task runs until it yields
-            loop {
-                schedule();
-            }
         }
-    } else {
-        crate::print!("[sched] No task to run!\r\n");
+    };
+
+    // Allocate kernel stack for this process
+    crate::println!("[sched] Allocating kernel stack");
+    let kernel_stack_page = match crate::memory::allocator::alloc_page() {
+        Some(addr) => addr,
+        None => {
+            crate::println!("[sched] Failed to allocate kernel stack");
+            loop {}
+        }
+    };
+    let kernel_sp = kernel_stack_page + 4096;  // Top of kernel stack page
+
+    // Set up trap frame at top of kernel stack
+    let trap_frame_size = core::mem::size_of::<crate::process::context::TrapFrame>();
+    let trap_frame_ptr = (kernel_sp - trap_frame_size) as *mut crate::process::context::TrapFrame;
+
+    // Initialize trap frame for user mode entry
+    unsafe {
+        let mut tf = crate::process::context::TrapFrame::new_user_entry(entry_point, user_sp, 0);
+        // Set sstatus: SPP=0 (user mode), SPIE=1, SIE=0
+        tf.sstatus = 0x00000020;
+        core::ptr::write(trap_frame_ptr, tf);
     }
 
-    // Should never reach here if a task was switched to
-    loop {
-        schedule();
+    // Get SATP from user space
+    let satp = user_space.get_satp();
+    crate::println!("[sched] satp");
+
+    // Set sscratch to point to kernel trap frame
+    // This is needed so that when a trap occurs, the CPU can find the kernel stack
+    unsafe {
+        core::arch::asm!("csrw sscratch, {0}", in(reg) trap_frame_ptr as usize);
     }
+
+    crate::println!("[sched] Returning to user mode");
+
+    // Return to user mode - this never returns
+    unsafe {
+        crate::print!("[sched] About to call return_to_user\n");
+        crate::process::context::return_to_user(
+            trap_frame_ptr,
+            satp,
+            user_sp,
+            entry_point
+        );
+        crate::print!("[sched] return_to_user returned - should not see this\n");
+    }
+
+    // Should never reach here
+    loop {}
 }

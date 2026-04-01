@@ -37,64 +37,6 @@ pub const PF_X: u32 = 1;  // Executable
 pub const PF_W: u32 = 2;  // Writable
 pub const PF_R: u32 = 4;  // Readable
 
-/// ELF header (64-bit)
-#[repr(C)]
-pub struct Elf64Header {
-    pub e_ident: [u8; 16],     // Magic number and other info
-    pub e_type: u16,          // Object file type
-    pub e_machine: u16,        // Architecture
-    pub e_version: u32,       // Object file version
-    pub e_entry: u64,         // Entry point virtual address
-    pub e_phoff: u64,         // Program header table file offset
-    pub e_shoff: u64,         // Section header table file offset
-    pub e_flags: u32,         // Processor-specific flags
-    pub e_ehsize: u16,         // ELF header size
-    pub e_phentsize: u16,     // Program header table entry size
-    pub e_phnum: u16,         // Program header table entry count
-    pub e_shentsize: u16,      // Section header table entry size
-    pub e_shnum: u16,          // Section header table entry count
-    pub e_shstrndx: u16,       // Section header string table index
-}
-
-/// ELF program header (64-bit)
-#[repr(C)]
-pub struct Elf64Phdr {
-    pub p_type: u32,           // Segment type
-    pub p_flags: u32,           // Segment flags
-    pub p_offset: u64,         // Segment file offset
-    pub p_vaddr: u64,          // Segment virtual address
-    pub p_paddr: u64,          // Segment physical address
-    pub p_filesz: u64,         // Segment size in file
-    pub p_memsz: u64,          // Segment size in memory
-    pub p_align: u64,          // Segment alignment
-}
-
-/// ELF section header (64-bit)
-#[repr(C)]
-pub struct Elf64Shdr {
-    pub sh_name: u32,           // Section name (string tbl index)
-    pub sh_type: u32,           // Section type
-    pub sh_flags: u64,         // Section flags
-    pub sh_addr: u64,          // Section virtual addr at execution
-    pub sh_offset: u64,         // Section file offset
-    pub sh_size: u64,          // Section size in file
-    pub sh_link: u32,           // Link to another section
-    pub sh_info: u32,           // Additional section information
-    pub sh_addralign: u64,      // Section alignment
-    pub sh_entsize: u64,       // Entry size if section holds table
-}
-
-/// ELF symbol
-#[repr(C)]
-pub struct Elf64Sym {
-    pub st_name: u32,           // Symbol name (string tbl index)
-    pub st_info: u8,           // Symbol type and binding
-    pub st_other: u8,           // Symbol visibility
-    pub st_shndx: u16,         // Section index
-    pub st_value: u64,          // Symbol value
-    pub st_size: u64,          // Symbol size
-}
-
 /// ELF result
 pub enum ElfResult {
     Success,
@@ -151,9 +93,8 @@ pub fn validate_elf(data: &[u8]) -> ElfResult {
         return ElfResult::InvalidFormat;
     }
 
-    // Check machine type
-    let header: &Elf64Header = unsafe { &*(data.as_ptr() as *const Elf64Header) };
-    if header.e_machine != EM_RISCV {
+    // Check machine type (e_machine at offset 18)
+    if data[18] != (EM_RISCV as u8) || data[19] != (EM_RISCV >> 8) as u8 {
         crate::println!("[elf] Wrong machine type");
         return ElfResult::Unsupported;
     }
@@ -161,106 +102,142 @@ pub fn validate_elf(data: &[u8]) -> ElfResult {
     ElfResult::Success
 }
 
+/// Read a u16 from data at offset (little endian)
+unsafe fn read_u16(data: &[u8], offset: usize) -> u16 {
+    let ptr = data.as_ptr().add(offset) as *const u16;
+    ptr.read_unaligned()
+}
+
+/// Read a u32 from data at offset (little endian)
+unsafe fn read_u32(data: &[u8], offset: usize) -> u32 {
+    let ptr = data.as_ptr().add(offset) as *const u32;
+    ptr.read_unaligned()
+}
+
+/// Read a u64 from data at offset (little endian)
+unsafe fn read_u64(data: &[u8], offset: usize) -> u64 {
+    let ptr = data.as_ptr().add(offset) as *const u64;
+    ptr.read_unaligned()
+}
+
 /// Load an ELF file into user address space using Sv39 page tables
 /// Returns (entry_point, user_sp, satp) on success
 pub fn load_elf(data: &[u8], user_space: &mut crate::memory::Sv39::UserAddressSpace) -> Result<(usize, usize), ElfResult> {
-    // Returns (entry_point, user_sp)
-    if data.len() < core::mem::size_of::<Elf64Header>() {
-        return Err(ElfResult::InvalidFormat);
-    }
-
-    let header: &Elf64Header = unsafe { &*(data.as_ptr() as *const Elf64Header) };
-
     // Validate
     match validate_elf(data) {
         ElfResult::Success => {}
         e => return Err(e),
     }
 
-    crate::print!("[elf] Loading ELF\r\n");
+    // Read ELF header fields directly
+    // ELF64 header layout (from spec):
+    // 0-15: e_ident
+    // 16-17: e_type
+    // 18-19: e_machine
+    // 20-23: e_version
+    // 24-31: e_entry
+    // 32-39: e_phoff
+    // 40-47: e_shoff
+    let e_type = unsafe { read_u16(data, 16) };
+    let e_entry = unsafe { read_u64(data, 24) } as usize;
+    let e_phoff = unsafe { read_u64(data, 32) } as usize;
+    let e_phentsize = unsafe { read_u16(data, 54) } as usize;
+    let e_phnum = unsafe { read_u16(data, 56) } as usize;
 
     // Only support ET_EXEC (executable)
-    if header.e_type != ET_EXEC {
-        crate::print!("[elf] Only ET_EXEC supported\r\n");
+    if e_type != ET_EXEC {
+        crate::print!("[elf] e_type mismatch: got ");
         return Err(ElfResult::Unsupported);
     }
 
-    // Get program headers
-    let phdr_ptr = unsafe { data.as_ptr().add(header.e_phoff as usize) };
-    let phdr_size = header.e_phentsize as usize;
-    let phdr_count = header.e_phnum as usize;
-
     // Load each PT_LOAD segment
-    for i in 0..phdr_count {
-        let phdr: &Elf64Phdr = unsafe { &*(phdr_ptr.add(i * phdr_size) as *const Elf64Phdr) };
+    // Use high VA base to avoid conflicts with kernel page table
+    // High VA region: 0x4000000000 (256GB) - each page gets own level-1 entry
+    // This avoids the issue where pages share level-1 entries and overwrite each other
+    const HIGH_VA_BASE: usize = 0x4000000000;
 
-        if phdr.p_type == PT_LOAD {
-            let file_offset = phdr.p_offset as usize;
-            let vaddr = phdr.p_vaddr as usize;
-            let filesz = phdr.p_filesz as usize;
-            let memsz = phdr.p_memsz as usize;
-            let flags = phdr.p_flags;
+    for i in 0..e_phnum {
+        crate::print!("[elf] segment\r\n");
+        let phdr_offset = e_phoff + i * e_phentsize;
+        let p_type = unsafe { read_u32(data, phdr_offset) };
+
+        if p_type == PT_LOAD {
+            crate::print!("[elf] PT_LOAD\r\n");
+            let p_offset = unsafe { read_u64(data, phdr_offset + 8) } as usize;
+            let p_vaddr = unsafe { read_u64(data, phdr_offset + 16) } as usize;
+            let p_filesz = unsafe { read_u64(data, phdr_offset + 32) } as usize;
+            let p_memsz = unsafe { read_u64(data, phdr_offset + 40) } as usize;
+            let p_flags = unsafe { read_u32(data, phdr_offset + 4) };
+
+            crate::print!("[elf] seg info\r\n");
 
             // Align vaddr to page boundary
-            let page_start = vaddr & !0xFFF;
-            let page_end = ((vaddr + memsz) + 4095) & !0xFFF;
+            let page_start = p_vaddr & !0xFFF;
+            let page_end = ((p_vaddr + p_memsz) + 4095) & !0xFFF;
             let num_pages = (page_end - page_start) / 4096;
 
-            crate::print!("[elf] Loading segment\r\n");
+            crate::print!("[elf] num_pages\r\n");
 
-            // Map each page into user address space
+            // Map each page into user address space at HIGH VA
             for p in 0..num_pages {
+                crate::print!("[elf] page\r\n");
                 let curr_vaddr = page_start + p * 4096;
+                // Use high VA for mapping - this ensures each page gets its own level-1 entry
+                let high_vaddr = HIGH_VA_BASE + curr_vaddr;
 
                 // Allocate physical page
                 if let Some(phys_page) = crate::memory::allocator::alloc_page() {
+                    crate::print!("[elf] page alloc ok\r\n");
                     // Determine page flags based on segment flags
-                    let executable = (flags & PF_X) != 0;
-                    let writable = (flags & PF_W) != 0;
+                    let executable = (p_flags & PF_X) != 0;
+                    let writable = (p_flags & PF_W) != 0;
 
-                    // Map as user page (RX for code, RW for data)
-                    if executable {
-                        if user_space.map_user_rx(
-                            crate::memory::Sv39::VirtAddr::new(curr_vaddr),
+                    // Map as user page (RX for code, RW for data) at HIGH VA
+                    let map_result = if executable {
+                        user_space.map_user_rx(
+                            crate::memory::Sv39::VirtAddr::new(high_vaddr),
                             crate::memory::Sv39::PhysAddr::new(phys_page)
-                        ).is_err() {
-                            crate::print!("[elf] Failed to map page\r\n");
-                            return Err(ElfResult::LoadError);
-                        }
+                        )
                     } else if writable {
-                        if user_space.map_user_writable(
-                            crate::memory::Sv39::VirtAddr::new(curr_vaddr),
+                        user_space.map_user_writable(
+                            crate::memory::Sv39::VirtAddr::new(high_vaddr),
                             crate::memory::Sv39::PhysAddr::new(phys_page)
-                        ).is_err() {
-                            crate::print!("[elf] Failed to map page\r\n");
-                            return Err(ElfResult::LoadError);
-                        }
+                        )
                     } else {
-                        if user_space.map_user_cow(
-                            crate::memory::Sv39::VirtAddr::new(curr_vaddr),
+                        user_space.map_user_cow(
+                            crate::memory::Sv39::VirtAddr::new(high_vaddr),
                             crate::memory::Sv39::PhysAddr::new(phys_page)
-                        ).is_err() {
-                            crate::print!("[elf] Failed to map page\r\n");
-                            return Err(ElfResult::LoadError);
-                        }
+                        )
+                    };
+
+                    if map_result.is_err() {
+                        crate::println!("[elf] Failed to map page");
+                        return Err(ElfResult::LoadError);
                     }
 
-                    // Copy data to the page
-                    let kernel_va = 0x80000000 + phys_page;
-                    let dst = kernel_va as *mut u8;
+                    crate::print!("[elf] mapped\r\n");
 
-                    // Calculate what to copy
-                    let offset_in_seg = if p == 0 { vaddr - page_start } else { 0 };
-                    let file_pos = file_offset + offset_in_seg;
-                    let copy_len = if p == 0 {
-                        filesz.min(4096 - offset_in_seg)
-                    } else if file_offset + p * 4096 < filesz + file_offset {
-                        4096
+                    // Calculate what to copy from ELF file to this page
+                    // offset_in_seg is how far into the segment we are
+                    let offset_in_seg = if curr_vaddr >= p_vaddr {
+                        curr_vaddr - p_vaddr
+                    } else {
+                        0 // Page is before segment starts (holes)
+                    };
+
+                    let file_pos = p_offset + offset_in_seg;
+                    let copy_len = if p_filesz > offset_in_seg {
+                        (p_filesz - offset_in_seg).min(4096)
                     } else {
                         0
                     };
 
                     if copy_len > 0 && file_pos < data.len() {
+                        // Copy data to the page using kernel virtual address
+                        // The kernel can access physical memory directly since
+                        // the kernel page table has identity mapping
+                        let kernel_va = phys_page;
+                        let dst = kernel_va as *mut u8;
                         let src = unsafe { data.as_ptr().add(file_pos) };
                         unsafe {
                             core::ptr::copy_nonoverlapping(src, dst, copy_len);
@@ -271,61 +248,56 @@ pub fn load_elf(data: &[u8], user_space: &mut crate::memory::Sv39::UserAddressSp
                         }
                     } else {
                         // BSS - zero the page
+                        let kernel_va = phys_page;
+                        let dst = kernel_va as *mut u8;
                         unsafe {
                             core::ptr::write_bytes(dst, 0, 4096);
                         }
                     }
+                    crate::print!("[elf] copy done\r\n");
                 } else {
-                    crate::print!("[elf] Out of memory\r\n");
+                    crate::println!("[elf] Out of memory");
                     return Err(ElfResult::LoadError);
                 }
             }
         }
     }
 
-    // Set up user stack
-    let stack_top = user_space.setup_user_stack()
+    // Set up user stack (also at high VA)
+    crate::print!("[elf] setup stack\r\n");
+    let stack_top = user_space.setup_user_stack_high_va(HIGH_VA_BASE)
         .map_err(|_| ElfResult::LoadError)?;
+    crate::print!("[elf] done\r\n");
 
-    crate::print!("[elf] Loaded successfully\r\n");
-    Ok((header.e_entry as usize, stack_top - 16))
+    // Return translated entry point (high VA) and stack pointer
+    let high_entry = HIGH_VA_BASE + e_entry;
+    Ok((high_entry, stack_top - 16))
 }
 
 /// Get the entry point of an ELF file without loading it
 pub fn get_entry_point(data: &[u8]) -> Option<usize> {
-    if data.len() < core::mem::size_of::<Elf64Header>() {
+    if data.len() < 64 {
         return None;
     }
-    let header: &Elf64Header = unsafe { &*(data.as_ptr() as *const Elf64Header) };
-    Some(header.e_entry as usize)
+    Some(unsafe { read_u64(data, 24) } as usize)
 }
 
 /// Get the number of program headers
 pub fn get_phdr_count(data: &[u8]) -> Option<usize> {
-    if data.len() < core::mem::size_of::<Elf64Header>() {
+    if data.len() < 64 {
         return None;
     }
-    let header: &Elf64Header = unsafe { &*(data.as_ptr() as *const Elf64Header) };
-    Some(header.e_phnum as usize)
+    Some(unsafe { read_u16(data, 56) } as usize)
 }
 
 /// Parse ELF symbols (for debugging)
 pub fn parse_symbols(data: &[u8]) {
-    let header: &Elf64Header = unsafe { &*(data.as_ptr() as *const Elf64Header) };
-
-    if header.e_shnum == 0 {
+    if data.len() < 64 {
         return;
     }
 
-    let shdr_ptr = unsafe { data.as_ptr().add(header.e_shoff as usize) };
-    let shdr_size = header.e_shentsize as usize;
-
-    // Find string table and symbol table
-    for i in 0..header.e_shnum as usize {
-        let shdr: &Elf64Shdr = unsafe { &*(shdr_ptr.add(i * shdr_size) as *const Elf64Shdr) };
-
-        if shdr.sh_type == SHT_SYMTAB {
-            crate::println!("[elf] Symbol table found");
-        }
+    let e_shnum = unsafe { read_u16(data, 60) } as usize;
+    if e_shnum == 0 {
+        return;
     }
 }

@@ -150,12 +150,8 @@ pub fn load_elf(data: &[u8], user_space: &mut crate::memory::Sv39::UserAddressSp
         return Err(ElfResult::Unsupported);
     }
 
-    // Load each PT_LOAD segment
-    // Use high VA base to avoid conflicts with kernel page table
-    // High VA region: 0x4000000000 (256GB) - each page gets own level-1 entry
-    // This avoids the issue where pages share level-1 entries and overwrite each other
-    const HIGH_VA_BASE: usize = 0x4000000000;
-
+    // Load each PT_LOAD segment at original VAs
+    // The kernel page table is used, so all mappings are accessible
     for i in 0..e_phnum {
         crate::print!("[elf] segment\r\n");
         let phdr_offset = e_phoff + i * e_phentsize;
@@ -178,100 +174,98 @@ pub fn load_elf(data: &[u8], user_space: &mut crate::memory::Sv39::UserAddressSp
 
             crate::print!("[elf] num_pages\r\n");
 
-            // Map each page into user address space at HIGH VA
+            // Map each page into user address space at original VA
             for p in 0..num_pages {
                 crate::print!("[elf] page\r\n");
                 let curr_vaddr = page_start + p * 4096;
-                // Use high VA for mapping - this ensures each page gets its own level-1 entry
-                let high_vaddr = HIGH_VA_BASE + curr_vaddr;
+
+                crate::print!("[elf] curr_vaddr\r\n");
 
                 // Allocate physical page
-                if let Some(phys_page) = crate::memory::allocator::alloc_page() {
-                    crate::print!("[elf] page alloc ok\r\n");
-                    // Determine page flags based on segment flags
-                    let executable = (p_flags & PF_X) != 0;
-                    let writable = (p_flags & PF_W) != 0;
-
-                    // Map as user page (RX for code, RW for data) at HIGH VA
-                    let map_result = if executable {
-                        user_space.map_user_rx(
-                            crate::memory::Sv39::VirtAddr::new(high_vaddr),
-                            crate::memory::Sv39::PhysAddr::new(phys_page)
-                        )
-                    } else if writable {
-                        user_space.map_user_writable(
-                            crate::memory::Sv39::VirtAddr::new(high_vaddr),
-                            crate::memory::Sv39::PhysAddr::new(phys_page)
-                        )
-                    } else {
-                        user_space.map_user_cow(
-                            crate::memory::Sv39::VirtAddr::new(high_vaddr),
-                            crate::memory::Sv39::PhysAddr::new(phys_page)
-                        )
-                    };
-
-                    if map_result.is_err() {
-                        crate::println!("[elf] Failed to map page");
+                let phys_page = match crate::memory::allocator::alloc_page() {
+                    Some(p) => p,
+                    None => {
+                        crate::println!("[elf] Out of memory");
                         return Err(ElfResult::LoadError);
                     }
+                };
+                crate::print!("[elf] page alloc ok\r\n");
 
-                    crate::print!("[elf] mapped\r\n");
+                // Determine page flags based on segment flags
+                let executable = (p_flags & PF_X) != 0;
+                let writable = (p_flags & PF_W) != 0;
 
-                    // Calculate what to copy from ELF file to this page
-                    // offset_in_seg is how far into the segment we are
-                    let offset_in_seg = if curr_vaddr >= p_vaddr {
-                        curr_vaddr - p_vaddr
-                    } else {
-                        0 // Page is before segment starts (holes)
-                    };
+                crate::print!("[elf] about to map va\r\n");
 
-                    let file_pos = p_offset + offset_in_seg;
-                    let copy_len = if p_filesz > offset_in_seg {
-                        (p_filesz - offset_in_seg).min(4096)
-                    } else {
-                        0
-                    };
-
-                    if copy_len > 0 && file_pos < data.len() {
-                        // Copy data to the page using kernel virtual address
-                        // The kernel can access physical memory directly since
-                        // the kernel page table has identity mapping
-                        let kernel_va = phys_page;
-                        let dst = kernel_va as *mut u8;
-                        let src = unsafe { data.as_ptr().add(file_pos) };
-                        unsafe {
-                            core::ptr::copy_nonoverlapping(src, dst, copy_len);
-                            // Zero BSS portion if any
-                            if copy_len < 4096 {
-                                core::ptr::write_bytes(dst.add(copy_len), 0, 4096 - copy_len);
-                            }
-                        }
-                    } else {
-                        // BSS - zero the page
-                        let kernel_va = phys_page;
-                        let dst = kernel_va as *mut u8;
-                        unsafe {
-                            core::ptr::write_bytes(dst, 0, 4096);
-                        }
-                    }
-                    crate::print!("[elf] copy done\r\n");
+                // Map as user page (RX for code, RW for data) at original VA
+                let map_result = if executable {
+                    user_space.map_user_rx(
+                        crate::memory::Sv39::VirtAddr::new(curr_vaddr),
+                        crate::memory::Sv39::PhysAddr::new(phys_page)
+                    )
+                } else if writable {
+                    user_space.map_user_writable(
+                        crate::memory::Sv39::VirtAddr::new(curr_vaddr),
+                        crate::memory::Sv39::PhysAddr::new(phys_page)
+                    )
                 } else {
-                    crate::println!("[elf] Out of memory");
+                    user_space.map_user_cow(
+                        crate::memory::Sv39::VirtAddr::new(curr_vaddr),
+                        crate::memory::Sv39::PhysAddr::new(phys_page)
+                    )
+                };
+
+                if map_result.is_err() {
+                    crate::println!("[elf] Failed to map page");
                     return Err(ElfResult::LoadError);
                 }
+
+                crate::print!("[elf] mapped ok\r\n");
+
+                // Calculate what to copy from ELF file to this page
+                let offset_in_seg = if curr_vaddr >= p_vaddr {
+                    curr_vaddr - p_vaddr
+                } else {
+                    0
+                };
+
+                let file_pos = p_offset + offset_in_seg;
+                let copy_len = if p_filesz > offset_in_seg {
+                    (p_filesz - offset_in_seg).min(4096)
+                } else {
+                    0
+                };
+
+                if copy_len > 0 && file_pos < data.len() {
+                    let kernel_va = phys_page;
+                    let dst = kernel_va as *mut u8;
+                    let src = unsafe { data.as_ptr().add(file_pos) };
+                    unsafe {
+                        core::ptr::copy_nonoverlapping(src, dst, copy_len);
+                        if copy_len < 4096 {
+                            core::ptr::write_bytes(dst.add(copy_len), 0, 4096 - copy_len);
+                        }
+                    }
+                } else {
+                    let kernel_va = phys_page;
+                    let dst = kernel_va as *mut u8;
+                    unsafe {
+                        core::ptr::write_bytes(dst, 0, 4096);
+                    }
+                }
+                crate::print!("[elf] copy done\r\n");
             }
         }
     }
 
-    // Set up user stack (also at high VA)
+    // Set up user stack at a high user VA (not kernel VA)
     crate::print!("[elf] setup stack\r\n");
-    let stack_top = user_space.setup_user_stack_high_va(HIGH_VA_BASE)
+    let stack_top = user_space.setup_user_stack()
         .map_err(|_| ElfResult::LoadError)?;
     crate::print!("[elf] done\r\n");
 
-    // Return translated entry point (high VA) and stack pointer
-    let high_entry = HIGH_VA_BASE + e_entry;
-    Ok((high_entry, stack_top - 16))
+    // Return entry point and stack pointer (at original VAs)
+    Ok((e_entry, stack_top - 16))
 }
 
 /// Get the entry point of an ELF file without loading it

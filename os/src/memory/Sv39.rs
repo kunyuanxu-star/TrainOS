@@ -289,17 +289,14 @@ pub struct PageTable {
 
 impl PageTable {
     /// Create a new empty page table (all invalid)
-    pub fn new() -> &'static mut Self {
-        // This should be called after allocating a physical page
-        let page = crate::memory::allocator::alloc_page();
-        if page.is_none() {
-            panic!("PageTable: failed to allocate page");
-        }
-        let ptr = page.unwrap() as *mut PageTable;
+    pub fn new() -> Option<&'static mut Self> {
+        let page = crate::memory::allocator::alloc_page()?;
+        let ptr = page as *mut PageTable;
+        // Initialize to zero - the allocator should give us zeroed pages
         unsafe {
             ptr.write_bytes(0, 1);
-            &mut *ptr
         }
+        Some(unsafe { &mut *ptr })
     }
 
     /// Get entry at index
@@ -351,7 +348,7 @@ pub struct PageTableManager {
 impl PageTableManager {
     /// Create a new page table manager with a fresh root page table
     pub fn new() -> Self {
-        let root_pt = PageTable::new();
+        let root_pt = PageTable::new().expect("Failed to allocate root page table");
         let pa = root_pt as *const PageTable as usize;
         let ppn = PhysAddr(pa).ppn();
         Self {
@@ -388,7 +385,7 @@ impl PageTableManager {
 
             if !pte.is_valid() {
                 // Create level 1 page table
-                let next_pt = PageTable::new();
+                let next_pt = PageTable::new().ok_or(MapError::NoMemory)?;
                 let next_pa = next_pt as *const PageTable as usize;
                 let next_ppn = PhysAddr(next_pa).ppn();
                 pte.ppn = next_ppn;
@@ -404,7 +401,7 @@ impl PageTableManager {
 
             if !pte1.is_valid() {
                 // Create level 2 page table
-                let next_pt = PageTable::new();
+                let next_pt = PageTable::new().ok_or(MapError::NoMemory)?;
                 let next_pa = next_pt as *const PageTable as usize;
                 let next_ppn = PhysAddr(next_pa).ppn();
                 pte1.ppn = next_ppn;
@@ -770,13 +767,17 @@ pub struct UserAddressSpace {
 }
 
 impl UserAddressSpace {
-    /// Create a new user address space using the kernel page table
-    /// This ensures kernel mappings are available when in user mode
+    /// Create a new user address space
+    /// Returns the kernel page table SATP and a flag indicating we should use it
     pub fn new() -> Option<Self> {
-        // Use the kernel page table's root PPN
+        // Get the kernel page table
         let kernel_pt = KERNEL_PAGE_TABLE.lock();
         if let Some(ref pt) = *kernel_pt {
+            // Use the kernel page table's SATP
             let satp = 8usize << 60 | pt.root_ppn().0;
+
+            // Create a PageTableManager that wraps the kernel page table
+            // We're sharing the kernel page table, so user mappings go there too
             let pt_manager = PageTableManager::from_existing_root(pt.root_ppn().0);
 
             return Some(Self {
@@ -847,11 +848,10 @@ impl UserAddressSpace {
     /// Set up the initial user stack at a high VA base
     /// This version allows specifying a high VA base to avoid conflicts
     pub fn setup_user_stack_high_va(&mut self, high_va_base: usize) -> Result<usize, MapError> {
-        // Use a fixed high stack address
-        // For Sv39, user VA space is 0x0 to 0x7FFFFFFFFFFF (48-bit with sign extension)
+        // Use high_va_base for stack - this should be a kernel VA (bits 63:39 = 1)
         // Stack grows downward from stack_top
         let stack_size = 0x40000; // 256KB stack (64 pages)
-        let stack_base = 0x3FFC00000usize;  // Page-aligned base
+        let stack_base = high_va_base;  // Use the provided high VA base
         let stack_top = stack_base + stack_size;
 
         crate::print!("[stack] setup\r\n");

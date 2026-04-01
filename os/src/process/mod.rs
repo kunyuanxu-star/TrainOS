@@ -374,84 +374,13 @@ fn test_task() {
 
 /// Start the scheduler and run the first user process
 fn start_scheduler() {
-    crate::println!("[sched] Starting scheduler");
+    crate::println!("[sched] Starting scheduler - skipping ELF loading");
 
-    // Embedded ELF binary for testing
-    static HELLO_ELF: &[u8] = include_bytes!("../../../target/riscv64gc-unknown-none-elf/release/hello");
-
-    // Create user address space
-    crate::println!("[sched] Creating user address space");
-    let mut user_space = match crate::memory::Sv39::UserAddressSpace::new() {
-        Some(us) => {
-            crate::println!("[sched] User address space created");
-            us
-        },
-        None => {
-            crate::println!("[sched] Failed to create user address space");
-            loop {}
+    // For now, just loop to keep the system running
+    loop {
+        crate::print!("[sched] idle\r\n");
+        unsafe {
+            core::arch::asm!("wfi");
         }
-    };
-
-    // Load ELF
-    crate::println!("[sched] Loading ELF");
-    let (entry_point, user_sp) = match crate::elf::load_elf(HELLO_ELF, &mut user_space) {
-        Ok(result) => {
-            crate::println!("[sched] ELF loaded successfully");
-            result
-        },
-        Err(e) => {
-            crate::println!("[sched] ELF loading failed");
-            loop {}
-        }
-    };
-
-    // Allocate kernel stack for this process
-    crate::println!("[sched] Allocating kernel stack");
-    let kernel_stack_page = match crate::memory::allocator::alloc_page() {
-        Some(addr) => addr,
-        None => {
-            crate::println!("[sched] Failed to allocate kernel stack");
-            loop {}
-        }
-    };
-    let kernel_sp = kernel_stack_page + 4096;  // Top of kernel stack page
-
-    // Set up trap frame at top of kernel stack
-    let trap_frame_size = core::mem::size_of::<crate::process::context::TrapFrame>();
-    let trap_frame_ptr = (kernel_sp - trap_frame_size) as *mut crate::process::context::TrapFrame;
-
-    // Initialize trap frame for user mode entry
-    unsafe {
-        let mut tf = crate::process::context::TrapFrame::new_user_entry(entry_point, user_sp, 0);
-        // Set sstatus: SPP=0 (user mode), SPIE=1, SIE=0
-        tf.sstatus = 0x00000020;
-        core::ptr::write(trap_frame_ptr, tf);
     }
-
-    // Get SATP from user space
-    let satp = user_space.get_satp();
-    crate::println!("[sched] satp");
-
-    // Set sscratch to point to kernel trap frame
-    // This is needed so that when a trap occurs, the CPU can find the kernel stack
-    unsafe {
-        core::arch::asm!("csrw sscratch, {0}", in(reg) trap_frame_ptr as usize);
-    }
-
-    crate::println!("[sched] Returning to user mode");
-
-    // Return to user mode - this never returns
-    unsafe {
-        crate::print!("[sched] About to call return_to_user\n");
-        crate::process::context::return_to_user(
-            trap_frame_ptr,
-            satp,
-            user_sp,
-            entry_point
-        );
-        crate::print!("[sched] return_to_user returned - should not see this\n");
-    }
-
-    // Should never reach here
-    loop {}
 }

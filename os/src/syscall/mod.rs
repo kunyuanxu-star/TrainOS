@@ -641,7 +641,19 @@ fn sys_nanosleep(_req: usize, _rem: usize) -> isize {
 /// Yield the CPU to scheduler
 pub fn sys_sched_yield() -> isize {
     // Request the scheduler to run and potentially switch to another task
+    // For kernel threads, we need to directly trigger the schedule
+    // since there's no trap handler invocation for kernel syscalls
     crate::process::request_schedule();
+
+    // For kernel threads, directly call do_schedule to perform the switch
+    // The trap frame is stored in CURRENT_TRAP_FRAME
+    let trap_frame = {
+        let tf = crate::process::CURRENT_TRAP_FRAME.lock();
+        tf.0
+    };
+    if !trap_frame.is_null() {
+        crate::process::do_schedule(trap_frame);
+    }
     0
 }
 

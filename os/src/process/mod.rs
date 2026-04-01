@@ -289,7 +289,7 @@ pub fn do_schedule(trap_frame: *mut context::TrapFrame) {
 
     drop(scheduler);
 
-    // Perform context switch - saves current state to saved_ctx_ptr, loads next
+    // Perform actual context switch - saves current state to saved_ctx_ptr, loads next
     unsafe {
         context::context_switch(saved_ctx_ptr, &next_tcb.ctx);
     }
@@ -348,7 +348,7 @@ pub fn run_first_process() -> ! {
 }
 
 /// Idle task - runs when no other tasks are runnable
-/// Note: Using busy loop instead of wfi because timer interrupt doesn't work in QEMU
+/// This task just burns CPU since timer interrupt preemption doesn't work in QEMU
 fn idle_task() {
     let mut counter: usize = 0;
     loop {
@@ -356,12 +356,10 @@ fn idle_task() {
         if counter % 1000 == 0 {
             crate::print!("[idle] idle task running\r\n");
         }
-        // Yield to allow other tasks to run
-        crate::syscall::sys_sched_yield();
     }
 }
 
-/// Test task that cycles and yields
+/// Test task that cycles
 fn test_task() {
     static mut COUNT: usize = 0;
     loop {
@@ -371,8 +369,6 @@ fn test_task() {
                 crate::print!("[test] Task cycle\r\n");
             }
         }
-        // Yield to allow scheduler to switch tasks
-        crate::syscall::sys_sched_yield();
     }
 }
 

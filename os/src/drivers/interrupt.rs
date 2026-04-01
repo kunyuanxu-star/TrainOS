@@ -97,14 +97,11 @@ pub fn clint_init() {
 
     // Enable timer interrupt in sie (Supervisor Interrupt Enable)
     // STIE bit (bit 5) enables supervisor timer interrupts
+    // SSIE bit (bit 1) enables supervisor software interrupts
     unsafe {
         let mut sie: usize;
         core::arch::asm!("csrr {}, sie", out(reg) sie);
-        sie |= 1 << 5;  // STIE = Supervisor Timer Interrupt Enable
-        core::arch::asm!("csrw sie, {}", in(reg) sie);
-
-        // Also enable software interrupts (for IPI)
-        sie |= 1 << 1;  // SSIE = Supervisor Software Interrupt Enable
+        sie |= (1 << 5) | (1 << 1);  // STIE | SSIE
         core::arch::asm!("csrw sie, {}", in(reg) sie);
     }
 }

@@ -123,8 +123,8 @@ unsafe fn read_u64(data: &[u8], offset: usize) -> u64 {
 /// Load an ELF file into user address space using kernel page table directly
 /// This maps user pages into the kernel page table instead of creating a separate user page table.
 /// Returns (entry_point, user_sp) on success
-pub fn load_elf(data: &[u8], _user_space: &mut crate::memory::Sv39::UserAddressSpace) -> Result<(usize, usize), ElfResult> {
-    use crate::memory::Sv39::{VirtAddr, PhysAddr, PTEFlags, map_kernel};
+pub fn load_elf(data: &[u8], user_space: &mut crate::memory::Sv39::UserAddressSpace) -> Result<(usize, usize), ElfResult> {
+    use crate::memory::Sv39::{VirtAddr, PhysAddr};
 
     // Validate ELF header
     match validate_elf(data) {
@@ -155,7 +155,7 @@ pub fn load_elf(data: &[u8], _user_space: &mut crate::memory::Sv39::UserAddressS
             let page_end = ((p_vaddr + p_memsz) + 4095) & !0xFFF;
             let num_pages = (page_end - page_start) / 4096;
 
-            // Map each page into the kernel page table at the user VA
+            // Map each page into the user page table
             for p in 0..num_pages {
                 let curr_vaddr = page_start + p * 4096;
 
@@ -168,16 +168,15 @@ pub fn load_elf(data: &[u8], _user_space: &mut crate::memory::Sv39::UserAddressS
                 // Determine flags
                 let executable = (p_flags & PF_X) != 0;
                 let writable = (p_flags & PF_W) != 0;
-                let flags = if executable {
-                    PTEFlags::user_rx()
+                let result = if executable {
+                    user_space.map_user_rx(VirtAddr::new(curr_vaddr), PhysAddr::new(phys_page))
                 } else if writable {
-                    PTEFlags::user_rw()
+                    user_space.map_user_writable(VirtAddr::new(curr_vaddr), PhysAddr::new(phys_page))
                 } else {
-                    PTEFlags::user_r()
+                    user_space.map_user_cow(VirtAddr::new(curr_vaddr), PhysAddr::new(phys_page))
                 };
 
-                // Map user VA to physical PA in kernel page table
-                if map_kernel(VirtAddr::new(curr_vaddr), PhysAddr::new(phys_page), flags).is_err() {
+                if result.is_err() {
                     return Err(ElfResult::LoadError);
                 }
 
@@ -222,7 +221,7 @@ pub fn load_elf(data: &[u8], _user_space: &mut crate::memory::Sv39::UserAddressS
     let stack_size = 0x40000; // 256KB stack
     let stack_top = stack_base + stack_size;
 
-    // Map stack pages
+    // Map stack pages using user address space
     for i in 0..(stack_size / 4096) {
         let va = stack_top - (i + 1) * 4096;
         let phys_page = match crate::memory::allocator::alloc_page() {
@@ -230,7 +229,7 @@ pub fn load_elf(data: &[u8], _user_space: &mut crate::memory::Sv39::UserAddressS
             None => return Err(ElfResult::LoadError),
         };
 
-        if map_kernel(VirtAddr::new(va), PhysAddr::new(phys_page), PTEFlags::user_rw()).is_err() {
+        if user_space.map_user_writable(VirtAddr::new(va), PhysAddr::new(phys_page)).is_err() {
             return Err(ElfResult::LoadError);
         }
     }

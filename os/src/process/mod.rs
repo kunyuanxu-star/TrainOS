@@ -376,8 +376,10 @@ fn test_task() {
 fn start_scheduler() {
     crate::println!("[sched] Starting scheduler");
 
-    // User program loading disabled for testing - dedicated page table allocator needs verification
-    crate::print!("[sched] User loading disabled for testing\r\n");
+    // User program loading is disabled - the page table issue needs to be fixed first
+    // The issue: when creating user address space, we need to allocate intermediate page tables
+    // but those pages are allocated at addresses not mapped in the current (RustSBI's) page table
+    crate::print!("[sched] User loading disabled - page table allocation issue\r\n");
 
     crate::print!("[sched] Entering idle loop\r\n");
 

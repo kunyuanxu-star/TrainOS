@@ -8,6 +8,26 @@ pub mod allocator;
 
 /// Initialize memory management subsystem
 pub fn init() {
+    // Initialize the page table allocator FIRST with pages from low memory.
+    // These pages are identity-mapped by RustSBI, so they are accessible.
+    // We allocate 64 page table frames (256KB total) for the pool.
+    const PT_POOL_COUNT: usize = 64;
+    let mut base_pa = 0;
+    let mut pages = 0;
+    for i in 0..PT_POOL_COUNT {
+        if let Some(pa) = allocator::alloc_page() {
+            if i == 0 {
+                base_pa = pa;
+            }
+            pages += 1;
+        } else {
+            break;
+        }
+    }
+    if pages > 0 {
+        Sv39::init_page_table_allocator_with_pool(base_pa, pages);
+    }
+
     // Initialize the kernel page table using the existing one from RustSBI
     Sv39::init_kernel_page_table();
 

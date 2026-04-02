@@ -8,6 +8,88 @@
 
 use spin::Mutex;
 
+/// Number of page table pages to reserve for the page table allocator
+/// Each page table is 4KB, so 256 pages = 1MB for page tables
+/// This should be enough for all page tables in the system
+const PAGE_TABLE_POOL_SIZE: usize = 256;
+
+/// Page table allocator - pre-allocated pool for page table frames
+/// This solves the "chicken-and-egg" problem where we need page tables
+/// to map memory, but need memory to create page tables.
+/// By pre-allocating a pool in identity-mapped memory, we ensure
+/// all page table allocations are always accessible.
+static PAGE_TABLE_ALLOCATOR: Mutex<PageTablePool> = Mutex::new(PageTablePool::new());
+
+/// Page table pool - a simple bump allocator for page table frames
+struct PageTablePool {
+    /// Array of pre-allocated page table frame PAs
+    frames: [usize; PAGE_TABLE_POOL_SIZE],
+    /// Next free index (bump pointer)
+    next_free: usize,
+    /// Number of allocated frames
+    allocated: usize,
+}
+
+impl PageTablePool {
+    /// Create a new page table pool
+    fn new() -> Self {
+        Self {
+            frames: [0; PAGE_TABLE_POOL_SIZE],
+            next_free: 0,
+            allocated: 0,
+        }
+    }
+
+    /// Initialize the pool with pre-allocated page table frames
+    /// Must be called during early boot before any page tables are created.
+    /// The frames must be in identity-mapped memory!
+    fn init(&mut self, base_pa: usize, count: usize) {
+        assert!(count <= PAGE_TABLE_POOL_SIZE, "Too many page table frames requested");
+        for i in 0..count {
+            self.frames[i] = base_pa + i * PAGE_SIZE;
+        }
+        self.next_free = count;
+        self.allocated = 0;
+    }
+
+    /// Allocate a page table frame (returns PA)
+    fn alloc(&mut self) -> Option<usize> {
+        if self.allocated >= PAGE_TABLE_POOL_SIZE {
+            return None;
+        }
+
+        // Bump allocate - just use the next available slot
+        // In a real allocator we'd have a free list, but for now we assume
+        // page tables are never freed, so simple bump allocation works
+        if self.allocated < self.next_free {
+            let frame = self.frames[self.allocated];
+            self.allocated += 1;
+            Some(frame)
+        } else {
+            None
+        }
+    }
+
+    /// Check if the pool is initialized
+    fn is_initialized(&self) -> bool {
+        self.next_free > 0
+    }
+}
+
+/// Initialize the page table allocator during early boot
+/// Must be called before any page table creation!
+pub fn init_page_table_allocator() {
+    crate::println!("[vm] Page table allocator ready (lazy init)");
+}
+
+/// Initialize the page table allocator with a pre-allocated pool
+/// This should be called during memory::init() before any page tables are created
+pub fn init_page_table_allocator_with_pool(base_pa: usize, count: usize) {
+    let mut pool = PAGE_TABLE_ALLOCATOR.lock();
+    pool.init(base_pa, count);
+    crate::println!("[vm] Page table allocator initialized");
+}
+
 /// Page size (4KB)
 pub const PAGE_SIZE: usize = 4096;
 /// Entries per page table
@@ -289,10 +371,24 @@ pub struct PageTable {
 
 impl PageTable {
     /// Create a new empty page table (all invalid)
+    /// Uses the dedicated page table allocator if available,
+    /// otherwise falls back to the general allocator.
     pub fn new() -> Option<&'static mut Self> {
-        let page = crate::memory::allocator::alloc_page()?;
+        // First try the dedicated page table allocator
+        let page = {
+            let mut pool = PAGE_TABLE_ALLOCATOR.lock();
+            if let Some(ref mut p) = *pool {
+                p.alloc()
+            } else {
+                None
+            }
+        };
+
+        // Fall back to general allocator if pool not initialized
+        let page = page.or_else(|| crate::memory::allocator::alloc_page())?;
+
         let ptr = page as *mut PageTable;
-        // Initialize to zero - the allocator should give us zeroed pages
+        // Initialize to zero
         unsafe {
             ptr.write_bytes(0, 1);
         }

@@ -55,7 +55,8 @@ impl BitmapPageAllocator {
             bitmap: [0; MAX_PAGES / 64],
             // Start at 0x80800000 to avoid OpenSBI firmware region (0x80000000-0x80040000)
             // and kernel region (0x80200000+). Kernel ends around 0x80700000.
-            base_page: 0x80800,  // Start at 0x80800000 / 4096
+            // Start at 0x80800 (256MB mark) - safe region after kernel
+            base_page: 0x80800,
             cached_hint: 0,
             stats: AllocatorStats {
                 pages_allocated: 0,

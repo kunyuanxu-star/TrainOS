@@ -768,28 +768,19 @@ pub struct UserAddressSpace {
 
 impl UserAddressSpace {
     /// Create a new user address space
-    /// Returns the kernel page table SATP and a flag indicating we should use it
+    /// Creates a fresh page table
     pub fn new() -> Option<Self> {
-        // Get the kernel page table
-        let kernel_pt = KERNEL_PAGE_TABLE.lock();
-        if let Some(ref pt) = *kernel_pt {
-            // Use the kernel page table's SATP
-            let satp = 8usize << 60 | pt.root_ppn().0;
+        let pt_manager = PageTableManager::new();
+        let satp = 8usize << 60 | pt_manager.root_ppn().0;
 
-            // Create a PageTableManager that wraps the kernel page table
-            // We're sharing the kernel page table, so user mappings go there too
-            let pt_manager = PageTableManager::from_existing_root(pt.root_ppn().0);
-
-            return Some(Self {
-                pt_manager,
-                satp,
-                heap_start: 0x00400000 + 0x100000,
-                heap_end: 0x00400000 + 0x100000,
-                stack_base: 0x3FFFFFFFE80,
-                stack_size: 0x200000,
-            });
-        }
-        None
+        Some(Self {
+            pt_manager,
+            satp,
+            heap_start: 0x00400000 + 0x100000,
+            heap_end: 0x00400000 + 0x100000,
+            stack_base: 0x3FFFFFFFE80,
+            stack_size: 0x200000,
+        })
     }
 
     /// Map a user page with COW (Copy-on-Write) semantics

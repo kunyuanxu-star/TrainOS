@@ -354,18 +354,31 @@ The syscall module (`os/src/syscall/`) provides:
 
 ## Development Status
 
-This is an educational project. The current roadmap:
+This is an educational project. The current status:
 
-1. **Completed**: Sv39 page table with COW support
-2. **Completed**: Full context switching between tasks
-3. **Completed**: VFS layer with device file system
-4. **Completed**: Extensive Linux syscall implementation
-5. **Completed**: TCP/IP network stack with socket API
-6. **Completed**: pthread-like threading interface
-7. **In Progress**: User mode execution with proper page tables
-8. **Planned**: Timer interrupt handling for preemption
-9. **Planned**: Disk-based file system (EasyFS)
-10. **Planned**: Async runtime for event-driven programming
+### Completed
+- **Boot sequence**: RustSBI → Boot → memory init → process init → VFS init → scheduler
+- **Sv39 page table**: 3-level page tables with COW support
+- **Context switching**: Full task switching with saved/restored callee-saved registers
+- **VFS layer**: Virtual file system with RAM filesystem and device files
+- **Linux syscalls**: Linux-compatible syscall interface (read, write, getpid, sched_yield, exit, clone, etc.)
+- **ELF loader**: Infrastructure for loading ELF binaries (not yet working for user mode)
+- **TCP/IP network stack**: Complete with socket API
+- **pthread-like threading**: Mutex, Cond, Barrier, RwLock, Once
+
+### In Progress
+- **User mode execution**: Page table mapping issue - the kernel page table from RustSBI doesn't have all physical memory mapped, causing page table allocation to fail when creating user address spaces
+- **Timer interrupts**: Hardware timer is initialized but not firing properly in QEMU
+
+### Known Issues
+1. **User program loading**: ELF loading fails during page table mapping because the kernel page table (from RustSBI) only identity-maps low physical memory (0x80000000-0x80400000), not the region where page tables are allocated (0x80800000+)
+2. **Timer interrupts**: Timer interrupt does not fire in QEMU with RustSBI-QEMU
+
+### Planned
+1. Fix user program loading by setting up proper address space mappings
+2. Debug timer interrupt issue in QEMU
+3. Disk-based file system (EasyFS)
+4. Async runtime for event-driven programming
 
 ## Contributing
 

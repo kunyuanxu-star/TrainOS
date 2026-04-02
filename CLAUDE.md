@@ -5,35 +5,39 @@ TrainOS is an educational operating system written in Rust for RISC-V 64-bit arc
 
 **Goal**: Surpass Linux in kernel architecture, security, performance, and developer experience.
 
-## Current Status (2026-03-31)
+## Current Status (2026-04-01)
 
 ### Phase 1: Make It Runnable (In Progress)
 
 **Completed**:
-- Timer interrupt initialization (clint_init) - ISSUE: Not firing in QEMU
+- Boot sequence runs successfully through all stages
 - Context switch in scheduler with trap frame handling
 - Basic fork (sys_clone) implementation with COW semantics
 - TaskControlBlock with kernel stack + trap frame allocation
 - Trap handling, timer interrupts, syscall dispatch
 - VFS, RAM filesystem
 - Basic syscalls: read, write, getpid, sched_yield, exit, clone
-- User mode return via return_to_user function (FIXED: register offsets bug)
 - Sv39 page table with COW support
-- ELF binary loader infrastructure
+- ELF binary loader (infrastructure complete, user mode loading blocked by page table issue)
 - RISC-V toolchain installed (xPack v12.3.0-2)
 - User programs compiled (hello, shell, vi) for RISC-V
 
-**Working**: Debug mode runs successfully with full boot sequence.
+**Working**: Debug mode runs successfully with full boot sequence, idle task loops on wfi.
+
 **Issues**:
-1. Timer interrupt does not fire in QEMU with RustSBI-QEMU
-2. PageTable::new() hangs when trying to create user address space (write_bytes issue)
+1. **Timer interrupt does not fire in QEMU with RustSBI-QEMU** - OS runs idle on wfi
+2. **User program loading fails** - Page table mapping issue when creating user address space
 
 ### Recent Fixes
+
+**Stack size limit found (2026-04-01)**:
+- 2MB stack (512 pages) fails during allocation
+- 1.99MB (508 pages) works, 1.95MB (504 pages) works
+- 256KB (64 pages) works reliably
 
 **return_to_user register offsets (2026-03-30)**:
 - Fixed bug in `os/src/process/context.rs` where assembly was loading registers with incorrect offsets
 - TrapFrame layout: ra(0), sp(8), gp(16), tp(24), t0(32), ... but assembly was loading gp from offset 8, tp from 16, etc.
-- This bug would have caused incorrect register values when returning to user mode
 
 ### Build & Run
 
@@ -51,7 +55,8 @@ cargo run --release -p os
 ```
 RustSBI → Boot 1 → memory init → SMP init (SXCIE) →
 [process] init → [clint] timer init → [fs] VFS init →
-[run] first process → [sched] scheduler → [sched] task created
+[run] first process → [sched] scheduler →
+[sched] Idle loop - user mode loading pending fix
 → idle task running with wfi (timer interrupt not firing)
 ```
 
@@ -110,29 +115,52 @@ RustSBI → Boot 1 → memory init → SMP init (SXCIE) →
 
 ## Next Steps (Priority Order)
 
-1. **Debug PageTable::new() hang** - write_bytes hangs when creating user address space
-2. **Complete sys_execve implementation** - Load ELF into user address space
-3. **Test user mode return** - Verify return_to_user works correctly
-4. **Investigate timer issue further** - Try different QEMU versions or OpenSBI
+1. **Fix user program loading** - The kernel page table from RustSBI doesn't map all physical memory
+2. **Debug timer issue** - Try different QEMU versions or OpenSBI firmware
+3. **Complete sys_execve implementation** - Load ELF into user address space
+4. **Test user mode return** - Verify return_to_user works correctly
 5. **Fix release mode** - spin::Mutex optimization issue
 
-## PageTable::new() Hang Issue (NEW - 2026-03-31)
+## User Address Space Loading Issue (2026-04-01)
 
-**Symptom**: When trying to create a new user address space, `PageTable::new()` hangs when calling `write_bytes(0, 1)` on the allocated page.
+**Symptom**: ELF loading panics during page table mapping when trying to create a user address space.
 
-**Observation**:
-- `alloc_page()` works and returns a valid address
-- Writing 1 byte via `ptr.write_bytes(0, 1)` hangs
-- This happens BEFORE any page table is created
-- Simple page allocation and writing work fine in other contexts
+**Root Cause**:
+- When creating a user page table, we need to allocate intermediate page tables (level-1, level-2)
+- These page tables are allocated at physical addresses (e.g., 0x80800000+)
+- We then try to access them by casting PA to a pointer and dereferencing
+- BUT: the kernel page table from RustSBI does NOT have all physical memory mapped
+- Only specific PA ranges are identity-mapped (likely 0x80000000-0x80400000)
+- When we try to access PA 0x80800000+ via a raw pointer, the MMU tries to translate it through the kernel page table, fails, and we get a fault
 
-**Analysis**:
-- The allocator's `base_page = 0x80000` starts at physical address 0x80000000 (kernel base)
-- First allocated page is at 0x80000000, which overlaps with kernel memory
-- But even simple writes to allocated pages work...
-- The hang is specifically in `PageTable::new()` -> `alloc_page()` -> `write_bytes(0, 1)`
+**Evidence**:
+- First ELF segment (VA 0x10000, RO) maps successfully
+- Second ELF segment (VA 0x1130c, R+E) fails during map()
+- The first mapping creates the intermediate page tables, which works
+- The second mapping reuses existing page tables but fails at a different level
+- The failure is specifically in `map()` when accessing intermediate page table pages
 
-**Status**: Investigating - possibly related to memory alignment or lock ordering
+**Detailed Trace**:
+1. UserAddressSpace::new() creates PageTableManager::new() with fresh root
+2. First segment mapping: creates level-1 and level-2 page tables - WORKS
+3. Second segment mapping: tries to access level-2 entry - FAILS
+
+**Why First Mapping Works**:
+- The root page table was already mapped by RustSBI at a known PA
+- When we access it, the kernel page table has the mapping
+
+**Why Second Mapping Fails**:
+- Level-1 and level-2 page tables were allocated at PAs like 0x80800000
+- These PAs are NOT in the kernel's page table
+- When we try to access them via `&mut *levelX_ptr`, the MMU lookup fails
+
+**Possible Solutions**:
+1. **Identity-map all RAM during boot**: Set up a proper kernel page table with full RAM mapped
+2. **Use pre-allocated page table pool**: Allocate page tables from a pre-mapped region
+3. **Build page tables before using them**: Use a two-phase approach where we first build the page table structure using a temporary mapping, then activate it
+4. **Use kernel page table directly**: Instead of separate user page table, map user pages into kernel page table (but this breaks user/kernel isolation)
+
+**Status**: Blocked - requires redesigning how page tables are allocated/accessed
 
 ## RISC-V Toolchain (INSTALLED)
 

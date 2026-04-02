@@ -374,9 +374,15 @@ fn test_task() {
 
 /// Start the scheduler and run the first user process
 fn start_scheduler() {
-    crate::println!("[sched] Starting scheduler - skipping ELF loading");
+    crate::println!("[sched] Starting scheduler");
 
-    // For now, just loop to keep the system running
+    // System is running - for now just idle
+    // TODO: Fix user program loading - blocked by page table access issue
+    // The kernel page table from RustSBI doesn't have all physical memory mapped,
+    // so page table allocation for user address spaces fails.
+
+    crate::println!("[sched] Idle loop - user mode loading blocked by page table issue");
+
     loop {
         crate::print!("[sched] idle\r\n");
         unsafe {

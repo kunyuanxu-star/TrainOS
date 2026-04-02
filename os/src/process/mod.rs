@@ -376,7 +376,11 @@ fn test_task() {
 fn start_scheduler() {
     crate::println!("[sched] Starting scheduler");
 
-    // For now, just idle - user program loading needs more work
+    // User program loading is disabled for now due to page table issues
+    // The issue is that map_kernel() cannot create intermediate page tables
+    // because they are allocated at addresses not identity-mapped by RustSBI
+    crate::print!("[sched] User loading disabled - page table issue\r\n");
+
     crate::print!("[sched] Entering idle loop\r\n");
 
     loop {

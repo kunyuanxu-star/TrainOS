@@ -26,13 +26,16 @@ TrainOS is an educational operating system written in Rust for RISC-V 64-bit arc
 
 **Issues**:
 1. **Timer interrupt does not fire in QEMU with RustSBI-QEMU** - OS runs idle on wfi
-2. **User program loading fails** - map_kernel causes panic when trying to map user pages into kernel page table
+2. **User program loading fails** - map_kernel causes panic when trying to map user pages
 
 **Investigation Notes (2026-04-02)**:
 - ELF header validation works correctly
-- ELF header field reading works (e_entry, e_phoff, e_phentsize, e_phnum all read successfully)
-- Panic occurs specifically when calling `map_kernel()` to create page table mappings
-- The kernel page table from RustSBI may not support modifications, or there's an incompatibility in how we're trying to use it
+- ELF header field reading works
+- Attempted to create a new page table with RAM identity-mapped - fails because intermediate page tables are allocated at unmapped addresses
+- The core issue: when `map_kernel()` creates intermediate page tables (level-1, level-2), they are allocated at PA (e.g., 0x80800000) that are NOT in RustSBI's identity-mapped region
+- When we try to access those intermediate page tables via `&mut *ptr`, the MMU faults because the PA isn't mapped
+- Tried creating new page table with 2MB RAM identity-mapped - fails at first mapping attempt
+- **Root cause confirmed**: The RustSBI page table only has limited RAM mapped (likely just low memory). When we try to modify it to add new mappings, we cannot allocate intermediate page tables at unmapped addresses.
 
 ### Recent Fixes
 
@@ -121,52 +124,43 @@ RustSBI → Boot 1 → memory init → SMP init (SXCIE) →
 
 ## Next Steps (Priority Order)
 
-1. **Investigate map_kernel panic** - The kernel page table modification causes panics, need to understand why
+1. **Fix user address space loading** - Need to solve the page table allocation issue
+   - Option A: Pre-allocate page table pool in identity-mapped region
+   - Option B: Build complete page table before switching to it
+   - Option C: Use separate user page tables with proper mapping
 2. **Debug timer issue** - Try different QEMU versions or OpenSBI firmware
-3. **Complete sys_execve implementation** - Load ELF into user address space once page table issue is fixed
+3. **Complete sys_execve implementation** - Load ELF into user address space
 4. **Test user mode return** - Verify return_to_user works correctly
 5. **Fix release mode** - spin::Mutex optimization issue
 
-## User Address Space Loading Issue (2026-04-01)
+## User Address Space Loading Issue (2026-04-02) - CONFIRMED ROOT CAUSE
 
 **Symptom**: ELF loading panics during page table mapping when trying to create a user address space.
 
-**Root Cause**:
-- When creating a user page table, we need to allocate intermediate page tables (level-1, level-2)
-- These page tables are allocated at physical addresses (e.g., 0x80800000+)
-- We then try to access them by casting PA to a pointer and dereferencing
-- BUT: the kernel page table from RustSBI does NOT have all physical memory mapped
-- Only specific PA ranges are identity-mapped (likely 0x80000000-0x80400000)
-- When we try to access PA 0x80800000+ via a raw pointer, the MMU tries to translate it through the kernel page table, fails, and we get a fault
+**Root Cause (Confirmed)**:
+- The RustSBI page table only has limited RAM identity-mapped (just low memory)
+- When we call `map_kernel()` to create new mappings, it needs to allocate intermediate page tables (level-1, level-2)
+- These intermediate page tables are allocated at PA like 0x80800000+
+- These PAs are NOT in RustSBI's identity-mapped region
+- When `map()` tries to access the intermediate page table via `&mut *ptr`, the MMU faults because the PA isn't mapped
 
-**Evidence**:
-- First ELF segment (VA 0x10000, RO) maps successfully
-- Second ELF segment (VA 0x1130c, R+E) fails during map()
-- The first mapping creates the intermediate page tables, which works
-- The second mapping reuses existing page tables but fails at a different level
-- The failure is specifically in `map()` when accessing intermediate page table pages
+**Why Even Creating a New Page Table Fails**:
+1. We create a new `PageTableManager::new()` - this allocates the root in low memory (accessible)
+2. We call `map()` to identity-map 0x80000000 - this requires allocating a level-1 page table
+3. `PageTable::new()` allocates a level-1 page table at PA like 0x80800000
+4. `map()` tries to access `&mut *level1_ptr` - FAULT because 0x80800000 isn't mapped
 
-**Detailed Trace**:
-1. UserAddressSpace::new() creates PageTableManager::new() with fresh root
-2. First segment mapping: creates level-1 and level-2 page tables - WORKS
-3. Second segment mapping: tries to access level-2 entry - FAILS
-
-**Why First Mapping Works**:
-- The root page table was already mapped by RustSBI at a known PA
-- When we access it, the kernel page table has the mapping
-
-**Why Second Mapping Fails**:
-- Level-1 and level-2 page tables were allocated at PAs like 0x80800000
-- These PAs are NOT in the kernel's page table
-- When we try to access them via `&mut *levelX_ptr`, the MMU lookup fails
+**The Chicken-and-Egg Problem**:
+- To map memory, we need intermediate page tables
+- To create intermediate page tables, we need to access memory at their PA
+- That PA isn't mapped, so we can't access it
 
 **Possible Solutions**:
-1. **Identity-map all RAM during boot**: Set up a proper kernel page table with full RAM mapped
-2. **Use pre-allocated page table pool**: Allocate page tables from a pre-mapped region
-3. **Build page tables before using them**: Use a two-phase approach where we first build the page table structure using a temporary mapping, then activate it
-4. **Use kernel page table directly**: Instead of separate user page table, map user pages into kernel page table (but this breaks user/kernel isolation)
+1. **Pre-allocate page table pool**: During boot, identity-map a region (e.g., 0x80400000-0x80410000) and use it exclusively for page table allocations
+2. **Build complete page table before switching**: First allocate all needed page tables in low memory, set them up, THEN switch SATP
+3. **Use VSATP or similar**: If there was a way to access physical memory directly without going through page table...
 
-**Status**: Blocked - requires redesigning how page tables are allocated/accessed
+**Status**: Active issue - needs creative solution
 
 ## RISC-V Toolchain (INSTALLED)
 

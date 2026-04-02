@@ -621,16 +621,14 @@ static KERNEL_PAGE_TABLE: Mutex<Option<PageTableManager>> = Mutex::new(None);
 pub fn init_kernel_page_table() {
     crate::println!("[vm] Initializing kernel page table...");
 
-    // Read the current SATP - Supervisor Address Translation and Protection
+    // Read the current SATP
     let satp: usize;
     unsafe {
         core::arch::asm!("csrr {0}, satp", out(reg) satp);
     }
     crate::println!("[vm] SATP read completed");
 
-    // Extract PPN (physical page number) from SATP
-    // SATP format: [63:60] mode, [59:44] ASID, [43:0] PPN
-    // For Sv39, mode = 8
+    // Extract PPN from SATP
     let root_ppn = satp & 0x0FFF_FFFF_FFFF;
     crate::println!("[vm] Root PPN extracted");
 

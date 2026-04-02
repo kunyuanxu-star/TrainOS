@@ -18,7 +18,7 @@ TrainOS is an educational operating system written in Rust for RISC-V 64-bit arc
 - VFS, RAM filesystem
 - Basic syscalls: read, write, getpid, sched_yield, exit, clone
 - Sv39 page table with COW support
-- ELF binary loader (infrastructure complete, user mode loading blocked by page table issue)
+- ELF binary loader infrastructure
 - RISC-V toolchain installed (xPack v12.3.0-2)
 - User programs compiled (hello, shell, vi) for RISC-V
 
@@ -27,15 +27,16 @@ TrainOS is an educational operating system written in Rust for RISC-V 64-bit arc
 **Issues**:
 1. **Timer interrupt does not fire in QEMU with RustSBI-QEMU** - OS runs idle on wfi
 2. **User program loading fails** - map_kernel causes panic when trying to map user pages
+3. **Attempted fixes that didn't work**:
+   - Creating new page table with RAM identity-mapped - fails because intermediate page tables are allocated at unmapped addresses
+   - Dedicated page table allocator using low memory region - causes hang when creating user address space
 
 **Investigation Notes (2026-04-02)**:
 - ELF header validation works correctly
 - ELF header field reading works
-- Attempted to create a new page table with RAM identity-mapped - fails because intermediate page tables are allocated at unmapped addresses
-- The core issue: when `map_kernel()` creates intermediate page tables (level-1, level-2), they are allocated at PA (e.g., 0x80800000) that are NOT in RustSBI's identity-mapped region
+- **Root cause confirmed**: The RustSBI page table only has limited RAM mapped. When `map_kernel()` creates intermediate page tables (level-1, level-2), they are allocated at PA (e.g., 0x80800000) that are NOT in RustSBI's identity-mapped region
 - When we try to access those intermediate page tables via `&mut *ptr`, the MMU faults because the PA isn't mapped
-- Tried creating new page table with 2MB RAM identity-mapped - fails at first mapping attempt
-- **Root cause confirmed**: The RustSBI page table only has limited RAM mapped (likely just low memory). When we try to modify it to add new mappings, we cannot allocate intermediate page tables at unmapped addresses.
+- **The chicken-and-egg problem**: To map memory, we need intermediate page tables. To create intermediate page tables, we need to access their PA. But that PA isn't mapped, so we can't access it.
 
 ### Recent Fixes
 
@@ -124,10 +125,9 @@ RustSBI → Boot 1 → memory init → SMP init (SXCIE) →
 
 ## Next Steps (Priority Order)
 
-1. **Fix user address space loading** - Need to solve the page table allocation issue
-   - Option A: Pre-allocate page table pool in identity-mapped region
-   - Option B: Build complete page table before switching to it
-   - Option C: Use separate user page tables with proper mapping
+1. **Fix user address space loading** - The fundamental issue is that RustSBI's page table doesn't have enough identity-mapped RAM to support creating intermediate page tables
+   - Need to find a way to either: (a) identity-map more RAM in RustSBI's page table before we need it, or (b) access physical memory without going through the page table
+   - This is a bootstrapping problem that requires careful design
 2. **Debug timer issue** - Try different QEMU versions or OpenSBI firmware
 3. **Complete sys_execve implementation** - Load ELF into user address space
 4. **Test user mode return** - Verify return_to_user works correctly

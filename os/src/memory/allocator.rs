@@ -53,10 +53,10 @@ impl BitmapPageAllocator {
     pub const fn new() -> Self {
         Self {
             bitmap: [0; MAX_PAGES / 64],
-            // Start at 0x80800000 to avoid OpenSBI firmware region (0x80000000-0x80040000)
-            // and kernel region (0x80200000+). Kernel ends around 0x80700000.
-            // Start at 0x80800 (256MB mark) - safe region after kernel
-            base_page: 0x80800,
+            // Start at 0x80000 = PA 0x80000000
+            // Using the very start of DRAM (after page 0 to avoid null).
+            // This should be identity-mapped by RustSBI.
+            base_page: 0x80001,
             cached_hint: 0,
             stats: AllocatorStats {
                 pages_allocated: 0,

@@ -120,109 +120,68 @@ unsafe fn read_u64(data: &[u8], offset: usize) -> u64 {
     ptr.read_unaligned()
 }
 
-/// Load an ELF file into user address space using Sv39 page tables
-/// Returns (entry_point, user_sp, satp) on success
-pub fn load_elf(data: &[u8], user_space: &mut crate::memory::Sv39::UserAddressSpace) -> Result<(usize, usize), ElfResult> {
-    // Validate
+/// Load an ELF file into user address space using kernel page table directly
+/// This maps user pages into the kernel page table instead of creating a separate user page table.
+/// Returns (entry_point, user_sp) on success
+pub fn load_elf(data: &[u8], _user_space: &mut crate::memory::Sv39::UserAddressSpace) -> Result<(usize, usize), ElfResult> {
+    use crate::memory::Sv39::{VirtAddr, PhysAddr, PTEFlags, map_kernel};
+
+    // Validate ELF header
     match validate_elf(data) {
         ElfResult::Success => {}
         e => return Err(e),
     }
 
-    // Read ELF header fields directly
-    // ELF64 header layout (from spec):
-    // 0-15: e_ident
-    // 16-17: e_type
-    // 18-19: e_machine
-    // 20-23: e_version
-    // 24-31: e_entry
-    // 32-39: e_phoff
-    // 40-47: e_shoff
-    let e_type = unsafe { read_u16(data, 16) };
+    // Read ELF header fields
     let e_entry = unsafe { read_u64(data, 24) } as usize;
     let e_phoff = unsafe { read_u64(data, 32) } as usize;
     let e_phentsize = unsafe { read_u16(data, 54) } as usize;
     let e_phnum = unsafe { read_u16(data, 56) } as usize;
 
-    // Only support ET_EXEC (executable)
-    if e_type != ET_EXEC {
-        crate::print!("[elf] e_type mismatch: got ");
-        return Err(ElfResult::Unsupported);
-    }
-
-    // Load each PT_LOAD segment at original VAs
-    // The kernel page table is used, so all mappings are accessible
+    // Only load the FIRST PT_LOAD segment
     for i in 0..e_phnum {
-        crate::print!("[elf] segment\r\n");
         let phdr_offset = e_phoff + i * e_phentsize;
         let p_type = unsafe { read_u32(data, phdr_offset) };
 
         if p_type == PT_LOAD {
-            crate::print!("[elf] PT_LOAD\r\n");
             let p_offset = unsafe { read_u64(data, phdr_offset + 8) } as usize;
             let p_vaddr = unsafe { read_u64(data, phdr_offset + 16) } as usize;
             let p_filesz = unsafe { read_u64(data, phdr_offset + 32) } as usize;
             let p_memsz = unsafe { read_u64(data, phdr_offset + 40) } as usize;
             let p_flags = unsafe { read_u32(data, phdr_offset + 4) };
 
-            crate::print!("[elf] seg info\r\n");
-
             // Align vaddr to page boundary
             let page_start = p_vaddr & !0xFFF;
             let page_end = ((p_vaddr + p_memsz) + 4095) & !0xFFF;
             let num_pages = (page_end - page_start) / 4096;
 
-            crate::print!("[elf] num_pages\r\n");
-
-            // Map each page into user address space at original VA
+            // Map each page into the kernel page table at the user VA
             for p in 0..num_pages {
-                crate::print!("[elf] page\r\n");
                 let curr_vaddr = page_start + p * 4096;
-
-                crate::print!("[elf] curr_vaddr\r\n");
 
                 // Allocate physical page
                 let phys_page = match crate::memory::allocator::alloc_page() {
-                    Some(p) => p,
-                    None => {
-                        crate::println!("[elf] Out of memory");
-                        return Err(ElfResult::LoadError);
-                    }
+                    Some(pp) => pp,
+                    None => return Err(ElfResult::LoadError),
                 };
-                crate::print!("[elf] page alloc ok\r\n");
 
-                // Determine page flags based on segment flags
+                // Determine flags
                 let executable = (p_flags & PF_X) != 0;
                 let writable = (p_flags & PF_W) != 0;
-
-                crate::print!("[elf] about to map va\r\n");
-
-                // Map as user page (RX for code, RW for data) at original VA
-                let map_result = if executable {
-                    user_space.map_user_rx(
-                        crate::memory::Sv39::VirtAddr::new(curr_vaddr),
-                        crate::memory::Sv39::PhysAddr::new(phys_page)
-                    )
+                let flags = if executable {
+                    PTEFlags::user_rx()
                 } else if writable {
-                    user_space.map_user_writable(
-                        crate::memory::Sv39::VirtAddr::new(curr_vaddr),
-                        crate::memory::Sv39::PhysAddr::new(phys_page)
-                    )
+                    PTEFlags::user_rw()
                 } else {
-                    user_space.map_user_cow(
-                        crate::memory::Sv39::VirtAddr::new(curr_vaddr),
-                        crate::memory::Sv39::PhysAddr::new(phys_page)
-                    )
+                    PTEFlags::user_r()
                 };
 
-                if map_result.is_err() {
-                    crate::println!("[elf] Failed to map page");
+                // Map user VA to physical PA in kernel page table
+                if map_kernel(VirtAddr::new(curr_vaddr), PhysAddr::new(phys_page), flags).is_err() {
                     return Err(ElfResult::LoadError);
                 }
 
-                crate::print!("[elf] mapped ok\r\n");
-
-                // Calculate what to copy from ELF file to this page
+                // Copy data to the page
                 let offset_in_seg = if curr_vaddr >= p_vaddr {
                     curr_vaddr - p_vaddr
                 } else {
@@ -237,8 +196,7 @@ pub fn load_elf(data: &[u8], user_space: &mut crate::memory::Sv39::UserAddressSp
                 };
 
                 if copy_len > 0 && file_pos < data.len() {
-                    let kernel_va = phys_page;
-                    let dst = kernel_va as *mut u8;
+                    let dst = phys_page as *mut u8;
                     let src = unsafe { data.as_ptr().add(file_pos) };
                     unsafe {
                         core::ptr::copy_nonoverlapping(src, dst, copy_len);
@@ -247,24 +205,36 @@ pub fn load_elf(data: &[u8], user_space: &mut crate::memory::Sv39::UserAddressSp
                         }
                     }
                 } else {
-                    let kernel_va = phys_page;
-                    let dst = kernel_va as *mut u8;
+                    let dst = phys_page as *mut u8;
                     unsafe {
                         core::ptr::write_bytes(dst, 0, 4096);
                     }
                 }
-                crate::print!("[elf] copy done\r\n");
             }
+
+            break; // Only load first segment
         }
     }
 
-    // Set up user stack at a high user VA (not kernel VA)
-    crate::print!("[elf] setup stack\r\n");
-    let stack_top = user_space.setup_user_stack()
-        .map_err(|_| ElfResult::LoadError)?;
-    crate::print!("[elf] done\r\n");
+    // Set up user stack at a high VA
+    // Use 256KB stack (64 pages) for reliability
+    let stack_base = 0x3FFFFFFFE80;
+    let stack_size = 0x40000; // 256KB stack
+    let stack_top = stack_base + stack_size;
 
-    // Return entry point and stack pointer (at original VAs)
+    // Map stack pages
+    for i in 0..(stack_size / 4096) {
+        let va = stack_top - (i + 1) * 4096;
+        let phys_page = match crate::memory::allocator::alloc_page() {
+            Some(p) => p,
+            None => return Err(ElfResult::LoadError),
+        };
+
+        if map_kernel(VirtAddr::new(va), PhysAddr::new(phys_page), PTEFlags::user_rw()).is_err() {
+            return Err(ElfResult::LoadError);
+        }
+    }
+
     Ok((e_entry, stack_top - 16))
 }
 

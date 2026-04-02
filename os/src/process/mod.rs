@@ -376,15 +376,10 @@ fn test_task() {
 fn start_scheduler() {
     crate::println!("[sched] Starting scheduler");
 
-    // System is running - for now just idle
-    // TODO: Fix user program loading - blocked by page table access issue
-    // The kernel page table from RustSBI doesn't have all physical memory mapped,
-    // so page table allocation for user address spaces fails.
-
-    crate::println!("[sched] Idle loop - user mode loading blocked by page table issue");
+    // For now, just idle - user program loading needs more work
+    crate::print!("[sched] Entering idle loop\r\n");
 
     loop {
-        crate::print!("[sched] idle\r\n");
         unsafe {
             core::arch::asm!("wfi");
         }

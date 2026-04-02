@@ -5,7 +5,7 @@ TrainOS is an educational operating system written in Rust for RISC-V 64-bit arc
 
 **Goal**: Surpass Linux in kernel architecture, security, performance, and developer experience.
 
-## Current Status (2026-04-01)
+## Current Status (2026-04-02)
 
 ### Phase 1: Make It Runnable (In Progress)
 
@@ -26,7 +26,13 @@ TrainOS is an educational operating system written in Rust for RISC-V 64-bit arc
 
 **Issues**:
 1. **Timer interrupt does not fire in QEMU with RustSBI-QEMU** - OS runs idle on wfi
-2. **User program loading fails** - Page table mapping issue when creating user address space
+2. **User program loading fails** - map_kernel causes panic when trying to map user pages into kernel page table
+
+**Investigation Notes (2026-04-02)**:
+- ELF header validation works correctly
+- ELF header field reading works (e_entry, e_phoff, e_phentsize, e_phnum all read successfully)
+- Panic occurs specifically when calling `map_kernel()` to create page table mappings
+- The kernel page table from RustSBI may not support modifications, or there's an incompatibility in how we're trying to use it
 
 ### Recent Fixes
 
@@ -115,9 +121,9 @@ RustSBI → Boot 1 → memory init → SMP init (SXCIE) →
 
 ## Next Steps (Priority Order)
 
-1. **Fix user program loading** - The kernel page table from RustSBI doesn't map all physical memory
+1. **Investigate map_kernel panic** - The kernel page table modification causes panics, need to understand why
 2. **Debug timer issue** - Try different QEMU versions or OpenSBI firmware
-3. **Complete sys_execve implementation** - Load ELF into user address space
+3. **Complete sys_execve implementation** - Load ELF into user address space once page table issue is fixed
 4. **Test user mode return** - Verify return_to_user works correctly
 5. **Fix release mode** - spin::Mutex optimization issue
 

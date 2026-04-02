@@ -617,8 +617,7 @@ pub enum MapError {
 static KERNEL_PAGE_TABLE: Mutex<Option<PageTableManager>> = Mutex::new(None);
 
 /// Initialize the kernel page table
-/// We read the current SATP to get the existing page table from RustSBI
-/// and wrap it in our PageTableManager
+/// We read the current SATP to get the existing page table from RustSBI.
 pub fn init_kernel_page_table() {
     crate::println!("[vm] Initializing kernel page table...");
 
@@ -635,9 +634,8 @@ pub fn init_kernel_page_table() {
     let root_ppn = satp & 0x0FFF_FFFF_FFFF;
     crate::println!("[vm] Root PPN extracted");
 
-    // Create a PageTableManager wrapping the existing kernel page table
+    // Use the existing RustSBI page table
     let pt_manager = PageTableManager::from_existing_root(root_ppn);
-    crate::println!("[vm] PageTableManager created");
 
     *KERNEL_PAGE_TABLE.lock() = Some(pt_manager);
     crate::println!("[vm] Kernel page table initialized");

@@ -187,10 +187,7 @@ extern "C" fn rust_main() -> ! {
             inout("a1") ptr, inout("a2") remaining);
     }
 
-    // Initialize trap handling
-    crate::trap::init();
-
-    // Output "Boot 5" directly
+    // Output "Boot 5" directly (before trap init to debug hang)
     unsafe {
         let s = "Boot 5\r\n";
         let len = s.len();
@@ -205,6 +202,9 @@ extern "C" fn rust_main() -> ! {
             "   bnez a2, 1b",
             inout("a1") ptr, inout("a2") remaining);
     }
+
+    // Initialize trap handling
+    crate::trap::init();
 
     // Initialize file system
     crate::fs::init();

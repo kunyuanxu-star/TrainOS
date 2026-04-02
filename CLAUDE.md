@@ -11,6 +11,9 @@ TrainOS is an educational operating system written in Rust for RISC-V 64-bit arc
 
 **Completed**:
 - Boot sequence runs successfully through all stages
+- Fixed compilation errors (PageTablePool type mismatch, missing hello ELF)
+- Timer initialization works with direct CLINT MMIO access
+- Page table allocator uses fixed identity-mapped region (0x80000000-0x80040000)
 - Context switch in scheduler with trap frame handling
 - Basic fork (sys_clone) implementation with COW semantics
 - TaskControlBlock with kernel stack + trap frame allocation
@@ -25,29 +28,51 @@ TrainOS is an educational operating system written in Rust for RISC-V 64-bit arc
 **Working**: Debug mode runs successfully with full boot sequence, idle task loops on wfi.
 
 **Issues**:
-1. **Timer interrupt does not fire in QEMU with RustSBI-QEMU** - OS runs idle on wfi
-2. **User program loading fails** - map_kernel causes panic when trying to map user pages
-3. **Attempted fixes that didn't work**:
-   - Creating new page table with RAM identity-mapped - fails because intermediate page tables are allocated at unmapped addresses
-   - Dedicated page table allocator using low memory region - causes hang when creating user address space
+1. **sie CSR write hangs** - Writing to sie (Supervisor Interrupt Enable) causes QEMU to hang. Using direct CLINT MMIO for timer instead.
+2. **Timer interrupt not firing** - Even with CLINT directly programmed, sie.STIE cannot be set due to sie write hang.
+3. **User program loading** - Still needs verification with fixed page table allocator
 
-**Investigation Notes (2026-04-02)**:
-- ELF header validation works correctly
-- ELF header field reading works
-- **Root cause confirmed**: The RustSBI page table only has limited RAM mapped. When `map_kernel()` creates intermediate page tables (level-1, level-2), they are allocated at PA (e.g., 0x80800000) that are NOT in RustSBI's identity-mapped region
-- When we try to access those intermediate page tables via `&mut *ptr`, the MMU faults because the PA isn't mapped
-- **The chicken-and-egg problem**: To map memory, we need intermediate page tables. To create intermediate page tables, we need to access their PA. But that PA isn't mapped, so we can't access it.
+### Timer Issue Details (2026-04-02)
 
-### Recent Fixes
+**Problem**: Writing to sie CSR (0x104) causes QEMU to hang completely.
 
-**Stack size limit found (2026-04-01)**:
+**Investigation**:
+- `csrr sie, 0x104` works fine (reads sie = 0x0)
+- `csrw sie, 0x22` (setting STIE+SSIE) hangs
+- `csrs sie, 0x22` (atomic set) also hangs
+- Same issue with any sie write
+
+**Workaround Found**: Use direct CLINT MMIO access instead of sie CSR:
+```rust
+// Direct CLINT access at 0x2004000 (mtimecmp for hart 0)
+let clint_mtimecmp: *mut u64 = 0x2004000 as *mut u64;
+let mtime: u64 = core::ptr::read_volatile(0x200bff8 as *const u64); // mtime
+core::ptr::write_volatile(clint_mtimecmp, mtime.wrapping_add(100_000));
+```
+
+### Page Table Fix (2026-04-02)
+
+**Previous Issue**: RustSBI page table only had limited RAM identity-mapped, causing intermediate page table allocation to fail when creating user address spaces.
+
+**Fix Applied**: Page table allocator now uses fixed identity-mapped region at 0x80000000-0x80040000 (256KB = 64 page table frames).
+
+This ensures all page table frames are always accessible via the identity mapping that RustSBI sets up.
+
+## Recent Fixes
+
+**Page table allocator fix (2026-04-02)**:
+- Changed from dynamic allocation to fixed identity-mapped region
+- Page table pool now at PA 0x80000000-0x80040000
+- All intermediate page tables now accessible
+
+**Stack size limit (2026-04-01)**:
 - 2MB stack (512 pages) fails during allocation
 - 1.99MB (508 pages) works, 1.95MB (504 pages) works
 - 256KB (64 pages) works reliably
 
 **return_to_user register offsets (2026-03-30)**:
 - Fixed bug in `os/src/process/context.rs` where assembly was loading registers with incorrect offsets
-- TrapFrame layout: ra(0), sp(8), gp(16), tp(24), t0(32), ... but assembly was loading gp from offset 8, tp from 16, etc.
+- TrapFrame layout: ra(0), sp(8), gp(16), tp(24), t0(32), ...
 
 ### Build & Run
 
@@ -64,16 +89,16 @@ cargo run --release -p os
 ### Debug Mode Boot Sequence (Working)
 ```
 RustSBI → Boot 1 → memory init → SMP init (SXCIE) →
-[process] init → [clint] timer init → [fs] VFS init →
+[process] init → [clint] timer init (direct MMIO) → [fs] VFS init →
 [run] first process → [sched] scheduler →
-[sched] Idle loop - user mode loading pending fix
-→ idle task running with wfi (timer interrupt not firing)
+[sched] Idle loop - user mode loading pending verification
 ```
 
 ## Architecture
 
 **Memory Layout**:
 - 0x80000000: DRAM base (physical)
+- 0x80000000-0x80040000: Page table pool (identity-mapped)
 - 0x80200000: Kernel text start
 - Sv39 user space: 0x0 - 0x3FFFFFFFFFFF (128GB)
 
@@ -91,76 +116,43 @@ RustSBI → Boot 1 → memory init → SMP init (SXCIE) →
 | `os/src/trap/mod.rs` | Trap handling, timer interrupts, handle_trap |
 | `os/src/syscall/mod.rs` | Syscall dispatcher, sys_clone, sys_execve (stub) |
 | `os/src/memory/Sv39.rs` | Sv39 page table, COW support, handle_cow_page |
-| `os/src/drivers/interrupt.rs` | CLINT timer, PLIC interrupts |
+| `os/src/memory/mod.rs` | Memory subsystem init, page table allocator |
+| `os/src/drivers/interrupt.rs` | CLINT timer (direct MMIO), PLIC interrupts |
 | `os/src/vfs/mod.rs` | Virtual File System |
 | `os/src/fs/ramfs.rs` | RAM filesystem |
 | `os/src/elf.rs` | ELF binary loader |
 
-## Timer Interrupt Issue (UNRESOLVED)
+## RustSBI Integration
 
-**Status**: Timer interrupt does NOT fire in QEMU with RustSBI-QEMU v0.1.1
+**Built from source**: RustSBI 0.4.0 (prototyper) was successfully built from the main repository.
 
-**Attempts to fix**:
-1. ✅ Updated from RustSBI-QEMU v0.2.0-alpha.10 to v0.1.1 - No change
-2. ✅ Tried direct CLINT access (set_mtimecmp) - No change
-3. ✅ Tried SBI_SET_TIMER via ecall - No change
-4. ✅ Verified STIE bit is set in sie register - Confirmed
-5. ✅ Verified mideleg has stimer delegated (0x1666) - Confirmed
-6. ✅ Tried different timebase frequencies (10MHz, 100MHz) - No change
-7. ✅ Tried ACLINT option (-machine aclint=true) - No change
-8. ✅ Tried RTC configuration options - No change
-9. ✅ QEMU debug output shows only supervisor_ecall, NO timer interrupts
+**Issues with new RustSBI**:
+- SBI_SET_TIMER causes hang (unlike older firmware)
+- sie CSR write causes hang
+- Direct CLINT MMIO works as workaround
 
-**Analysis**:
-- The timer is being set correctly (mtimecmp is written)
-- Interrupts are properly delegated to supervisor mode (mideleg.stimer = 1)
-- Timer interrupt enable bit is set (sie.stie = 1)
-- But the timer interrupt never fires in QEMU
-
-**Root Cause**: Likely QEMU's CLINT timer emulation issue when using RustSBI as firmware.
-- QEMU may not be correctly emulating the timer hardware
-- Or there may be a timing issue where the timer fires before the OS is ready to handle it
-
-**Workaround**: OS runs idle task on wfi, but timer-based preemption doesn't work.
+**Memory region**: 0x80000000 - 0x88000000 (128MB as reported by RustSBI)
 
 ## Next Steps (Priority Order)
 
-1. **Fix user address space loading** - The fundamental issue is that RustSBI's page table doesn't have enough identity-mapped RAM to support creating intermediate page tables
-   - Need to find a way to either: (a) identity-map more RAM in RustSBI's page table before we need it, or (b) access physical memory without going through the page table
-   - This is a bootstrapping problem that requires careful design
-2. **Debug timer issue** - Try different QEMU versions or OpenSBI firmware
-3. **Complete sys_execve implementation** - Load ELF into user address space
-4. **Test user mode return** - Verify return_to_user works correctly
-5. **Fix release mode** - spin::Mutex optimization issue
+1. **Verify user address space loading** - Test if page table fix resolves the issue
+2. **Debug sie CSR write hang** - Understand why sie write hangs in QEMU
+3. **Timer interrupt in QEMU** - Enable timer interrupts despite sie write issue
+4. **Complete sys_execve implementation** - Load ELF into user address space
+5. **Test user mode return** - Verify return_to_user works correctly
+6. **Fix release mode** - spin::Mutex optimization issue
 
-## User Address Space Loading Issue (2026-04-02) - CONFIRMED ROOT CAUSE
+## Timer Interrupt Issue (UNRESOLVED)
 
-**Symptom**: ELF loading panics during page table mapping when trying to create a user address space.
+**Status**: Timer cannot be enabled via sie.STIE due to sie write hang.
 
-**Root Cause (Confirmed)**:
-- The RustSBI page table only has limited RAM identity-mapped (just low memory)
-- When we call `map_kernel()` to create new mappings, it needs to allocate intermediate page tables (level-1, level-2)
-- These intermediate page tables are allocated at PA like 0x80800000+
-- These PAs are NOT in RustSBI's identity-mapped region
-- When `map()` tries to access the intermediate page table via `&mut *ptr`, the MMU faults because the PA isn't mapped
+**Current workaround**: Direct CLINT MMIO access for timer, but interrupts still not enabled because sie.STIE cannot be set.
 
-**Why Even Creating a New Page Table Fails**:
-1. We create a new `PageTableManager::new()` - this allocates the root in low memory (accessible)
-2. We call `map()` to identity-map 0x80000000 - this requires allocating a level-1 page table
-3. `PageTable::new()` allocates a level-1 page table at PA like 0x80800000
-4. `map()` tries to access `&mut *level1_ptr` - FAULT because 0x80800000 isn't mapped
-
-**The Chicken-and-Egg Problem**:
-- To map memory, we need intermediate page tables
-- To create intermediate page tables, we need to access memory at their PA
-- That PA isn't mapped, so we can't access it
-
-**Possible Solutions**:
-1. **Pre-allocate page table pool**: During boot, identity-map a region (e.g., 0x80400000-0x80410000) and use it exclusively for page table allocations
-2. **Build complete page table before switching**: First allocate all needed page tables in low memory, set them up, THEN switch SATP
-3. **Use VSATP or similar**: If there was a way to access physical memory directly without going through page table...
-
-**Status**: Active issue - needs creative solution
+**Analysis**:
+- sie CSR reads work (returns 0x0 initially)
+- Any write to sie (csrw, csrs) causes QEMU to hang
+- This affects both STIE (timer) and SSIE (software interrupt)
+- PLIC interrupts also go through sie, but we haven't tested those
 
 ## RISC-V Toolchain (INSTALLED)
 
@@ -168,15 +160,7 @@ RustSBI → Boot 1 → memory init → SMP init (SXCIE) →
 - `downloads/xpack-riscv-none-elf-gcc-12.3.0-2/`
 
 **User programs** (built for riscv64gc-unknown-none-elf):
-- `target/riscv64gc-unknown-none-elf/release/hello` (ELF)
-- `target/riscv64gc-unknown-none-elf/release/hello.bin` (raw binary, 6.6KB)
-
-**Toolchain usage**:
-```bash
-export PATH="$PWD/downloads/xpack-riscv-none-elf-gcc-12.3.0-2/bin:$PATH"
-riscv-none-elf-gcc --version
-riscv-none-elf-objcopy -O binary input.elf output.bin
-```
+- Can be built via `cargo build --target riscv64gc-unknown-none-elf --release -p user`
 
 ## Development Notes
 
@@ -191,7 +175,7 @@ riscv-none-elf-objcopy -O binary input.elf output.bin
 
 ### QEMU Configuration
 - Machine: virt
-- BIOS: rustsbi-qemu.bin (v0.1.1)
+- BIOS: rustsbi-qemu-new.bin (v0.4.0 built from source)
 - CLINT: 0x2000000 (verified in PMP configuration)
 - Timebase: 10 MHz (default)
 

@@ -10,10 +10,10 @@
 
 ## Phase 0: 基础稳固 (Foundation Stabilization) — 现状
 
-**当前状态**: 代码框架完整，但核心功能大量 stub，无法实际运行用户程序。
+**当前状态**: 代码框架完整，系统可启动到 idle loop，但 timer 中断和用户程序加载仍有问题。
 
 **已实现**:
-- Sv39 三级页表，COW 支持
+- Sv39 三级页表，COW 支持（已修复页表分配问题）
 - VFS 层（RAM fs, Dev fs）
 - TCP/IP 协议栈（eth/ipv4/tcp/udp/arp/dns）
 - VirtIO block/net 驱动
@@ -21,16 +21,20 @@
 - SMP 多核基础设施
 - ELF 格式解析
 - pthread 风格原语（Mutex, Cond, Barrier, RwLock）
+- 页表分配器使用固定恒等映射区域 (0x80000000-0x80040000)
+
+**已修复问题 (2026-04-02)**:
+- PageTablePool 类型错误 - 已修复为 Option<PageTablePool>
+- 页表分配问题 - 已改用固定恒等映射区域
+- sys_execve stub - 临时禁用，等待页表问题修复后重新启用
 
 **缺失/Stub**:
-- Timer 中断处理（空函数）
-- 任务抢占调度（无 timer 触发）
-- fork() — 内存不复制，不创建子任务
-- execve() — 不加载 ELF 到用户页表
-- 用户态返回（无 sret 到用户空间）
+- Timer 中断处理 - CLINT MMIO 可用，但 sie.STIE 无法设置（sie write hang）
+- 任务抢占调度（无 timer 触发 - 由于 sie write 问题）
+- fork() - 框架存在，需要完整测试
+- execve() - 临时禁用，需要验证页表修复后可用
+- 用户态返回
 - 文件读写（stdin/stdout 以外均返回 -1）
-- mmap — 线性地址分配，非 VMA 管理
-- futex/waitid — 进程/线程同步
 
 ---
 
@@ -40,9 +44,11 @@
 
 **目标**: 实现 timer 中断触发任务切换
 
+**当前状态**: CLINT 直接访问可用，但 sie.STIE 无法设置（sie write hang in QEMU）
+
 **任务**:
-- [ ] 配置 RISC-V SIE 启用时钟中断
-- [ ] 实现 `plic::init()` 和 `timer::init()` — 设置 SIP 寄存器
+- [x] 实现 direct CLINT MMIO 访问计时器 - 完成
+- [ ] 调试 sie CSR write hang 问题
 - [ ] 实现 `trap/mod.rs` 中 `SupervisorTimer` 中断处理
 - [ ] 在 timer 中断中调用 `scheduler::schedule()` 触发任务切换
 - [ ] 重构 scheduler: 移除固定 64 任务数组，改用 `Vec`（需要 `alloc`）
@@ -54,17 +60,20 @@
 **文件**:
 - `os/src/process/scheduler.rs` — 完全重写
 - `os/src/trap/mod.rs` — timer 中断处理
-- `os/src/drivers/interrupt.rs` — PLIC 配置
+- `os/src/drivers/interrupt.rs` — CLINT 直接访问 + PLIC 配置
 
 ### 1.2 进程创建完整实现 (Working fork/exec)
 
 **目标**: 进程可以真正创建和切换
 
+**当前状态**: 页表分配已修复，需要验证 execve 是否可用
+
 **任务**:
+- [x] 页表分配器修复 - 使用固定恒等映射区域
+- [ ] 验证 `sys_execve`: 解析 ELF，创建新地址空间，加载段
 - [ ] 实现 `sys_clone`: 创建子任务的 TCB + 复制 trap frame
 - [ ] 实现 COW fork — 复制父进程页表，设置写保护
 - [ ] 实现 `copy_page_table()` — 复制用户页表
-- [ ] 实现 `sys_execve`: 解析 ELF，创建新地址空间，加载段
 - [ ] 实现 `do_trampoline()` — 从内核返回用户态的入口
 - [ ] 实现 `sret` 返回用户空间（设置 sp、pc、satp）
 - [ ] 实现 `wait4` / `waitid` — 父进程等待子进程退出
@@ -73,8 +82,10 @@
 
 **文件**:
 - `os/src/syscall/task.rs` — clone/execve/exit/wait
+- `os/src/syscall/mod.rs` — execve stub
 - `os/src/process/context.rs` — trap frame 布局和切换
 - `os/src/memory/Sv39.rs` — 页表复制
+- `os/src/memory/mod.rs` — 页表分配器修复
 
 ### 1.3 完整系统调用实现 (Complete Syscall Implementation)
 

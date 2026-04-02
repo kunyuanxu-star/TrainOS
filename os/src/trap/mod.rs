@@ -33,9 +33,6 @@ pub enum InterruptCause {
 
 /// Initialize trap handling
 pub fn init() {
-    // Skip println for now to avoid potential issues
-    // crate::println!("[trap] Initializing trap handling...");
-
     // Set stvec to trap handler entry point using inline asm
     extern "C" {
         fn __trap_entry();

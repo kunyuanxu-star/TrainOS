@@ -6,6 +6,6 @@ runner = [
     "qemu-system-riscv64",
     "-machine", "virt",
     "-nographic",
-    "-bios", "rustsbi-qemu.bin",
+    "-bios", "rustsbi-qemu-new.bin",
     "-kernel",
 ]

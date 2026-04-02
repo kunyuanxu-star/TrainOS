@@ -71,7 +71,12 @@ fn get_time() -> u64 {
 }
 
 /// Set timer to fire after `us` microseconds using SBI_SET_TIMER
-pub fn set_timer_relative(us: u64) {
+/// Temporarily disabled - SBI_SET_TIMER hangs with new RustSBI 0.4.0
+pub fn set_timer_relative(_us: u64) {
+    // Temporarily disabled to avoid hang
+    // The SBI_SET_TIMER call hangs with RustSBI 0.4.0
+    // Need to investigate why or use direct CLINT access instead
+    /*
     // Read current time and calculate target
     let current = get_time();
     // For 10MHz timebase: 10 ticks per microsecond
@@ -88,21 +93,20 @@ pub fn set_timer_relative(us: u64) {
             in(reg) target
         );
     }
+    */
 }
 
 /// Initialize the timer for preemption
 pub fn clint_init() {
-    // Set initial timer - will fire after 10ms
-    set_timer_relative(10_000);
-
-    // Enable timer interrupt in sie (Supervisor Interrupt Enable)
-    // STIE bit (bit 5) enables supervisor timer interrupts
-    // SSIE bit (bit 1) enables supervisor software interrupts
+    // For now, don't touch sie at all - it causes hang
+    // Just set the timer directly using CLINT MMIO
+    // CLINT is at 0x2000000, mtimecmp is at 0x2004000 for hart 0
+    let clint_mtimecmp: *mut u64 = 0x2004000 as *mut u64;
     unsafe {
-        let mut sie: usize;
-        core::arch::asm!("csrr {}, sie", out(reg) sie);
-        sie |= (1 << 5) | (1 << 1);  // STIE | SSIE
-        core::arch::asm!("csrw sie, {}", in(reg) sie);
+        // Read current time
+        let mtime: u64 = core::ptr::read_volatile(0x200bff8 as *const u64);
+        // Set mtimecmp to mtime + 100000 (10ms at 10MHz)
+        core::ptr::write_volatile(clint_mtimecmp, mtime.wrapping_add(100_000));
     }
 }
 

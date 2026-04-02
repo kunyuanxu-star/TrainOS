@@ -18,7 +18,7 @@ const PAGE_TABLE_POOL_SIZE: usize = 256;
 /// to map memory, but need memory to create page tables.
 /// By pre-allocating a pool in identity-mapped memory, we ensure
 /// all page table allocations are always accessible.
-static PAGE_TABLE_ALLOCATOR: Mutex<PageTablePool> = Mutex::new(PageTablePool::new());
+static PAGE_TABLE_ALLOCATOR: Mutex<Option<PageTablePool>> = Mutex::new(None);
 
 /// Page table pool - a simple bump allocator for page table frames
 struct PageTablePool {
@@ -31,8 +31,8 @@ struct PageTablePool {
 }
 
 impl PageTablePool {
-    /// Create a new page table pool
-    fn new() -> Self {
+    /// Create a new page table pool (const-compatible)
+    const fn new() -> Self {
         Self {
             frames: [0; PAGE_TABLE_POOL_SIZE],
             next_free: 0,
@@ -86,8 +86,16 @@ pub fn init_page_table_allocator() {
 /// This should be called during memory::init() before any page tables are created
 pub fn init_page_table_allocator_with_pool(base_pa: usize, count: usize) {
     let mut pool = PAGE_TABLE_ALLOCATOR.lock();
-    pool.init(base_pa, count);
-    crate::println!("[vm] Page table allocator initialized");
+    if let Some(ref mut p) = *pool {
+        p.init(base_pa, count);
+        crate::println!("[vm] Page table allocator initialized");
+    } else {
+        // Create new pool and initialize
+        let mut new_pool = PageTablePool::new();
+        new_pool.init(base_pa, count);
+        *pool = Some(new_pool);
+        crate::println!("[vm] Page table allocator initialized");
+    }
 }
 
 /// Page size (4KB)

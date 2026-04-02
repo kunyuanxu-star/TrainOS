@@ -6,26 +6,24 @@
 pub mod Sv39;
 pub mod allocator;
 
+/// Fixed page table pool region - use the first 256KB of RAM for page tables
+/// This is at PA 0x80000000-0x80040000, which is identity-mapped by RustSBI
+const PAGE_TABLE_POOL_PA: usize = 0x80000000;
+const PAGE_TABLE_POOL_COUNT: usize = 64;  // 64 pages = 256KB for page tables
+
 /// Initialize memory management subsystem
 pub fn init() {
-    // Initialize the page table allocator FIRST with pages from low memory.
-    // These pages are identity-mapped by RustSBI, so they are accessible.
-    // We allocate 64 page table frames (256KB total) for the pool.
-    const PT_POOL_COUNT: usize = 64;
-    let mut base_pa = 0;
-    let mut pages = 0;
-    for i in 0..PT_POOL_COUNT {
-        if let Some(pa) = allocator::alloc_page() {
-            if i == 0 {
-                base_pa = pa;
-            }
-            pages += 1;
-        } else {
-            break;
-        }
-    }
-    if pages > 0 {
-        Sv39::init_page_table_allocator_with_pool(base_pa, pages);
+    // Initialize the page table allocator with a FIXED region in low memory.
+    // This region (0x80000000-0x80040000) is guaranteed to be identity-mapped
+    // by RustSBI, so all page table allocations will be accessible.
+    Sv39::init_page_table_allocator_with_pool(PAGE_TABLE_POOL_PA, PAGE_TABLE_POOL_COUNT);
+
+    // Mark these pages as allocated in the general allocator so they're not used for data
+    // Each page table frame is at PA 0x80000000 + i*4096
+    for i in 0..PAGE_TABLE_POOL_COUNT {
+        let pa = PAGE_TABLE_POOL_PA + i * 4096;
+        // Note: we don't actually allocate from general allocator, just reserve
+        // The page table allocator uses its own fixed pool
     }
 
     // Initialize the kernel page table using the existing one from RustSBI

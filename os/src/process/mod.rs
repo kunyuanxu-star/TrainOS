@@ -510,7 +510,7 @@ fn start_scheduler() {
     }
     // Should never reach here
     crate::println!("[sched] ERROR: return_to_user returned!");
-    loop_idle();
+    loop {}
 }
 
 /// Allocate a trap frame on the kernel stack

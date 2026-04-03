@@ -29,8 +29,8 @@ TrainOS is an educational operating system written in Rust for RISC-V 64-bit arc
 **Working**: Debug mode runs successfully with full boot sequence, idle task loops on wfi, ELF parsing works.
 
 **Issues**:
-1. **sie CSR write hangs** - Writing to sie (Supervisor Interrupt Enable) causes QEMU to hang. Using direct CLINT MMIO for timer instead.
-2. **Timer interrupt not firing** - Even with CLINT directly programmed, sie.STIE cannot be set due to sie write hang.
+1. **sie CSR write hangs after trap::init()** - sie write works early in boot but hangs after trap::init(). Timer interrupts still work via sstatus.SIE.
+2. **Timer interrupt via CLINT** - CLINT is programmed via direct MMIO, timer can fire but preemption requires working timer interrupt routing.
 3. **User program loading deferred** - Full user address space creation requires completing Sv39 user space setup.
 
 ### Recent Fixes (2026-04-03)
@@ -46,6 +46,26 @@ TrainOS is an educational operating system written in Rust for RISC-V 64-bit arc
 - PT pool moved from 0x80000000 (PMP3 read-only) to 0x80080000 (PMP6 RWX)
 - Added allocated_frames bitmap to PageTablePool to properly track allocations
 - General allocator and PT pool now use non-overlapping PA ranges
+
+### Sie Write Issue Details (2026-04-03)
+
+**Finding**: sie CSR write hangs after trap::init() is called.
+
+**Investigation**:
+- sie write works early in boot (before memory init, before Sv39)
+- sie write works after Sv39 enable but BEFORE trap::init()
+- sie write hangs immediately after trap::init() returns
+
+**What trap::init() does**:
+1. Sets stvec to trap handler entry point
+2. Sets sstatus.SIE bit (enables supervisor interrupts)
+3. Calls clint_init() which sets CLINT mtimecmp via direct MMIO
+4. Prints "OK" via ecall
+
+**Root cause**: Unknown. Possible causes:
+- clint_init() changes some state that conflicts with sie write
+- sstatus write has side effects
+- Something about the execution context after trap::init()
 
 ### Timer Issue Details (2026-04-02)
 

@@ -5,22 +5,23 @@ TrainOS is an educational operating system written in Rust for RISC-V 64-bit arc
 
 **Goal**: Surpass Linux in kernel architecture, security, performance, and developer experience.
 
-## Current Status (2026-04-02)
+## Current Status (2026-04-03)
 
 ### Phase 1: Make It Runnable (In Progress)
 
 **Completed**:
 - Boot sequence runs successfully through all stages
-- Fixed compilation errors (PageTablePool type mismatch, missing hello ELF)
+- Fixed page table allocator issues (PT pool now at PA 0x80080000 in PMP6 RWX region)
+- PageTablePool::alloc() properly tracks allocated frames with allocated_frames bitmap
 - Timer initialization works with direct CLINT MMIO access
-- Page table allocator uses fixed identity-mapped region (0x80000000-0x80040000)
+- Kernel page table with identity mappings (0x80200000-0x80400000) created during init
 - Context switch in scheduler with trap frame handling
 - Basic fork (sys_clone) implementation with COW semantics
 - TaskControlBlock with kernel stack + trap frame allocation
 - Trap handling, timer interrupts, syscall dispatch
 - VFS, RAM filesystem
 - Basic syscalls: read, write, getpid, sched_yield, exit, clone
-- Sv39 page table with COW support
+- Sv39 page table infrastructure with COW support
 - ELF binary loader infrastructure
 - RISC-V toolchain installed (xPack v12.3.0-2)
 - User programs compiled (hello, shell, vi) for RISC-V
@@ -28,10 +29,23 @@ TrainOS is an educational operating system written in Rust for RISC-V 64-bit arc
 **Working**: Debug mode runs successfully with full boot sequence, idle task loops on wfi, ELF parsing works.
 
 **Issues**:
-1. **SATP=0 (bare mode)** - Kernel is running without Sv39 MMU enabled. The page table allocator works but page tables have no effect until Sv39 is properly enabled.
-2. **sie CSR write hangs** - Writing to sie (Supervisor Interrupt Enable) causes QEMU to hang. Using direct CLINT MMIO for timer instead.
-3. **Timer interrupt not firing** - Even with CLINT directly programmed, sie.STIE cannot be set due to sie write hang.
-4. **User program loading deferred** - Full user address space creation requires enabling Sv39 properly first.
+1. **SATP=0 (bare mode)** - Kernel is running without Sv39 MMU enabled. Kernel page table is created with identity mappings but Sv39 enable hangs during SATP write.
+2. **Sv39 enable hangs** - When enable_sv39() writes to SATP, system hangs. The identity mapping exists but the SATP write or subsequent instruction fetch causes issues. Suspected: VPN index calculation may exceed 9-bit range.
+3. **sie CSR write hangs** - Writing to sie (Supervisor Interrupt Enable) causes QEMU to hang. Using direct CLINT MMIO for timer instead.
+4. **Timer interrupt not firing** - Even with CLINT directly programmed, sie.STIE cannot be set due to sie write hang.
+5. **User program loading deferred** - Full user address space creation requires enabling Sv39 properly first.
+
+### Recent Fixes (2026-04-03)
+
+**Page table pool fix**:
+- PT pool moved from 0x80000000 (PMP3 read-only) to 0x80080000 (PMP6 RWX)
+- Added allocated_frames bitmap to PageTablePool to properly track allocations
+- General allocator and PT pool now use non-overlapping PA ranges
+
+**Sv39 enable investigation**:
+- Page table structure created: root at 0x80080000, level1 at 0x80081000, level2 at 0x80082000
+- Kernel identity mapping: VA 0x80200000-0x80400000 mapped to PA 0x80200000-0x80400000
+- SATP write causes hang - possibly due to VPN[0] index calculation (0x80200000 >> 30 = 512, but max is 511)
 
 ### Timer Issue Details (2026-04-02)
 

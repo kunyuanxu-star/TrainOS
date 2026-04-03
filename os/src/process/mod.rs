@@ -389,25 +389,141 @@ fn start_scheduler() {
     // Validate ELF header
     if USER_ELF.len() < 64 {
         crate::println!("[sched] ELF too small");
+        loop_idle();
+        return;
     } else if USER_ELF[0..4] != [0x7F, b'E', b'L', b'F'] {
         crate::println!("[sched] Invalid ELF magic");
-    } else {
-        crate::println!("[sched] ELF header valid");
-
-        // Parse ELF headers using public functions
-        let e_entry = crate::elf::get_entry_point(USER_ELF).unwrap_or(0);
-        let e_phnum = crate::elf::get_phdr_count(USER_ELF).unwrap_or(0);
-
-        crate::print!("[sched] Entry: 0x");
-        crate::console::print_hex(e_entry);
-        crate::print!(", phnum=");
-        crate::console::print_dec(e_phnum);
-        crate::println!("");
-        crate::println!("[sched] ELF parsing successful - full loading deferred to future work");
+        loop_idle();
+        return;
     }
 
-    crate::print!("[sched] Entering idle loop\r\n");
+    // Create user address space
+    crate::print!("[sched] Creating user address space...\r\n");
+    let mut user_space = match crate::memory::Sv39::UserAddressSpace::new() {
+        Some(us) => us,
+        None => {
+            crate::println!("[sched] Failed to create user address space");
+            loop_idle();
+            return;
+        }
+    };
+    crate::println!("[sched] User address space created");
 
+    // Load ELF into user address space
+    crate::print!("[sched] Loading ELF...\r\n");
+    let entry_point: usize;
+    let user_sp: usize;
+    match crate::elf::load_elf(USER_ELF, &mut user_space) {
+        Ok((ep, sp)) => {
+            entry_point = ep;
+            user_sp = sp;
+            crate::print!("[sched] ELF loaded: entry=0x");
+            crate::console::print_hex(ep);
+            crate::print!(", sp=0x");
+            crate::console::print_hex(sp);
+            crate::println!("");
+        }
+        Err(e) => {
+            crate::print!("[sched] ELF load failed: ");
+            match e {
+                crate::elf::ElfResult::InvalidFormat => { crate::println!("Invalid format"); }
+                crate::elf::ElfResult::Unsupported => { crate::println!("Unsupported"); }
+                crate::elf::ElfResult::LoadError => { crate::println!("Load error"); }
+                _ => { crate::println!("Unknown error"); }
+            }
+            loop_idle();
+            return;
+        }
+    }
+
+    // Create a trap frame for user mode
+    crate::print!("[sched] Creating trap frame...\r\n");
+    let satp = user_space.get_satp();
+
+    // Allocate a page for the trap frame on the kernel stack
+    let trap_frame_ptr = allocate_kernel_trap_frame();
+    if trap_frame_ptr.is_null() {
+        crate::println!("[sched] Failed to allocate trap frame");
+        loop_idle();
+        return;
+    }
+
+    // Initialize trap frame for user mode entry
+    unsafe {
+        let tf = &mut *trap_frame_ptr;
+        tf.ra = 0;
+        tf.sp = user_sp;
+        tf.gp = 0;
+        tf.tp = 0;
+        tf.t0 = 0;
+        tf.t1 = 0;
+        tf.t2 = 0;
+        tf.s0 = 0;
+        tf.s1 = 0;
+        tf.a0 = 0;  // argc
+        tf.a1 = 0;   // argv
+        tf.a2 = 0;
+        tf.a3 = 0;
+        tf.a4 = 0;
+        tf.a5 = 0;
+        tf.a6 = 0;
+        tf.a7 = 0;
+        tf.s2 = 0;
+        tf.s3 = 0;
+        tf.s4 = 0;
+        tf.s5 = 0;
+        tf.s6 = 0;
+        tf.s7 = 0;
+        tf.s8 = 0;
+        tf.s9 = 0;
+        tf.s10 = 0;
+        tf.s11 = 0;
+        tf.t3 = 0;
+        tf.t4 = 0;
+        tf.t5 = 0;
+        tf.t6 = 0;
+        tf.sepc = entry_point;
+        tf.sstatus = 0x00000020;  // SPP=0 (user), SPIE=1
+    }
+
+    crate::println!("[sched] Returning to user mode...");
+
+    // Return to user mode
+    // Note: This switches to the user page table and never returns
+    unsafe {
+        crate::process::context::return_to_user(
+            trap_frame_ptr,
+            satp,
+            user_sp,
+            entry_point
+        );
+    }
+
+    // Should never reach here
+    loop_idle();
+}
+
+/// Allocate a trap frame on the kernel stack
+fn allocate_kernel_trap_frame() -> *mut crate::process::context::TrapFrame {
+    use crate::process::context::TRAP_FRAME_SIZE;
+
+    // Allocate a page for the trap frame
+    let page = match crate::memory::allocator::alloc_page() {
+        Some(p) => p,
+        None => return core::ptr::null_mut(),
+    };
+
+    // Zero the page
+    unsafe {
+        core::ptr::write_bytes(page as *mut u8, 0, 4096);
+    }
+
+    (page as *mut crate::process::context::TrapFrame)
+}
+
+/// Idle loop when nothing else to do
+fn loop_idle() {
+    crate::print!("[sched] Entering idle loop\r\n");
     loop {
         unsafe {
             core::arch::asm!("wfi");

@@ -138,6 +138,10 @@ pub fn load_elf(data: &[u8], user_space: &mut crate::memory::Sv39::UserAddressSp
     let e_phentsize = unsafe { read_u16(data, 54) } as usize;
     let e_phnum = unsafe { read_u16(data, 56) } as usize;
 
+    crate::print!("[elf] entry=0x");
+    crate::console::print_hex(e_entry);
+    crate::println!("");
+
     // Only load the FIRST PT_LOAD segment
     for i in 0..e_phnum {
         let phdr_offset = e_phoff + i * e_phentsize;
@@ -162,7 +166,10 @@ pub fn load_elf(data: &[u8], user_space: &mut crate::memory::Sv39::UserAddressSp
                 // Allocate physical page
                 let phys_page = match crate::memory::allocator::alloc_page() {
                     Some(pp) => pp,
-                    None => return Err(ElfResult::LoadError),
+                    None => {
+                        crate::println!("[elf] Page alloc failed");
+                        return Err(ElfResult::LoadError);
+                    }
                 };
 
                 // Determine flags
@@ -177,6 +184,7 @@ pub fn load_elf(data: &[u8], user_space: &mut crate::memory::Sv39::UserAddressSp
                 };
 
                 if result.is_err() {
+                    crate::println!("[elf] Map failed");
                     return Err(ElfResult::LoadError);
                 }
 
@@ -215,10 +223,14 @@ pub fn load_elf(data: &[u8], user_space: &mut crate::memory::Sv39::UserAddressSp
         }
     }
 
-    // Set up user stack at a high VA
+    // Set up user stack at a high VA (must have valid Sv39 sign extension)
     // Use 256KB stack (64 pages) for reliability
-    let stack_base = 0x3FFFFFFFE80;
+    // VA must have bits 63-39 = bit 38 for valid Sv39 addressing
     let stack_size = 0x40000; // 256KB stack
+    // Use a stack base that, when added to stack_size, gives valid sign extension
+    // 0x3FFFFFE00 + 0x40000 = 0x4000003E00 (invalid - bit 38=0, bit 37=1)
+    // 0x7FFFFFFE00 + 0x40000 = 0x8000003E00 (bit 38=1, valid)
+    let stack_base = 0x7FFFFFFE00 - stack_size;
     let stack_top = stack_base + stack_size;
 
     // Map stack pages using user address space
@@ -226,10 +238,15 @@ pub fn load_elf(data: &[u8], user_space: &mut crate::memory::Sv39::UserAddressSp
         let va = stack_top - (i + 1) * 4096;
         let phys_page = match crate::memory::allocator::alloc_page() {
             Some(p) => p,
-            None => return Err(ElfResult::LoadError),
+            None => {
+                crate::println!("[elf] Stack page alloc failed");
+                return Err(ElfResult::LoadError);
+            }
         };
 
         if user_space.map_user_writable(VirtAddr::new(va), PhysAddr::new(phys_page)).is_err() {
+            crate::println!("[elf] Stack map failed at va");
+            crate::console::print_hex(va);
             return Err(ElfResult::LoadError);
         }
     }

@@ -22,16 +22,17 @@ TrainOS is an educational operating system written in Rust for RISC-V 64-bit arc
 - VFS, RAM filesystem
 - Basic syscalls: read, write, getpid, sched_yield, exit, clone
 - Sv39 page table infrastructure with COW support
-- ELF binary loader infrastructure
+- ELF binary loader implementation
+- User program loading implemented in start_scheduler()
 - RISC-V toolchain installed (xPack v12.3.0-2)
 - User programs compiled (hello, shell, vi) for RISC-V
 
-**Working**: Debug mode runs successfully with full boot sequence, idle task loops on wfi, ELF parsing works.
+**Working**: Debug mode runs successfully with full boot sequence, ELF parsing and loading, return_to_user called.
 
 **Issues**:
 1. **sie CSR write hangs after trap::init()** - sie write works early in boot but hangs after trap::init(). Timer interrupts still work via sstatus.SIE.
 2. **Timer interrupt via CLINT** - CLINT is programmed via direct MMIO, timer can fire but preemption requires working timer interrupt routing.
-3. **User program loading deferred** - Full user address space creation requires completing Sv39 user space setup.
+3. **User program entry issue** - return_to_user() is called but user program doesn't produce output. The ELF loader has issues with segments where p_vaddr is not page-aligned (LOAD2 has p_vaddr=0x1130c but file offset 0x30c), causing incorrect page data mapping.
 
 ### Recent Fixes (2026-04-03)
 
@@ -192,12 +193,11 @@ RustSBI → Boot 1 → memory init → SMP init (SXCIE) →
 
 ## Next Steps (Priority Order)
 
-1. **Enable Sv39 properly** - Kernel currently runs in bare mode (SATP=0). Need to enable Sv39 with proper identity mapping for kernel region.
-2. **Verify user address space loading** - Once Sv39 is enabled, test page table creation and user program loading.
-3. **Debug sie CSR write hang** - Understand why sie write hangs in QEMU (separate from bare mode issue).
-4. **Timer interrupt in QEMU** - Enable timer interrupts despite sie write issue.
-5. **Complete sys_execve implementation** - Load ELF into user address space once Sv39 is working.
-5. **Test user mode return** - Verify return_to_user works correctly
+1. **Fix ELF loader page alignment bug** - The loader doesn't handle segments where p_vaddr is not page-aligned. LOAD2 has p_vaddr=0x1130c but file offset 0x30c, causing incorrect data mapping for pages.
+2. **Debug return_to_user** - After return_to_user is called, the user program doesn't produce output. Need to verify trap frame setup and sscratch configuration.
+3. **Debug sie CSR write hang** - sie write works early in boot but hangs after trap::init().
+4. **Timer interrupt in QEMU** - Enable timer interrupts via sie.STIE or workaround.
+5. **Verify user mode execution** - Once ELF loading works, test ecall/syscall functionality.
 6. **Fix release mode** - spin::Mutex optimization issue
 
 ## Timer Interrupt Issue (UNRESOLVED)

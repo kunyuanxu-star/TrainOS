@@ -208,6 +208,10 @@ extern "C" fn rust_main() -> ! {
     // Initialize trap handling
     crate::trap::init();
 
+    // Note: sie write after trap::init() hangs due to unknown cause
+    // Timer interrupts are enabled via sstatus.SIE in trap::init()
+    // sie.STIE is set via direct CLINT MMIO for now
+
     // Initialize file system
     crate::fs::init();
 

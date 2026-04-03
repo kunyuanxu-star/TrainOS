@@ -29,23 +29,23 @@ TrainOS is an educational operating system written in Rust for RISC-V 64-bit arc
 **Working**: Debug mode runs successfully with full boot sequence, idle task loops on wfi, ELF parsing works.
 
 **Issues**:
-1. **SATP=0 (bare mode)** - Kernel is running without Sv39 MMU enabled. Kernel page table is created with identity mappings but Sv39 enable hangs during SATP write.
-2. **Sv39 enable hangs** - When enable_sv39() writes to SATP, system hangs. The identity mapping exists but the SATP write or subsequent instruction fetch causes issues. Suspected: VPN index calculation may exceed 9-bit range.
-3. **sie CSR write hangs** - Writing to sie (Supervisor Interrupt Enable) causes QEMU to hang. Using direct CLINT MMIO for timer instead.
-4. **Timer interrupt not firing** - Even with CLINT directly programmed, sie.STIE cannot be set due to sie write hang.
-5. **User program loading deferred** - Full user address space creation requires enabling Sv39 properly first.
+1. **sie CSR write hangs** - Writing to sie (Supervisor Interrupt Enable) causes QEMU to hang. Using direct CLINT MMIO for timer instead.
+2. **Timer interrupt not firing** - Even with CLINT directly programmed, sie.STIE cannot be set due to sie write hang.
+3. **User program loading deferred** - Full user address space creation requires completing Sv39 user space setup.
 
 ### Recent Fixes (2026-04-03)
+
+**Sv39 MMU successfully enabled!** (2026-04-03)
+- Expanded identity mapping region to 0x80000000-0x80090000 (9MB)
+- This covers both page tables (PT pool at 0x80080000-0x80090000) and kernel (0x80200000-0x80400000)
+- Previous 4MB mapping was insufficient because intermediate page tables (at 0x80081000, 0x80082000) fell outside the mapped region
+- Page table pool at 0x80080000 in PMP6 RWX region
+- System now boots with Sv39 enabled and continues to idle loop
 
 **Page table pool fix**:
 - PT pool moved from 0x80000000 (PMP3 read-only) to 0x80080000 (PMP6 RWX)
 - Added allocated_frames bitmap to PageTablePool to properly track allocations
 - General allocator and PT pool now use non-overlapping PA ranges
-
-**Sv39 enable investigation**:
-- Page table structure created: root at 0x80080000, level1 at 0x80081000, level2 at 0x80082000
-- Kernel identity mapping: VA 0x80200000-0x80400000 mapped to PA 0x80200000-0x80400000
-- SATP write causes hang - possibly due to VPN[0] index calculation (0x80200000 >> 30 = 512, but max is 511)
 
 ### Timer Issue Details (2026-04-02)
 

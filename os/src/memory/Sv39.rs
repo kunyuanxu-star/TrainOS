@@ -9,9 +9,9 @@
 use spin::Mutex;
 
 /// Number of page table pages to reserve for the page table allocator
-/// Each page table is 4KB, so 256 pages = 1MB for page tables
+/// Each page table is 4KB, so 64 pages = 256KB for page tables
 /// This should be enough for all page tables in the system
-const PAGE_TABLE_POOL_SIZE: usize = 256;
+const PAGE_TABLE_POOL_SIZE: usize = 64;
 
 /// Page table allocator - pre-allocated pool for page table frames
 /// This solves the "chicken-and-egg" problem where we need page tables
@@ -28,6 +28,8 @@ struct PageTablePool {
     next_free: usize,
     /// Number of allocated frames
     allocated: usize,
+    /// Track which frames have been allocated
+    allocated_frames: [bool; PAGE_TABLE_POOL_SIZE],
 }
 
 impl PageTablePool {
@@ -37,6 +39,7 @@ impl PageTablePool {
             frames: [0; PAGE_TABLE_POOL_SIZE],
             next_free: 0,
             allocated: 0,
+            allocated_frames: [false; PAGE_TABLE_POOL_SIZE],
         }
     }
 
@@ -47,6 +50,7 @@ impl PageTablePool {
         assert!(count <= PAGE_TABLE_POOL_SIZE, "Too many page table frames requested");
         for i in 0..count {
             self.frames[i] = base_pa + i * PAGE_SIZE;
+            self.allocated_frames[i] = false;
         }
         self.next_free = count;
         self.allocated = 0;
@@ -54,20 +58,15 @@ impl PageTablePool {
 
     /// Allocate a page table frame (returns PA)
     fn alloc(&mut self) -> Option<usize> {
-        if self.allocated >= PAGE_TABLE_POOL_SIZE {
-            return None;
+        // Find next unallocated frame
+        for i in 0..self.next_free {
+            if !self.allocated_frames[i] {
+                let frame = self.frames[i];
+                self.allocated_frames[i] = true;
+                return Some(frame);
+            }
         }
-
-        // Bump allocate - just use the next available slot
-        // In a real allocator we'd have a free list, but for now we assume
-        // page tables are never freed, so simple bump allocation works
-        if self.allocated < self.next_free {
-            let frame = self.frames[self.allocated];
-            self.allocated += 1;
-            Some(frame)
-        } else {
-            None
-        }
+        None
     }
 
     /// Check if the pool is initialized
@@ -76,25 +75,17 @@ impl PageTablePool {
     }
 }
 
-/// Initialize the page table allocator during early boot
-/// Must be called before any page table creation!
-pub fn init_page_table_allocator() {
-    crate::println!("[vm] Page table allocator ready (lazy init)");
-}
-
 /// Initialize the page table allocator with a pre-allocated pool
 /// This should be called during memory::init() before any page tables are created
 pub fn init_page_table_allocator_with_pool(base_pa: usize, count: usize) {
     let mut pool = PAGE_TABLE_ALLOCATOR.lock();
     if let Some(ref mut p) = *pool {
         p.init(base_pa, count);
-        crate::println!("[vm] Page table allocator initialized");
     } else {
         // Create new pool and initialize
         let mut new_pool = PageTablePool::new();
         new_pool.init(base_pa, count);
         *pool = Some(new_pool);
-        crate::println!("[vm] Page table allocator initialized");
     }
 }
 
@@ -379,8 +370,6 @@ pub struct PageTable {
 
 impl PageTable {
     /// Create a new empty page table (all invalid)
-    /// Uses the dedicated page table allocator if available,
-    /// otherwise falls back to the general allocator.
     pub fn new() -> Option<&'static mut Self> {
         // First try the dedicated page table allocator
         let page = {
@@ -392,11 +381,10 @@ impl PageTable {
             }
         };
 
-        // Fall back to general allocator if pool not initialized
+        // Fall back to general allocator if pool not initialized or empty
         let page = page.or_else(|| crate::memory::allocator::alloc_page())?;
 
         let ptr = page as *mut PageTable;
-        // Initialize to zero
         unsafe {
             ptr.write_bytes(0, 1);
         }
@@ -721,26 +709,42 @@ pub enum MapError {
 static KERNEL_PAGE_TABLE: Mutex<Option<PageTableManager>> = Mutex::new(None);
 
 /// Initialize the kernel page table
-/// We read the current SATP to get the existing page table from RustSBI.
+/// We create a new page table and add identity mappings for the kernel.
 pub fn init_kernel_page_table() {
-    crate::println!("[vm] Initializing kernel page table...");
-
     // Read the current SATP
     let satp: usize;
     unsafe {
         core::arch::asm!("csrr {0}, satp", out(reg) satp);
     }
-    crate::println!("[vm] SATP read completed");
 
-    // Extract PPN from SATP
-    let root_ppn = satp & 0x0FFF_FFFF_FFFF;
-    crate::println!("[vm] Root PPN extracted");
+    // Create a new page table
+    let root_pt = PageTable::new();
+    if root_pt.is_none() {
+        crate::println!("[vm] ERROR: Failed to allocate root page table");
+        return;
+    }
 
-    // Use the existing RustSBI page table
-    let pt_manager = PageTableManager::from_existing_root(root_ppn);
+    let root_pt = root_pt.unwrap();
+    let pa = root_pt as *const PageTable as usize;
+    let ppn = PhysAddr(pa).ppn();
+
+    let mut pt_manager = PageTableManager::from_existing_root(ppn.0);
+
+    // Map the kernel text region: 0x80200000 to 0x80400000 (2MB)
+    let kernel_base = 0x80200000usize;
+    let kernel_size = 0x00200000usize; // 2 MB
+
+    // Map each page
+    let pages = kernel_size / PAGE_SIZE;
+    for i in 0..pages {
+        let va = VirtAddr::new(kernel_base + i * PAGE_SIZE);
+        let pa = PhysAddr::new(kernel_base + i * PAGE_SIZE);
+        if pt_manager.map(va, pa, PTEFlags::kernel_rw()).is_err() {
+            break;
+        }
+    }
 
     *KERNEL_PAGE_TABLE.lock() = Some(pt_manager);
-    crate::println!("[vm] Kernel page table initialized");
 }
 
 /// Get kernel page table manager
@@ -774,12 +778,10 @@ pub fn enable_sv39() {
     if let Some(ref pt_manager) = *pt {
         let root_ppn = pt_manager.root_ppn().0;
         // SATP format: MODE (8) | PPN[43:0]
-        let satp = 8 << 60 | root_ppn;
-
-        crate::println!("[vm] Enabling Sv39");
+        let satp = 8usize << 60 | root_ppn;
 
         unsafe {
-            // Set SATP
+            // Set SATP - this enables Sv39
             core::arch::asm!("csrw satp, {0}", in(reg) satp);
             // Flush TLB
             core::arch::asm!("sfence.vma zero, zero");

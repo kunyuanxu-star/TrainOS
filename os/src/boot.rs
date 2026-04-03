@@ -133,10 +133,8 @@ extern "C" fn rust_main() -> ! {
     // Initialize memory management
     crate::memory::init();
 
-    // Sv39 enable deferred - needs proper identity mapping setup
-    // For now, continue in bare mode (SATP=0) where PA=VA
-
-    // Output "After memory init" directly
+    // Sv39 enable deferred - needs proper kernel VA identity mapping fix
+    // Running in bare mode (SATP=0) where PA=VA for now
     unsafe {
         let s = "After memory init\r\n";
         let len = s.len();

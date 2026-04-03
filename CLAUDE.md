@@ -25,12 +25,13 @@ TrainOS is an educational operating system written in Rust for RISC-V 64-bit arc
 - RISC-V toolchain installed (xPack v12.3.0-2)
 - User programs compiled (hello, shell, vi) for RISC-V
 
-**Working**: Debug mode runs successfully with full boot sequence, idle task loops on wfi.
+**Working**: Debug mode runs successfully with full boot sequence, idle task loops on wfi, ELF parsing works.
 
 **Issues**:
-1. **sie CSR write hangs** - Writing to sie (Supervisor Interrupt Enable) causes QEMU to hang. Using direct CLINT MMIO for timer instead.
-2. **Timer interrupt not firing** - Even with CLINT directly programmed, sie.STIE cannot be set due to sie write hang.
-3. **User program loading** - Still needs verification with fixed page table allocator
+1. **SATP=0 (bare mode)** - Kernel is running without Sv39 MMU enabled. The page table allocator works but page tables have no effect until Sv39 is properly enabled.
+2. **sie CSR write hangs** - Writing to sie (Supervisor Interrupt Enable) causes QEMU to hang. Using direct CLINT MMIO for timer instead.
+3. **Timer interrupt not firing** - Even with CLINT directly programmed, sie.STIE cannot be set due to sie write hang.
+4. **User program loading deferred** - Full user address space creation requires enabling Sv39 properly first.
 
 ### Timer Issue Details (2026-04-02)
 
@@ -49,6 +50,28 @@ let clint_mtimecmp: *mut u64 = 0x2004000 as *mut u64;
 let mtime: u64 = core::ptr::read_volatile(0x200bff8 as *const u64); // mtime
 core::ptr::write_volatile(clint_mtimecmp, mtime.wrapping_add(100_000));
 ```
+
+### Bare Mode Issue (2026-04-02)
+
+**Problem**: SATP register reads as 0, indicating MMU is in "bare" mode (no Sv39 page tables).
+
+**Investigation**:
+- SATP = 0 means no Sv39 translation is active
+- In bare mode, VA = PA directly (no MMU translation)
+- Page tables created in this mode have no effect on memory access
+- PMP (Physical Memory Protection) is still active and restricts access to certain addresses
+
+**Discovery**: Writing to PA 0x80000000 causes a store fault, but writing to 0x80071000 succeeds.
+
+**Analysis of PMP configuration**:
+- PMP 0: OFF (no protection)
+- PMP 1-2: TOR, RWX at 0x80000000 (covers [0, 0x80000000))
+- PMP 3: TOR, R at 0x80026000 (covers [0x80000000, 0x80026000))
+- PMP 4: TOR, NONE at 0x80035000 (covers [0x80026000, 0x80035000))
+- PMP 5: TOR, RW at 0x80071000 (covers [0x80035000, 0x80071000))
+- PMP 6: TOR, RWX at 0x88000000 (covers [0x80071000, 0x88000000))
+
+**Current Solution**: General allocator starts at base_page = 0x80071 (PA 0x80071000), which is in the RWX PMP region.
 
 ### Page Table Fix (2026-04-02)
 
@@ -135,10 +158,11 @@ RustSBI → Boot 1 → memory init → SMP init (SXCIE) →
 
 ## Next Steps (Priority Order)
 
-1. **Verify user address space loading** - Test if page table fix resolves the issue
-2. **Debug sie CSR write hang** - Understand why sie write hangs in QEMU
-3. **Timer interrupt in QEMU** - Enable timer interrupts despite sie write issue
-4. **Complete sys_execve implementation** - Load ELF into user address space
+1. **Enable Sv39 properly** - Kernel currently runs in bare mode (SATP=0). Need to enable Sv39 with proper identity mapping for kernel region.
+2. **Verify user address space loading** - Once Sv39 is enabled, test page table creation and user program loading.
+3. **Debug sie CSR write hang** - Understand why sie write hangs in QEMU (separate from bare mode issue).
+4. **Timer interrupt in QEMU** - Enable timer interrupts despite sie write issue.
+5. **Complete sys_execve implementation** - Load ELF into user address space once Sv39 is working.
 5. **Test user mode return** - Verify return_to_user works correctly
 6. **Fix release mode** - spin::Mutex optimization issue
 

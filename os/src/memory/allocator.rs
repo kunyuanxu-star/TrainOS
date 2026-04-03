@@ -53,10 +53,9 @@ impl BitmapPageAllocator {
     pub const fn new() -> Self {
         Self {
             bitmap: [0; MAX_PAGES / 64],
-            // Start at 0x80000 = PA 0x80000000
-            // Using the very start of DRAM (after page 0 to avoid null).
-            // This should be identity-mapped by RustSBI.
-            base_page: 0x80001,
+            // Start at frame 0x80071 which is PA 0x80071000.
+            // This is the start of the RWX region per PMP configuration.
+            base_page: 0x80071,  // 0x80071000 / 4096
             cached_hint: 0,
             stats: AllocatorStats {
                 pages_allocated: 0,

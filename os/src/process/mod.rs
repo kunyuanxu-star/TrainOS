@@ -376,10 +376,35 @@ fn test_task() {
 fn start_scheduler() {
     crate::println!("[sched] Starting scheduler");
 
-    // User program loading is disabled - the page table issue needs to be fixed first
-    // The issue: when creating user address space, we need to allocate intermediate page tables
-    // but those pages are allocated at addresses not mapped in the current (RustSBI's) page table
-    crate::print!("[sched] User loading disabled - page table allocation issue\r\n");
+    // Try to load and run the embedded user program
+    crate::print!("[sched] Attempting to load user program...\r\n");
+
+    // Embedded ELF binary
+    static USER_ELF: &[u8] = include_bytes!("../../../os/bin/hello.bin");
+
+    crate::print!("[sched] ELF size: ");
+    crate::console::print_dec(USER_ELF.len());
+    crate::println!(" bytes");
+
+    // Validate ELF header
+    if USER_ELF.len() < 64 {
+        crate::println!("[sched] ELF too small");
+    } else if USER_ELF[0..4] != [0x7F, b'E', b'L', b'F'] {
+        crate::println!("[sched] Invalid ELF magic");
+    } else {
+        crate::println!("[sched] ELF header valid");
+
+        // Parse ELF headers using public functions
+        let e_entry = crate::elf::get_entry_point(USER_ELF).unwrap_or(0);
+        let e_phnum = crate::elf::get_phdr_count(USER_ELF).unwrap_or(0);
+
+        crate::print!("[sched] Entry: 0x");
+        crate::console::print_hex(e_entry);
+        crate::print!(", phnum=");
+        crate::console::print_dec(e_phnum);
+        crate::println!("");
+        crate::println!("[sched] ELF parsing successful - full loading deferred to future work");
+    }
 
     crate::print!("[sched] Entering idle loop\r\n");
 

@@ -133,6 +133,9 @@ extern "C" fn rust_main() -> ! {
     // Initialize memory management
     crate::memory::init();
 
+    // Sv39 enable deferred - needs proper identity mapping setup
+    // For now, continue in bare mode (SATP=0) where PA=VA
+
     // Output "After memory init" directly
     unsafe {
         let s = "After memory init\r\n";

@@ -820,13 +820,92 @@ fn sys_clone(trap_frame: *mut crate::process::context::TrapFrame, flags: usize, 
 /// Execve - execute a program
 /// a0 = filename, a1 = argv, a2 = envp
 ///
-/// User loading is disabled - the page table allocation issue needs to be fixed first.
-/// This is tracked as a known issue: RustSBI's page table only has limited RAM mapped,
-/// causing intermediate page table allocation to fail when creating user address spaces.
+/// This loads an embedded ELF binary into user address space.
+/// Uses the fixed page table pool at 0x80000000-0x80040000 for page table allocation.
 fn sys_execve(_filename: usize, _argv: usize, _envp: usize) -> isize {
-    crate::print!("[syscall] execve: not implemented (user loading disabled)\r\n");
-    crate::print!("[syscall] execve: page table allocation issue needs to be fixed\r\n");
-    return -1;
+    crate::println!("[syscall] execve: starting");
+
+    // Embedded ELF binary for testing
+    static HELLO_ELF: &[u8] = include_bytes!("../../bin/hello.bin");
+
+    crate::print!("[syscall] execve: ELF size: ");
+    crate::console::print_dec(HELLO_ELF.len());
+    crate::println!(" bytes");
+
+    // Validate ELF header
+    if HELLO_ELF.len() < 64 {
+        crate::println!("[syscall] execve: ELF too small");
+        return -1;
+    }
+
+    // Check ELF magic
+    if HELLO_ELF[0..4] != [0x7F, b'E', b'L', b'F'] {
+        crate::println!("[syscall] execve: invalid ELF magic");
+        return -1;
+    }
+
+    crate::println!("[syscall] execve: ELF header valid");
+
+    // Create a new user address space
+    let mut user_space = match crate::memory::Sv39::UserAddressSpace::new() {
+        Some(us) => us,
+        None => {
+            crate::println!("[syscall] execve: failed to create user address space");
+            return -1;
+        }
+    };
+    crate::println!("[syscall] execve: user address space created");
+
+    // Load ELF into user address space
+    let (entry_point, user_sp) = match crate::elf::load_elf(HELLO_ELF, &mut user_space) {
+        Ok(result) => result,
+        Err(e) => {
+            crate::println!("[syscall] execve: ELF loading failed");
+            return -1;
+        }
+    };
+    crate::print!("[syscall] execve: ELF loaded, entry=0x");
+    crate::console::print_hex(entry_point);
+    crate::print!(", sp=0x");
+    crate::console::print_hex(user_sp);
+    crate::println!("");
+
+    // Get the trap frame that was passed to do_syscall
+    let trap_frame_ptr = {
+        let tf = crate::process::CURRENT_TRAP_FRAME.lock();
+        tf.0
+    };
+
+    if trap_frame_ptr.is_null() {
+        crate::println!("[syscall] execve: trap frame is null");
+        return -1;
+    }
+
+    // Modify the trap frame for the new program
+    unsafe {
+        // Set sepc to entry point
+        (*trap_frame_ptr).sepc = entry_point;
+        // Set sp to user stack
+        (*trap_frame_ptr).sp = user_sp;
+        // Set sstatus for user mode: SPP=0 (user), SPIE=1, SIE=0
+        (*trap_frame_ptr).sstatus = 0x00000020;
+    }
+
+    // Set the new satp for this task
+    let satp = user_space.get_satp();
+    if let Some(mut task) = crate::process::get_current_task() {
+        task.satp = satp;
+        task.is_user_task = true;
+        task.user_pc = entry_point;
+        task.user_sp = user_sp;
+        crate::process::set_current_task(task);
+        crate::print!("[syscall] execve: task configured, satp=0x");
+        crate::console::print_hex(satp);
+        crate::println!("");
+    }
+
+    crate::println!("[syscall] execve: success");
+    0
 }
 
 // ============================================

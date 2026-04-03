@@ -18,14 +18,6 @@ pub fn init() {
     // by RustSBI, so all page table allocations will be accessible.
     Sv39::init_page_table_allocator_with_pool(PAGE_TABLE_POOL_PA, PAGE_TABLE_POOL_COUNT);
 
-    // Mark these pages as allocated in the general allocator so they're not used for data
-    // Each page table frame is at PA 0x80000000 + i*4096
-    for i in 0..PAGE_TABLE_POOL_COUNT {
-        let pa = PAGE_TABLE_POOL_PA + i * 4096;
-        // Note: we don't actually allocate from general allocator, just reserve
-        // The page table allocator uses its own fixed pool
-    }
-
     // Initialize the kernel page table using the existing one from RustSBI
     Sv39::init_kernel_page_table();
 

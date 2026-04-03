@@ -89,6 +89,12 @@ pub fn console_write(s: &str) {
     }
 }
 
+/// Write a single character to console (buffered)
+pub fn console_write_char(c: char) {
+    let mut buf = CONSOLE_BUF.lock();
+    buf.put_char(c as u8);
+}
+
 /// Write a string to console without buffering (for panic messages)
 pub fn console_write_raw(s: &str) {
     for &c in s.as_bytes() {
@@ -127,4 +133,43 @@ macro_rules! print {
     ($s:expr) => {
         $crate::console::console_write($s);
     };
+}
+
+/// Print a number in hexadecimal
+pub fn print_hex(val: usize) {
+    if val == 0 {
+        console_write("0");
+        return;
+    }
+    let mut buf = [0u8; 16];
+    let mut i = 0;
+    let mut v = val;
+    while v > 0 {
+        let d = (v & 0xf) as u8;
+        buf[i] = if d < 10 { b'0' + d } else { b'a' + d - 10 };
+        i += 1;
+        v >>= 4;
+    }
+    for j in (0..i).rev() {
+        console_write_char(buf[j] as char);
+    }
+}
+
+/// Print a decimal number
+pub fn print_dec(val: usize) {
+    if val == 0 {
+        console_write("0");
+        return;
+    }
+    let mut buf = [0u8; 20];
+    let mut i = 0;
+    let mut v = val;
+    while v > 0 {
+        buf[i] = b'0' + (v % 10) as u8;
+        i += 1;
+        v /= 10;
+    }
+    for j in (0..i).rev() {
+        console_write_char(buf[j] as char);
+    }
 }

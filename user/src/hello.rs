@@ -217,7 +217,20 @@ fn strlen(s: *const u8) -> usize {
 // Main
 #[no_mangle]
 extern "C" fn _start() {
-    write_str(STDOUT, b"Welcome to trainOS User Space!\n");
+    // Debug: try to print 'H' before infinite loop
+    unsafe {
+        core::arch::asm!(
+            "li a7, 1",
+            "li a0, 72",
+            "ecall",
+            "li a7, 1",
+            "li a0, 73",
+            "ecall"
+        );
+    }
+
+    // Now infinite loop
+    loop {}
     write_str(STDOUT, b"================================\n");
 
     // Get and display PID info

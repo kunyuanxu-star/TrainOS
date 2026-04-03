@@ -14,7 +14,7 @@ TrainOS is an educational operating system written in Rust for RISC-V 64-bit arc
 - Fixed page table allocator issues (PT pool now at PA 0x80080000 in PMP6 RWX region)
 - PageTablePool::alloc() properly tracks allocated frames with allocated_frames bitmap
 - Timer initialization works with direct CLINT MMIO access
-- Kernel page table with identity mappings (0x80000000-0x80090000) created during init
+- Kernel page table with identity mappings (0x80000000-0x88000000) created during init
 - Context switch in scheduler with trap frame handling
 - Basic fork (sys_clone) implementation with COW semantics
 - TaskControlBlock with kernel stack + trap frame allocation
@@ -26,8 +26,19 @@ TrainOS is an educational operating system written in Rust for RISC-V 64-bit arc
 - User program loading implemented in start_scheduler()
 - RISC-V toolchain installed (xPack v12.3.0-2)
 - User programs compiled (hello, shell, vi) for RISC-V
+- User address space now maps kernel region (0x80000000-0x88000000) for trap handling
 
-**Working**: Debug mode runs successfully with full boot sequence, ELF parsing and loading, return_to_user called. Trap handler correctly handles ecalls with sepc increment.
+**Working**: Debug mode runs successfully with full boot sequence, ELF parsing and loading, return_to_user called. Trap handler correctly handles ecalls with sepc increment. User page table includes kernel mappings.
+
+**Debug Output Confirms**:
+- 'T' debug print in trap handler NEVER appears - no traps are occurring
+
+**Critical Fix Applied**:
+- ELF loader was ONLY loading first PT_LOAD segment (had `break` statement)
+- Entry point 0x11d78 was in SECOND LOAD segment, not the first!
+- Removed `break` statement to load ALL LOAD segments
+- Now entry page is correctly mapped: va=0x11000, pa=0x8007d000, RX
+- This means user program is either not running, or running without making any ecalls
 
 **Issues**:
 1. **sie CSR write hangs after trap::init()** - sie write works early in boot but hangs after trap::init(). Timer interrupts still work via sstatus.SIE.
@@ -65,27 +76,34 @@ TrainOS is an educational operating system written in Rust for RISC-V 64-bit arc
 
 **Symptoms**:
 - System boots successfully through all stages
-- ELF loading reports entry=0x11d78, sp=0x7ffffffdf0 (new binary)
+- ELF loading reports entry=0x11d78, sp=0x7ffffffdf0
 - return_to_user() is called
 - QEMU times out with no user program output
-- Trap handler 'T' debug print NOT appearing - no traps are occurring
+- Trap handler debug 'T' NEVER appears - no traps are occurring at all
 
 **Analysis**:
 - Page allocator bug fixed (was returning same PA for all allocations)
-- ELF loader now correctly maps segment pages with proper overlap calculation
+- ELF loader now loads ALL LOAD segments correctly
 - Trap handler correctly increments sepc after syscalls
-- Entry point is correctly within the LOAD segment
-- The user program appears to be running (or stuck in a loop) without making syscalls
-- No traps are occurring, which suggests either:
-  1. The user program is not making ecalls
-  2. The ecall instruction is not being executed
-  3. Something is preventing the trap from being delivered
+- User address space now includes kernel region mapping (0x80000000-0x88000000)
+- Entry point (0x11d78) is correctly within the LOAD segment [0x1041a, 0x21e1c)
+- Code at entry point looks like valid RISC-V instructions
+- 'T' debug print in trap handler would appear on ANY trap (ecall, timer, etc.)
+- Since 'T' never appears, NO traps are occurring
+- This strongly suggests the user program is NOT reaching any ecall instruction
 
-**HELLO Binary Analysis (new)**:
+**HELLO Binary Analysis**:
 - File size: 11382 bytes (debug build)
-- Entry point: 0x11d78
-- Entry point byte at file offset 0xbd8: 0x00C58593 (ADDI x11, x11, 0)
-- This is valid RISC-V code
+- Entry point: 0x11d78 (within LOAD segment)
+- LOAD segment: p_vaddr=0x1041a, p_filesz=0x11a04
+- Entry point file offset: 0x40a + (0x11d78 - 0x1041a) = 0x1d78
+- Code at 0x1d78: 13 01 01 cc ... (valid instruction bytes)
+
+**Next Debugging Steps**:
+1. Verify user code at entry point is actually valid and being executed
+2. Add debug output BEFORE and AFTER return_to_user to confirm execution
+3. Check if user program makes any ecalls at all
+4. Try simpler test program that does single ecall immediately
 
 ### Sie Write Issue Details
 

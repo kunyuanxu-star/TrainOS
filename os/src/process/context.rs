@@ -176,13 +176,17 @@ core::arch::global_asm!(
 /// Assembly for returning to user mode via sret
 /// This switches to the new page table and returns to user mode
 core::arch::global_asm!(
-    ".globl return_to_user",
-    ".type return_to_user, @function",
-    "return_to_user:",
+    ".globl return_to_user_asm",
+    ".type return_to_user_asm, @function",
+    "return_to_user_asm:",
     // a0 = trap frame pointer
     // a1 = new satp value
     // a2 = new sp
     // a3 = new pc (sepc)
+    // Debug: print 'B' at function entry
+    "   li a7, 1",
+    "   li a0, 66",
+    "   ecall",
     // Save kernel sp to t0
     "   mv t0, sp",
     // Set sscratch to trap frame pointer (kernel stack)
@@ -240,6 +244,10 @@ core::arch::global_asm!(
     // SPP is bit 8, SPIE is bit 5
     "   li t0, 0x00000020",
     "   csrw sstatus, t0",
+    // Debug: print 'R' right before sret to confirm we reached this point
+    "   li a7, 1",
+    "   li a0, 82",
+    "   ecall",
     // Return to user mode
     "   sret",
 );
@@ -275,10 +283,26 @@ pub fn prepare_trap_frame(tf: &mut TrapFrame, pc: usize, sp: usize, a0: usize) {
 /// # Safety
 /// This function switches to user mode and should only be called after
 /// proper setup of the trap frame and page table.
-#[inline(always)]
+#[inline(never)]
 pub unsafe fn return_to_user(tf: *mut TrapFrame, satp: usize, sp: usize, pc: usize) {
     core::arch::asm!(
-        "call return_to_user",
+        // Set sscratch to trap frame pointer (kernel stack) for trap handling
+        "mv t0, a0",
+        "csrw sscratch, t0",
+        // Set sp to user stack
+        "mv sp, a2",
+        // Switch to user page table
+        "csrw satp, a1",
+        // Flush TLB
+        "sfence.vma zero, zero",
+        // Set sepc to entry point
+        "csrw sepc, a3",
+        // Set sstatus: SPP=0 (user mode), SPIE=1, SIE=0
+        "li t0, 0x00000020",
+        "csrw sstatus, t0",
+        // Return to user mode
+        "sret",
+        options(nostack),
         in("a0") tf,
         in("a1") satp,
         in("a2") sp,

@@ -497,6 +497,7 @@ fn start_scheduler() {
     crate::console::print_hex(user_sp);
     crate::println!("");
 
+    crate::println!("[sched] Calling return_to_user...");
     // Return to user mode
     // Note: This switches to the user page table and never returns
     unsafe {

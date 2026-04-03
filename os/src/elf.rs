@@ -188,6 +188,23 @@ pub fn load_elf(data: &[u8], user_space: &mut crate::memory::Sv39::UserAddressSp
                     return Err(ElfResult::LoadError);
                 }
 
+                // Debug: verify entry point is in this page and check flags
+                if curr_vaddr <= e_entry && e_entry < curr_vaddr + 4096 {
+                    crate::print!("[elf] Entry at va=");
+                    crate::console::print_hex(curr_vaddr);
+                    crate::print!(" -> pa=");
+                    crate::console::print_hex(phys_page);
+                    crate::print!(" flags=");
+                    if executable {
+                        crate::print!("RX");
+                    } else if writable {
+                        crate::print!("RW");
+                    } else {
+                        crate::print!("COW");
+                    }
+                    crate::println!("");
+                }
+
                 // Calculate overlap between this page and the segment
                 let page_start = curr_vaddr;
                 let overlap_start = if curr_vaddr >= p_vaddr { curr_vaddr } else { p_vaddr };
@@ -223,8 +240,6 @@ pub fn load_elf(data: &[u8], user_space: &mut crate::memory::Sv39::UserAddressSp
                     }
                 }
             }
-
-            break; // Only load first segment (entry point is in first LOAD)
         }
     }
 

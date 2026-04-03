@@ -161,6 +161,14 @@ impl PTEFlags {
         }
     }
 
+    /// Create flags for kernel readable + writable + executable
+    pub fn kernel_rwx() -> Self {
+        Self {
+            valid: true, read: true, write: true, execute: true,
+            user: false, global: true, accessed: false, dirty: false,
+        }
+    }
+
     /// Create flags for user readable
     pub fn user_r() -> Self {
         Self {
@@ -899,9 +907,23 @@ pub struct UserAddressSpace {
 
 impl UserAddressSpace {
     /// Create a new user address space
-    /// Creates a fresh page table
+    /// Creates a fresh page table with kernel mappings for trap handling
     pub fn new() -> Option<Self> {
-        let pt_manager = PageTableManager::new();
+        let mut pt_manager = PageTableManager::new();
+
+        // Map kernel region for trap handling (0x80000000 - 0x88000000)
+        // This is needed so that when a trap occurs in user mode, the CPU
+        // can still access kernel structures through the user page table
+        // Use RWX because we need to execute kernel code (like trap handlers)
+        const KERNEL_BASE: usize = 0x80000000;
+        const KERNEL_SIZE: usize = 0x08000000; // 128MB
+        for va in (KERNEL_BASE..KERNEL_BASE + KERNEL_SIZE).step_by(PAGE_SIZE) {
+            let pa = PhysAddr::new(va); // Identity mapping
+            if pt_manager.map(VirtAddr::new(va), pa, PTEFlags::kernel_rwx()).is_err() {
+                return None;
+            }
+        }
+
         let satp = 8usize << 60 | pt_manager.root_ppn().0;
 
         Some(Self {

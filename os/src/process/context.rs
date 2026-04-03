@@ -236,7 +236,6 @@ core::arch::global_asm!(
     "   ld t4, 224(a0)",
     "   ld t5, 232(a0)",
     "   ld t6, 240(a0)",
-    // Restore original sp (kernel sp) to t0 for now, but sp is already set to user sp above
     // Set sstatus: SPP=0 (user mode), SPIE=1, SIE=0
     // SPP is bit 8, SPIE is bit 5
     "   li t0, 0x00000020",

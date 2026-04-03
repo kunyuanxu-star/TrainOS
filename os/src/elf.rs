@@ -188,30 +188,35 @@ pub fn load_elf(data: &[u8], user_space: &mut crate::memory::Sv39::UserAddressSp
                     return Err(ElfResult::LoadError);
                 }
 
-                // Copy data to the page
-                let offset_in_seg = if curr_vaddr >= p_vaddr {
-                    curr_vaddr - p_vaddr
-                } else {
-                    0
-                };
+                // Calculate overlap between this page and the segment
+                let page_start = curr_vaddr;
+                let overlap_start = if curr_vaddr >= p_vaddr { curr_vaddr } else { p_vaddr };
+                let overlap_end = (p_vaddr + p_filesz).min(curr_vaddr + 4096);
 
-                let file_pos = p_offset + offset_in_seg;
-                let copy_len = if p_filesz > offset_in_seg {
-                    (p_filesz - offset_in_seg).min(4096)
-                } else {
-                    0
-                };
+                if overlap_start < overlap_end {
+                    // Calculate file position and length for the overlap
+                    let file_pos = p_offset + (overlap_start - p_vaddr);
+                    let copy_len = (overlap_end - overlap_start).min(4096);
 
-                if copy_len > 0 && file_pos < data.len() {
+                    // Zero the page first
                     let dst = phys_page as *mut u8;
-                    let src = unsafe { data.as_ptr().add(file_pos) };
                     unsafe {
-                        core::ptr::copy_nonoverlapping(src, dst, copy_len);
-                        if copy_len < 4096 {
-                            core::ptr::write_bytes(dst.add(copy_len), 0, 4096 - copy_len);
+                        core::ptr::write_bytes(dst, 0, 4096);
+                    }
+
+                    // Copy the segment data to the correct position within the page
+                    // (which may be offset from page_start if p_vaddr is not page-aligned)
+                    if file_pos < data.len() {
+                        let copy_len = copy_len.min(data.len() - file_pos);
+                        let dst_offset = overlap_start - page_start;
+                        let dst = unsafe { (phys_page as *mut u8).add(dst_offset) };
+                        let src = unsafe { data.as_ptr().add(file_pos) };
+                        unsafe {
+                            core::ptr::copy_nonoverlapping(src, dst, copy_len);
                         }
                     }
                 } else {
+                    // Page is before or after the segment - zero it
                     let dst = phys_page as *mut u8;
                     unsafe {
                         core::ptr::write_bytes(dst, 0, 4096);

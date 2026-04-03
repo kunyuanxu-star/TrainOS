@@ -126,6 +126,12 @@ extern "C" fn handle_trap(trap_frame: *mut crate::process::context::TrapFrame) {
                     // Handle system call - pass trap frame pointer
                     crate::syscall::do_syscall(trap_frame);
 
+                    // Increment sepc to skip the ecall instruction
+                    // This is necessary because sepc still points to the ecall
+                    unsafe {
+                        (*trap_frame).sepc += 4;
+                    }
+
                     // Check if a schedule was requested (e.g., from sys_sched_yield)
                     // Store guard in variable to avoid double-locking
                     let mut schedule_guard = crate::process::SCHEDULE_REQUESTED.lock();

@@ -487,6 +487,15 @@ fn start_scheduler() {
     }
 
     crate::println!("[sched] Returning to user mode...");
+    crate::print!("[sched] satp=0x");
+    crate::console::print_hex(satp);
+    crate::println!("");
+    crate::print!("[sched] entry=0x");
+    crate::console::print_hex(entry_point);
+    crate::println!("");
+    crate::print!("[sched] sp=0x");
+    crate::console::print_hex(user_sp);
+    crate::println!("");
 
     // Return to user mode
     // Note: This switches to the user page table and never returns
@@ -498,8 +507,8 @@ fn start_scheduler() {
             entry_point
         );
     }
-
     // Should never reach here
+    crate::println!("[sched] ERROR: return_to_user returned!");
     loop_idle();
 }
 

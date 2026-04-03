@@ -32,7 +32,7 @@ TrainOS is an educational operating system written in Rust for RISC-V 64-bit arc
 **Issues**:
 1. **sie CSR write hangs after trap::init()** - sie write works early in boot but hangs after trap::init(). Timer interrupts still work via sstatus.SIE.
 2. **Timer interrupt via CLINT** - CLINT is programmed via direct MMIO, timer can fire but preemption requires working timer interrupt routing.
-3. **User program entry issue** - return_to_user() is called but user program doesn't produce output. The ELF loader has issues with segments where p_vaddr is not page-aligned (LOAD2 has p_vaddr=0x1130c but file offset 0x30c), causing incorrect page data mapping.
+3. **User program entry issue** - return_to_user() is called but user program doesn't produce output. The ELF loader has fundamental issues with segments where p_vaddr is not page-aligned (LOAD2 has p_vaddr=0x1130c but file offset 0x30c). The page data mapping is incorrect because when p_vaddr is not page-aligned, the segment data doesn't align with page boundaries, causing the loader to read wrong file offsets for page data. This requires either fixing the ELF loader to handle non-page-aligned segments or using a custom linker script to ensure segments are page-aligned.
 
 ### Recent Fixes (2026-04-03)
 
@@ -193,7 +193,7 @@ RustSBI → Boot 1 → memory init → SMP init (SXCIE) →
 
 ## Next Steps (Priority Order)
 
-1. **Fix ELF loader page alignment bug** - The loader doesn't handle segments where p_vaddr is not page-aligned. LOAD2 has p_vaddr=0x1130c but file offset 0x30c, causing incorrect data mapping for pages.
+1. **Fix ELF loader for non-page-aligned segments** - The ELF loader cannot correctly handle LOAD segments where p_vaddr is not page-aligned. This requires either rewriting the loader to properly calculate file offsets for each byte within a page, or using a custom linker script to ensure all segments are page-aligned.
 2. **Debug return_to_user** - After return_to_user is called, the user program doesn't produce output. Need to verify trap frame setup and sscratch configuration.
 3. **Debug sie CSR write hang** - sie write works early in boot but hangs after trap::init().
 4. **Timer interrupt in QEMU** - Enable timer interrupts via sie.STIE or workaround.

@@ -189,64 +189,53 @@ core::arch::global_asm!(
     "   ecall",
     // Save kernel sp to t0
     "   mv t0, sp",
+    // Debug: print 'C' after saving sp
+    "   li a7, 1",
+    "   li a0, 67",
+    "   ecall",
     // Set sscratch to trap frame pointer (kernel stack)
-    // This is needed so that when a trap occurs in user mode,
-    // the CPU can find the kernel stack by exchanging sp and sscratch
     "   mv t1, a0",
+    // Debug: print 'D' after setting t1
+    "   li a7, 1",
+    "   li a0, 68",
+    "   ecall",
     // Set new page table (satp)
     "   csrw satp, a1",
+    // Debug: print 'E' after satp switch
+    "   li a7, 1",
+    "   li a0, 69",
+    "   ecall",
     // Flush TLB
     "   sfence.vma zero, zero",
+    // Debug: print 'F' after sfence
+    "   li a7, 1",
+    "   li a0, 70",
+    "   ecall",
     // Set sscratch to kernel trap frame pointer
-    // When trap occurs in user mode, CPU exchanges sp with sscratch
     "   csrw sscratch, t1",
+    // Debug: print 'G' after sscratch
+    "   li a7, 1",
+    "   li a0, 71",
+    "   ecall",
     // Set up sepc to the user program counter
     "   csrw sepc, a3",
+    // Debug: print 'H' after sepc
+    "   li a7, 1",
+    "   li a0, 72",
+    "   ecall",
     // Set up sp to user stack
     "   mv sp, a2",
-    // Restore trap frame registers
-    // TrapFrame layout: ra(0), sp(8), gp(16), tp(24), t0(32), t1(40), t2(48),
-    // s0(56), s1(64), a0(72), a1(80), a2(88), a3(96), a4(104), a5(112),
-    // a6(120), a7(128), s2(136), s3(144), s4(152), s5(160), s6(168),
-    // s7(176), s8(184), s9(192), s10(200), s11(208), t3(216), t4(224),
-    // t5(232), t6(240), sepc(248), sstatus(256)
-    "   ld ra, 0(a0)",
-    "   ld gp, 16(a0)",
-    "   ld tp, 24(a0)",
-    "   ld t0, 32(a0)",
-    "   ld t1, 40(a0)",
-    "   ld t2, 48(a0)",
-    "   ld s0, 56(a0)",
-    "   ld s1, 64(a0)",
-    "   ld a0, 72(a0)",
-    "   ld a1, 80(a0)",
-    "   ld a2, 88(a0)",
-    "   ld a3, 96(a0)",
-    "   ld a4, 104(a0)",
-    "   ld a5, 112(a0)",
-    "   ld a6, 120(a0)",
-    "   ld a7, 128(a0)",
-    "   ld s2, 136(a0)",
-    "   ld s3, 144(a0)",
-    "   ld s4, 152(a0)",
-    "   ld s5, 160(a0)",
-    "   ld s6, 168(a0)",
-    "   ld s7, 176(a0)",
-    "   ld s8, 184(a0)",
-    "   ld s9, 192(a0)",
-    "   ld s10, 200(a0)",
-    "   ld s11, 208(a0)",
-    "   ld t3, 216(a0)",
-    "   ld t4, 224(a0)",
-    "   ld t5, 232(a0)",
-    "   ld t6, 240(a0)",
+    // Debug: print 'I' after sp switch
+    "   li a7, 1",
+    "   li a0, 73",
+    "   ecall",
     // Set sstatus: SPP=0 (user mode), SPIE=1, SIE=0
     // SPP is bit 8, SPIE is bit 5
     "   li t0, 0x00000020",
     "   csrw sstatus, t0",
-    // Debug: print 'R' right before sret to confirm we reached this point
+    // Debug: print 'J' after sstatus
     "   li a7, 1",
-    "   li a0, 82",
+    "   li a0, 74",
     "   ecall",
     // Return to user mode
     "   sret",
@@ -285,22 +274,26 @@ pub fn prepare_trap_frame(tf: &mut TrapFrame, pc: usize, sp: usize, a0: usize) {
 /// proper setup of the trap frame and page table.
 #[inline(never)]
 pub unsafe fn return_to_user(tf: *mut TrapFrame, satp: usize, sp: usize, pc: usize) {
+    // Debug: print 'Y' at function start
+    for c in b"Y" {
+        crate::console::sbi_console_putchar_raw(*c as usize);
+    }
     core::arch::asm!(
         // Set sscratch to trap frame pointer (kernel stack) for trap handling
         "mv t0, a0",
         "csrw sscratch, t0",
         // Set sp to user stack
         "mv sp, a2",
-        // Switch to user page table
-        "csrw satp, a1",
-        // Flush TLB
-        "sfence.vma zero, zero",
+        // Debug: print 'X'
+        "li a7, 1",
+        "li a0, 88",
+        "ecall",
         // Set sepc to entry point
         "csrw sepc, a3",
         // Set sstatus: SPP=0 (user mode), SPIE=1, SIE=0
         "li t0, 0x00000020",
         "csrw sstatus, t0",
-        // Return to user mode
+        // Return to user mode (no page table switch - MMU not enabled)
         "sret",
         options(nostack),
         in("a0") tf,

@@ -271,6 +271,19 @@ pub extern "C" fn do_syscall(trap_frame: *mut crate::process::context::TrapFrame
         core::arch::asm!("mv {}, a7", out(reg) syscall_id);
     }
 
+    // Debug: print syscall number
+    // Print '0' to '9' for single digit, 'D' for double digit
+    let mut tmp = syscall_id;
+    if tmp >= 10 {
+        for c in b"D" {
+            crate::console::sbi_console_putchar_raw(*c as usize);
+        }
+    } else {
+        for c in &[b'0' + (tmp as u8)] {
+            crate::console::sbi_console_putchar_raw(*c as usize);
+        }
+    }
+
     // Get arguments from trap frame
     let _arg0 = unsafe { (*trap_frame).a0 };
     let _arg1 = unsafe { (*trap_frame).a1 };
@@ -547,8 +560,10 @@ fn sys_fchdir(_fd: usize) -> isize {
 /// Exit the current process
 pub fn sys_exit(_code: usize) -> ! {
     let _pid = *CURRENT_PID.lock();
-    crate::println!("[syscall] Process exiting");
-    crate::println!("[syscall] Process halted");
+    // Debug: print 'E' for exit using SBI console
+    for c in b"E" {
+        crate::console::sbi_console_putchar_raw(*c as usize);
+    }
     loop {
         unsafe {
             core::arch::asm!("wfi");

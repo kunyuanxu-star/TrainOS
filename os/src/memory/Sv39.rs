@@ -393,8 +393,9 @@ impl PageTable {
         let page = page.or_else(|| crate::memory::allocator::alloc_page())?;
 
         let ptr = page as *mut PageTable;
+        // Zero the entire page table (4KB) - MUST zero all entries
         unsafe {
-            ptr.write_bytes(0, 1);
+            core::ptr::write_bytes(ptr as *mut u8, 0, PAGE_SIZE);
         }
         Some(unsafe { &mut *ptr })
     }
@@ -788,42 +789,27 @@ pub fn enable_sv39() {
     let pt = KERNEL_PAGE_TABLE.lock();
     if let Some(ref _pt_manager) = *pt {
         let root_ppn = _pt_manager.root_ppn().0;
-        // SATP format: MODE (8) | PPN[43:0]
         let satp = 8usize << 60 | root_ppn;
 
-        // Debug output before SATP write
+        crate::print!("[vm] enable_sv39: satp=0x");
+        crate::console::print_hex(satp);
+        crate::println!("");
+
+        // Try enabling with a simple inline asm sequence
+        // The key is to use a fence after the satp write
         unsafe {
-            let s = "[vm] enabling sv39\n";
-            let mut ptr = s.as_ptr() as usize;
-            let mut len = s.len();
             core::arch::asm!(
-                "1: lbu a0, 0(a1)",
-                "   li a7, 1",
-                "   ecall",
-                "   addi a1, a1, 1",
-                "   addi a2, a2, -1",
-                "   bnez a2, 1b",
-                inout("a1") ptr, inout("a2") len
+                // Write satp
+                "csrw satp, {0}",
+                // Flush TLB
+                "sfence.vma",
+                // Return
+                "ret",
+                in(reg) satp
             );
-
-            core::arch::asm!("csrw satp, {0}", in(reg) satp);
-
-            let s2 = "[vm] sv39 enabled\n";
-            let mut ptr2 = s2.as_ptr() as usize;
-            let mut len2 = s2.len();
-            core::arch::asm!(
-                "1: lbu a0, 0(a1)",
-                "   li a7, 1",
-                "   ecall",
-                "   addi a1, a1, 1",
-                "   addi a2, a2, -1",
-                "   bnez a2, 1b",
-                inout("a1") ptr2, inout("a2") len2
-            );
-
-            core::arch::asm!("sfence.vma zero, zero");
         }
     }
+    crate::println!("[vm] enable_sv39: done");
 }
 
 // ============================================

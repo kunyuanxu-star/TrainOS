@@ -497,6 +497,12 @@ fn start_scheduler() {
     crate::console::print_hex(user_sp);
     crate::println!("");
 
+    // Debug: print 'Z' and flush before return_to_user
+    for c in b"Z" {
+        crate::console::sbi_console_putchar_raw(*c as usize);
+    }
+    crate::console::console_flush();
+
     crate::println!("[sched] Calling return_to_user...");
     // Return to user mode
     // Note: This switches to the user page table and never returns

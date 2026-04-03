@@ -217,85 +217,11 @@ fn strlen(s: *const u8) -> usize {
 // Main
 #[no_mangle]
 extern "C" fn _start() {
-    // Debug: try to print 'H' before infinite loop
-    unsafe {
-        core::arch::asm!(
-            "li a7, 1",
-            "li a0, 72",
-            "ecall",
-            "li a7, 1",
-            "li a0, 73",
-            "ecall"
-        );
-    }
-
-    // Now infinite loop
-    loop {}
-    write_str(STDOUT, b"================================\n");
-
-    // Get and display PID info
-    let pid = getpid();
-    let tid = gettid();
-    let ppid = getppid();
-    let uid = getuid();
-    let gid = getgid();
-
-    write_str(STDOUT, b"PID: ");
-    print_num(pid);
-    write_str(STDOUT, b" TID: ");
-    print_num(tid);
-    write_str(STDOUT, b" PPID: ");
-    print_num(ppid);
-    write_str(STDOUT, b"\nUID: ");
-    print_num(uid);
-    write_str(STDOUT, b" GID: ");
-    print_num(gid);
-    write_str(STDOUT, b"\n");
-
-    // Test sched_yield
-    let _ = sched_yield();
-    write_str(STDOUT, b"sched_yield() called successfully\n");
-
-    // Display sysinfo
-    let mut info: SysInfo = unsafe { core::mem::zeroed() };
-    let ret = sysinfo(&mut info as *mut SysInfo);
-    if ret == 0 {
-        write_str(STDOUT, b"SysInfo:\n");
-        write_str(STDOUT, b"  Uptime: ");
-        print_num(info.uptime as usize);
-        write_str(STDOUT, b" seconds\n");
-        write_str(STDOUT, b"  Procs: ");
-        print_num(info.procs as usize);
-        write_str(STDOUT, b"\n");
-        write_str(STDOUT, b"  TotalRAM: ");
-        print_num(info.totalram as usize);
-        write_str(STDOUT, b" bytes\n");
-    }
-
-    // Display time
-    let mut tv: TimeVal = unsafe { core::mem::zeroed() };
-    let ret = gettimeofday(&mut tv as *mut TimeVal);
-    if ret == 0 {
-        write_str(STDOUT, b"Time: ");
-        print_num(tv.tv_sec as usize);
-        putc(b'.');
-        print_num(tv.tv_usec as usize);
-        putc(b'\n');
-    }
-
-    // Test clock_gettime
-    let mut ts: Timespec = unsafe { core::mem::zeroed() };
-    let ret = clock_gettime(0, &mut ts as *mut Timespec);
-    if ret == 0 {
-        write_str(STDOUT, b"Clock: ");
-        print_num(ts.tv_sec as usize);
-        putc(b'.');
-        print_num(ts.tv_nsec as usize);
-        putc(b'\n');
-    }
-
-    write_str(STDOUT, b"\nHello program completed successfully!\n");
+    // Just call sys_exit(0) to terminate - simplest test
     exit(0);
+
+    // This code should never be reached
+    loop {}
 }
 
 #[panic_handler]

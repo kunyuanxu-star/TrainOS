@@ -36,6 +36,12 @@ TrainOS is an educational operating system written in Rust for RISC-V 64-bit arc
 
 ## Recent Fixes (2026-04-03)
 
+**Page allocator find_free_bit fix (CRITICAL BUG)**:
+- The original find_free_bit used `word.trailing_zeros()` which finds the first SET bit
+- Changed to `(!word).trailing_zeros()` to find the first FREE (unset) bit
+- This bug caused ALL pages to be allocated at the same PA (0x80071000)
+- The bug was present from the start, which explains many previous issues
+
 **ELF loader overlap fix**:
 - Fixed fundamental issue with segment page mapping when p_vaddr is not page-aligned
 - The overlap formula: overlap_start = max(p_vaddr, curr_vaddr), overlap_end = min(p_vaddr + p_filesz, curr_vaddr + 4096)
@@ -59,21 +65,27 @@ TrainOS is an educational operating system written in Rust for RISC-V 64-bit arc
 
 **Symptoms**:
 - System boots successfully through all stages
-- ELF loading reports entry=0x117d4, sp=0x7ffffffdf0
-- return_to_user() is called (confirmed by debug output)
+- ELF loading reports entry=0x11d78, sp=0x7ffffffdf0 (new binary)
+- return_to_user() is called
 - QEMU times out with no user program output
+- Trap handler 'T' debug print NOT appearing - no traps are occurring
 
 **Analysis**:
-- ELF loader correctly maps segment pages with proper overlap calculation
-- Trap handler increments sepc after syscalls
-- The issue might be with ELF entry point calculation or segment mapping
+- Page allocator bug fixed (was returning same PA for all allocations)
+- ELF loader now correctly maps segment pages with proper overlap calculation
+- Trap handler correctly increments sepc after syscalls
+- Entry point is correctly within the LOAD segment
+- The user program appears to be running (or stuck in a loop) without making syscalls
+- No traps are occurring, which suggests either:
+  1. The user program is not making ecalls
+  2. The ecall instruction is not being executed
+  3. Something is preventing the trap from being delivered
 
-**HELLO Binary Analysis**:
-- File size: 8600 bytes
-- Entry point: 0x117d4
-- LOAD2 segment: p_vaddr=0x1130c, p_filesz=0x892, p_offset=0x30c
-- Entry point 0x117d4 falls within LOAD2 range [0x1130c, 0x11B9E)
-- But byte at file offset 0x7D4 (corresponding to entry) appears to be 0x5171, which may not be valid code
+**HELLO Binary Analysis (new)**:
+- File size: 11382 bytes (debug build)
+- Entry point: 0x11d78
+- Entry point byte at file offset 0xbd8: 0x00C58593 (ADDI x11, x11, 0)
+- This is valid RISC-V code
 
 ### Sie Write Issue Details
 

@@ -67,15 +67,21 @@ impl BitmapPageAllocator {
     }
 
     /// Find the first free bit in a bitmap word using count trailing zeros
+    /// IMPORTANT: We need to find the first bit that is NOT set (free)
     #[inline(always)]
     fn find_free_bit(word: usize) -> Option<usize> {
-        if word == 0 {
-            Some(0)
-        } else if word == usize::MAX {
+        if word == usize::MAX {
+            // All bits are set (no free bits)
             None
+        } else if word == 0 {
+            // No bits set (all bits free)
+            Some(0)
         } else {
-            // Count trailing zeros (CTZ) - find first free bit from LSB
-            Some(word.trailing_zeros() as usize)
+            // Find first zero bit by inverting and using trailing_zeros
+            // trailing_zeros gives position of first SET bit from LSB
+            // If we invert first, the first SET bit in !word is the first FREE bit in word
+            let free_word = !word;
+            Some(free_word.trailing_zeros() as usize)
         }
     }
 

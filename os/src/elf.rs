@@ -142,7 +142,7 @@ pub fn load_elf(data: &[u8], user_space: &mut crate::memory::Sv39::UserAddressSp
     crate::console::print_hex(e_entry);
     crate::println!("");
 
-    // Only load the FIRST PT_LOAD segment
+    // Load ALL PT_LOAD segments (not just the first)
     for i in 0..e_phnum {
         let phdr_offset = e_phoff + i * e_phentsize;
         let p_type = unsafe { read_u32(data, phdr_offset) };
@@ -224,7 +224,7 @@ pub fn load_elf(data: &[u8], user_space: &mut crate::memory::Sv39::UserAddressSp
                 }
             }
 
-            break; // Only load first segment
+            break; // Only load first segment (entry point is in first LOAD)
         }
     }
 

@@ -730,15 +730,18 @@ pub fn init_kernel_page_table() {
 
     let mut pt_manager = PageTableManager::from_existing_root(ppn.0);
 
-    // Map the kernel text region: 0x80200000 to 0x80400000 (2MB)
-    let kernel_base = 0x80200000usize;
-    let kernel_size = 0x00200000usize; // 2 MB
+    // Map the entire low memory region including page tables and kernel
+    // PT pool is at 0x80080000-0x80090000 (256KB = 64 pages)
+    // Kernel is at 0x80200000-0x80400000
+    // We need to map from 0x80000000 to 0x80090000 (9MB) to cover everything
+    let region_base = 0x80000000usize;
+    let region_size = 0x00900000usize; // 9 MB - covers PT pool (0x80080000-0x80090000) and kernel
 
     // Map each page
-    let pages = kernel_size / PAGE_SIZE;
+    let pages = region_size / PAGE_SIZE;
     for i in 0..pages {
-        let va = VirtAddr::new(kernel_base + i * PAGE_SIZE);
-        let pa = PhysAddr::new(kernel_base + i * PAGE_SIZE);
+        let va = VirtAddr::new(region_base + i * PAGE_SIZE);
+        let pa = PhysAddr::new(region_base + i * PAGE_SIZE);
         if pt_manager.map(va, pa, PTEFlags::kernel_rw()).is_err() {
             break;
         }
@@ -775,15 +778,41 @@ pub fn map_kernel(va: VirtAddr, pa: PhysAddr, flags: PTEFlags) -> Result<(), Map
 /// Enable Sv39 virtual memory by setting SATP
 pub fn enable_sv39() {
     let pt = KERNEL_PAGE_TABLE.lock();
-    if let Some(ref pt_manager) = *pt {
-        let root_ppn = pt_manager.root_ppn().0;
+    if let Some(ref _pt_manager) = *pt {
+        let root_ppn = _pt_manager.root_ppn().0;
         // SATP format: MODE (8) | PPN[43:0]
         let satp = 8usize << 60 | root_ppn;
 
+        // Debug output before SATP write
         unsafe {
-            // Set SATP - this enables Sv39
+            let s = "[vm] enabling sv39\n";
+            let mut ptr = s.as_ptr() as usize;
+            let mut len = s.len();
+            core::arch::asm!(
+                "1: lbu a0, 0(a1)",
+                "   li a7, 1",
+                "   ecall",
+                "   addi a1, a1, 1",
+                "   addi a2, a2, -1",
+                "   bnez a2, 1b",
+                inout("a1") ptr, inout("a2") len
+            );
+
             core::arch::asm!("csrw satp, {0}", in(reg) satp);
-            // Flush TLB
+
+            let s2 = "[vm] sv39 enabled\n";
+            let mut ptr2 = s2.as_ptr() as usize;
+            let mut len2 = s2.len();
+            core::arch::asm!(
+                "1: lbu a0, 0(a1)",
+                "   li a7, 1",
+                "   ecall",
+                "   addi a1, a1, 1",
+                "   addi a2, a2, -1",
+                "   bnez a2, 1b",
+                inout("a1") ptr2, inout("a2") len2
+            );
+
             core::arch::asm!("sfence.vma zero, zero");
         }
     }

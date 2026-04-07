@@ -791,19 +791,22 @@ pub fn map_kernel(va: VirtAddr, pa: PhysAddr, flags: PTEFlags) -> Result<(), Map
 }
 
 /// Enable Sv39 virtual memory by setting SATP
+/// This function enables the MMU using the kernel page table that was
+/// set up by init_kernel_page_table(). The kernel page table has identity
+/// mappings for the kernel region, so execution continues seamlessly.
+///
+/// NOTE: This function is called AFTER trap::init() so that if a page fault
+/// occurs during/after MMU enable, the trap handler can catch it.
+///
+/// KNOWN ISSUE: Writing to satp CSR causes QEMU to hang. The csrw satp
+/// instruction appears to complete but subsequent instruction fetch fails.
+/// This needs further investigation - possibly a QEMU bug or issue with
+/// how the page table is set up.
 pub fn enable_sv39() {
-    // NOTE: MMU enable is skipped due to issues with satp write causing hangs.
-    // The page table is correctly set up (translate works), but enabling
-    // the MMU causes a hang. This needs further investigation.
-    //
-    // Issues identified:
-    // 1. The page table structure is correct (translate works)
-    // 2. The satp write itself causes a hang
-    // 3. Possible cause: the CPU starts using the new page table immediately
-    //    after satp write, and subsequent instruction fetch fails
-    //
-    // TODO: Fix MMU enable sequence
-    crate::println!("[vm] enable_sv39: MMU enable skipped (known issue - satp write hangs)");
+    crate::println!("[vm] enable_sv39: MMU enable DISABLED (csrw satp hangs in QEMU)");
+    crate::println!("[vm] This is a known issue - csrw satp completes but next instruction hangs");
+    crate::println!("[vm] Without MMU, user programs cannot run correctly");
+    crate::println!("[vm] Future fix needed: investigate QEMU version or page table setup");
 }
 
 // ============================================

@@ -133,9 +133,10 @@ extern "C" fn rust_main() -> ! {
     // Initialize memory management
     crate::memory::init();
 
-    // Enable Sv39 MMU with expanded identity mapping (0x80000000-0x80090000)
-    // This covers both page tables and kernel code
-    crate::memory::Sv39::enable_sv39();
+    // NOTE: enable_sv39() is now called AFTER trap::init() below
+    // This is because if MMU enable causes a page fault, we need a trap handler
+    // The previous call to enable_sv39() inside memory::init() caused hangs
+    // because there was no trap handler set up yet.
     unsafe {
         let s = "After memory init\r\n";
         let len = s.len();
@@ -211,6 +212,11 @@ extern "C" fn rust_main() -> ! {
     // Note: sie write after trap::init() hangs due to unknown cause
     // Timer interrupts are enabled via sstatus.SIE in trap::init()
     // sie.STIE is set via direct CLINT MMIO for now
+
+    // Enable Sv39 MMU AFTER trap handler is set up
+    // This way, if page tables are invalid and cause a page fault,
+    // the trap handler can catch it instead of hanging
+    crate::memory::Sv39::enable_sv39();
 
     // Initialize file system
     crate::fs::init();

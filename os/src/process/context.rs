@@ -272,24 +272,34 @@ pub fn prepare_trap_frame(tf: &mut TrapFrame, pc: usize, sp: usize, a0: usize) {
 /// # Safety
 /// This function switches to user mode and should only be called after
 /// proper setup of the trap frame and page table.
+///
+/// NOTE: MMU is currently disabled, so we just return to user mode
+/// without actually switching page tables. When MMU is enabled, we need
+/// to properly switch to the user page table.
 #[inline(never)]
 pub unsafe fn return_to_user(tf: *mut TrapFrame, satp: usize, sp: usize, pc: usize) {
+    // TEMPORARILY DISABLED: satp switch causes hang when MMU not globally enabled
+    // When MMU is properly enabled, re-enable the satp switch below
+    let _ = satp; // Suppress unused warning
+
     core::arch::asm!(
         // Set sscratch to trap frame pointer (kernel stack) for trap handling
+        // When a trap occurs in user mode, CPU will use sscratch to find kernel stack
         "mv t0, a0",
         "csrw sscratch, t0",
-        // Set sp to user stack
-        "mv sp, a2",
-        // Set sepc to entry point
+        // DO NOT switch page table - MMU is disabled
+        // When re-enabling, add: "csrw satp, a1"
+        // Set sepc to entry point (user program counter)
         "csrw sepc, a3",
         // Set sstatus: SPP=0 (user mode), SPIE=1, SIE=0
         "li t0, 0x00000020",
         "csrw sstatus, t0",
-        // Return to user mode (no page table switch - MMU not enabled)
+        // Set sp to user stack
+        "mv sp, a2",
+        // Return to user mode
         "sret",
         options(nostack),
         in("a0") tf,
-        in("a1") satp,
         in("a2") sp,
         in("a3") pc,
     );

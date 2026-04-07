@@ -274,20 +274,12 @@ pub fn prepare_trap_frame(tf: &mut TrapFrame, pc: usize, sp: usize, a0: usize) {
 /// proper setup of the trap frame and page table.
 #[inline(never)]
 pub unsafe fn return_to_user(tf: *mut TrapFrame, satp: usize, sp: usize, pc: usize) {
-    // Debug: print 'Y' at function start
-    for c in b"Y" {
-        crate::console::sbi_console_putchar_raw(*c as usize);
-    }
     core::arch::asm!(
         // Set sscratch to trap frame pointer (kernel stack) for trap handling
         "mv t0, a0",
         "csrw sscratch, t0",
         // Set sp to user stack
         "mv sp, a2",
-        // Debug: print 'X'
-        "li a7, 1",
-        "li a0, 88",
-        "ecall",
         // Set sepc to entry point
         "csrw sepc, a3",
         // Set sstatus: SPP=0 (user mode), SPIE=1, SIE=0

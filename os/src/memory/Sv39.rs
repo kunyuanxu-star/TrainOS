@@ -490,8 +490,11 @@ impl PageTableManager {
                 let next_pa = next_pt as *const PageTable as usize;
                 let next_ppn = PhysAddr(next_pa).ppn();
                 pte.ppn = next_ppn;
+                // Non-leaf entry: only valid bit is set
                 pte.flags.valid = true;
-                pte.flags.read = true;
+                pte.flags.read = false;
+                pte.flags.write = false;
+                pte.flags.execute = false;
             }
 
             let level1_pa = pte.ppn.to_pa();
@@ -506,8 +509,11 @@ impl PageTableManager {
                 let next_pa = next_pt as *const PageTable as usize;
                 let next_ppn = PhysAddr(next_pa).ppn();
                 pte1.ppn = next_ppn;
+                // Non-leaf entry: only valid bit is set
                 pte1.flags.valid = true;
-                pte1.flags.read = true;
+                pte1.flags.read = false;
+                pte1.flags.write = false;
+                pte1.flags.execute = false;
             }
 
             let level2_pa = pte1.ppn.to_pa();
@@ -746,7 +752,7 @@ pub fn init_kernel_page_table() {
     let region_base = 0x80000000usize;
     let region_size = 0x00900000usize; // 9 MB - covers PT pool (0x80080000-0x80090000) and kernel
 
-    // Map each page
+    // Map each page - use kernel_rw for now
     let pages = region_size / PAGE_SIZE;
     for i in 0..pages {
         let va = VirtAddr::new(region_base + i * PAGE_SIZE);
@@ -786,30 +792,18 @@ pub fn map_kernel(va: VirtAddr, pa: PhysAddr, flags: PTEFlags) -> Result<(), Map
 
 /// Enable Sv39 virtual memory by setting SATP
 pub fn enable_sv39() {
-    let pt = KERNEL_PAGE_TABLE.lock();
-    if let Some(ref _pt_manager) = *pt {
-        let root_ppn = _pt_manager.root_ppn().0;
-        let satp = 8usize << 60 | root_ppn;
-
-        crate::print!("[vm] enable_sv39: satp=0x");
-        crate::console::print_hex(satp);
-        crate::println!("");
-
-        // Try enabling with a simple inline asm sequence
-        // The key is to use a fence after the satp write
-        unsafe {
-            core::arch::asm!(
-                // Write satp
-                "csrw satp, {0}",
-                // Flush TLB
-                "sfence.vma",
-                // Return
-                "ret",
-                in(reg) satp
-            );
-        }
-    }
-    crate::println!("[vm] enable_sv39: done");
+    // NOTE: MMU enable is skipped due to issues with satp write causing hangs.
+    // The page table is correctly set up (translate works), but enabling
+    // the MMU causes a hang. This needs further investigation.
+    //
+    // Issues identified:
+    // 1. The page table structure is correct (translate works)
+    // 2. The satp write itself causes a hang
+    // 3. Possible cause: the CPU starts using the new page table immediately
+    //    after satp write, and subsequent instruction fetch fails
+    //
+    // TODO: Fix MMU enable sequence
+    crate::println!("[vm] enable_sv39: MMU enable skipped (known issue - satp write hangs)");
 }
 
 // ============================================

@@ -752,12 +752,14 @@ pub fn init_kernel_page_table() {
     let region_base = 0x80000000usize;
     let region_size = 0x00900000usize; // 9 MB - covers PT pool (0x80080000-0x80090000) and kernel
 
-    // Map each page - use kernel_rw for now
+    // Map each page - use kernel_rwx to allow code execution
+    // CRITICAL: Without execute permission, the CPU cannot fetch instructions
+    // from the mapped pages, causing hangs when trying to execute code.
     let pages = region_size / PAGE_SIZE;
     for i in 0..pages {
         let va = VirtAddr::new(region_base + i * PAGE_SIZE);
         let pa = PhysAddr::new(region_base + i * PAGE_SIZE);
-        if pt_manager.map(va, pa, PTEFlags::kernel_rw()).is_err() {
+        if pt_manager.map(va, pa, PTEFlags::kernel_rwx()).is_err() {
             break;
         }
     }
@@ -797,16 +799,56 @@ pub fn map_kernel(va: VirtAddr, pa: PhysAddr, flags: PTEFlags) -> Result<(), Map
 ///
 /// NOTE: This function is called AFTER trap::init() so that if a page fault
 /// occurs during/after MMU enable, the trap handler can catch it.
-///
-/// KNOWN ISSUE: Writing to satp CSR causes QEMU to hang. The csrw satp
-/// instruction appears to complete but subsequent instruction fetch fails.
-/// This needs further investigation - possibly a QEMU bug or issue with
-/// how the page table is set up.
 pub fn enable_sv39() {
-    crate::println!("[vm] enable_sv39: MMU enable DISABLED (csrw satp hangs in QEMU)");
-    crate::println!("[vm] This is a known issue - csrw satp completes but next instruction hangs");
-    crate::println!("[vm] Without MMU, user programs cannot run correctly");
-    crate::println!("[vm] Future fix needed: investigate QEMU version or page table setup");
+    // Get the kernel page table
+    let pt_guard = KERNEL_PAGE_TABLE.lock();
+    let pt_manager = match &*pt_guard {
+        Some(pt) => pt,
+        None => {
+            crate::println!("[vm] ERROR: Kernel page table not initialized!");
+            return;
+        }
+    };
+
+    // Get root PPN for SATP
+    let root_ppn = pt_manager.root_ppn();
+
+    // SATP format for Sv39: [63:60] = MODE (8), [59:44] = PPN[43:28], [43:0] = PPN[27:0]
+    // Mode 8 = Sv39
+    let satp_value = (8usize << 60) | (root_ppn.0 & 0x7FFFFFF);
+
+    crate::print!("[vm] Enabling MMU with satp=0x");
+    crate::console::print_hex(satp_value);
+    crate::println!("");
+    crate::console::console_flush();
+
+    // Write to satp and immediately read it back in the same asm block
+    let satp_readback: usize;
+    unsafe {
+        core::arch::asm!(
+            "csrw satp, {0}",
+            "sfence.vma",
+            "fence.i",
+            "csrr {1}, satp",
+            out(reg) satp_readback,
+            in(reg) satp_value,
+            options(nostack)
+        );
+    }
+
+    crate::print!("[vm] satp readback=0x");
+    crate::console::print_hex(satp_readback);
+    crate::println!("");
+
+    // If satp is 0x0, the write didn't actually work - continue without MMU
+    if satp_readback == 0 {
+        crate::println!("[vm] WARNING: satp write appeared to succeed but readback is 0");
+        crate::println!("[vm] This suggests csrw satp may not work in this QEMU version");
+        crate::println!("[vm] Continuing without MMU - user programs will use physical addresses");
+    } else {
+        crate::println!("[vm] MMU enabled successfully!");
+    }
+    crate::console::console_flush();
 }
 
 // ============================================

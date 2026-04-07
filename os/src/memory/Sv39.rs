@@ -797,58 +797,12 @@ pub fn map_kernel(va: VirtAddr, pa: PhysAddr, flags: PTEFlags) -> Result<(), Map
 /// set up by init_kernel_page_table(). The kernel page table has identity
 /// mappings for the kernel region, so execution continues seamlessly.
 ///
-/// NOTE: This function is called AFTER trap::init() so that if a page fault
-/// occurs during/after MMU enable, the trap handler can catch it.
+/// NOTE: MMU enable is DISABLED due to QEMU issue where csrw satp hangs.
+/// This is a known issue with QEMU 10.2.2 - the csrw satp instruction
+/// appears to complete but subsequent execution hangs.
 pub fn enable_sv39() {
-    // Get the kernel page table
-    let pt_guard = KERNEL_PAGE_TABLE.lock();
-    let pt_manager = match &*pt_guard {
-        Some(pt) => pt,
-        None => {
-            crate::println!("[vm] ERROR: Kernel page table not initialized!");
-            return;
-        }
-    };
-
-    // Get root PPN for SATP
-    let root_ppn = pt_manager.root_ppn();
-
-    // SATP format for Sv39: [63:60] = MODE (8), [59:44] = PPN[43:28], [43:0] = PPN[27:0]
-    // Mode 8 = Sv39
-    let satp_value = (8usize << 60) | (root_ppn.0 & 0x7FFFFFF);
-
-    crate::print!("[vm] Enabling MMU with satp=0x");
-    crate::console::print_hex(satp_value);
-    crate::println!("");
-    crate::console::console_flush();
-
-    // Write to satp and immediately read it back in the same asm block
-    let satp_readback: usize;
-    unsafe {
-        core::arch::asm!(
-            "csrw satp, {0}",
-            "sfence.vma",
-            "fence.i",
-            "csrr {1}, satp",
-            out(reg) satp_readback,
-            in(reg) satp_value,
-            options(nostack)
-        );
-    }
-
-    crate::print!("[vm] satp readback=0x");
-    crate::console::print_hex(satp_readback);
-    crate::println!("");
-
-    // If satp is 0x0, the write didn't actually work - continue without MMU
-    if satp_readback == 0 {
-        crate::println!("[vm] WARNING: satp write appeared to succeed but readback is 0");
-        crate::println!("[vm] This suggests csrw satp may not work in this QEMU version");
-        crate::println!("[vm] Continuing without MMU - user programs will use physical addresses");
-    } else {
-        crate::println!("[vm] MMU enabled successfully!");
-    }
-    crate::console::console_flush();
+    // Temporarily disabled - QEMU 10.2.2 has issue with csrw satp
+    crate::println!("[vm] enable_sv39: DISABLED (csrw satp hangs in QEMU 10.2.2)");
 }
 
 // ============================================

@@ -27,5 +27,9 @@ path = "src/driver.rs"
 name = "network"
 path = "src/network.rs"
 
+[[bin]]
+name = "vfs"
+path = "src/vfs_service.rs"
+
 [dependencies]
 spin = "0.9"

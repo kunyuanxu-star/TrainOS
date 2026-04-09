@@ -37,18 +37,24 @@ fn alloc_fd() -> Option<usize> {
 }
 
 /// Send block read request to driver
+///
+/// Phase 3: Stub implementation - returns -1 (not implemented)
+/// Phase 4: Will send BlockReadRequest to DRIVER_PORT and wait for response
 fn block_read(sector: u64, count: u32, buf: &mut [u8]) -> i32 {
-    // In a full implementation, this would:
-    // 1. Create endpoint for reply
-    // 2. Send BlockReadRequest to DRIVER_PORT
-    // 3. Wait for response
-    // For now, return -1 (not implemented)
+    // TODO(Phase 4): Implement IPC to driver
+    // 1. Create ephemeral reply port
+    // 2. Send BlockReadRequest { sector, count, reply_port } to DRIVER_PORT
+    // 3. Receive BlockReadResponse on reply port
+    // 4. Copy data to buf and return status
     -1
 }
 
 /// Send block write request to driver
+///
+/// Phase 3: Stub implementation - returns -1 (not implemented)
+/// Phase 4: Will send BlockWriteRequest to DRIVER_PORT and wait for response
 fn block_write(sector: u64, count: u32, data: &[u8]) -> i32 {
-    // Similar to block_read
+    // TODO(Phase 4): Implement IPC to driver
     -1
 }
 

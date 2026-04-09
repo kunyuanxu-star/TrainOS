@@ -91,14 +91,17 @@ pub extern "C" fn _start() {
         }
     }
 
-    print("driver: Driver service ready (placeholder - IPC not yet connected)\n");
+    print("driver: Ready (IPC placeholder - Phase 3)\n");
 
-    // For now, just loop forever - in Phase 3, we will:
-    // 1. Create endpoint for block I/O requests (port 2)
-    // 2. Wait for fs_server to connect
-    // 3. Handle IPC requests
+    // Phase 3: Stub IPC handlers
+    // In Phase 4, we will:
+    // 1. Create endpoint on DRIVER_PORT (2)
+    // 2. Wait for BlockReadRequest / BlockWriteRequest
+    // 3. Process using VirtIO driver
+    // 4. Send response
 
     loop {
+        // IPC message handling would go here in Phase 4
         unsafe { core::arch::asm!("wfi"); }
     }
 }

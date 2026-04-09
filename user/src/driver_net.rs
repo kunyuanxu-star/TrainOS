@@ -81,4 +81,24 @@ impl VirtioNetDevice {
     pub fn ack_interrupt(&self) {
         read8(self.device_id, VIRTIO_PCI_ISR);
     }
+
+    /// Receive a frame (stub - returns empty frame for now)
+    pub fn recv_frame(&mut self, _buffer: &mut [u8]) -> Result<usize, &'static str> {
+        // Check if we have a frame waiting
+        if !self.interrupt_pending() {
+            return Err("No frame available");
+        }
+        self.ack_interrupt();
+
+        // For now, return no data - actual DMA-based receive
+        // would use the virtqueue mechanism
+        Ok(0)
+    }
+
+    /// Send a frame (stub)
+    pub fn send_frame(&mut self, _data: &[u8]) -> Result<(), &'static str> {
+        // For now, this is a stub
+        // Actual DMA-based send would use the virtqueue mechanism
+        Ok(())
+    }
 }

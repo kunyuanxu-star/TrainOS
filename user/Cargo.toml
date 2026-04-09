@@ -23,4 +23,9 @@ path = "src/test_minimal.rs"
 name = "driver"
 path = "src/driver.rs"
 
+[[bin]]
+name = "network"
+path = "src/network.rs"
+
 [dependencies]
+spin = "0.9"

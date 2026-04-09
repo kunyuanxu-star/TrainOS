@@ -42,6 +42,7 @@ pub const PF_R: u32 = 4;  // Readable
 pub static DRIVER_ELF: &[u8] = include_bytes!("../bin/driver.bin");
 pub static FS_ELF: &[u8] = include_bytes!("../bin/fs.bin");
 pub static SHELL_ELF: &[u8] = include_bytes!("../bin/shell.bin");
+pub static NETWORK_ELF: &[u8] = include_bytes!("../bin/network.bin");
 
 /// ELF result
 pub enum ElfResult {

@@ -1217,6 +1217,10 @@ pub fn sys_spawn(service_id: usize) -> isize {
             // Shell
             spawn_user_process(crate::elf::SHELL_ELF)
         }
+        3 => {
+            // Network service
+            spawn_user_process(crate::elf::NETWORK_ELF)
+        }
         _ => {
             crate::print!("[syscall] sys_spawn: unknown service_id=");
             crate::console::print_dec(service_id);

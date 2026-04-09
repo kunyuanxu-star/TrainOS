@@ -31,6 +31,19 @@ pub enum InterruptCause {
     SupervisorExternal,
 }
 
+/// Enable timer interrupt in sie (Supervisor Interrupt Enable)
+/// This must be called BEFORE trap::init() because sie write hangs after trap init
+pub fn enable_timer_interrupt() {
+    // sie.STIE is bit 5 in the sie CSR
+    let stie_bit = 1usize << 5;
+    unsafe {
+        core::arch::asm!(
+            "csrs sie, {0}",
+            in(reg) stie_bit
+        );
+    }
+}
+
 /// Initialize trap handling
 pub fn init() {
     // Set stvec to trap handler entry point using inline asm
@@ -176,9 +189,15 @@ extern "C" fn handle_trap(trap_frame: *mut crate::process::context::TrapFrame) {
 
 /// Handle timer interrupt - trigger task scheduling
 fn handle_timer_interrupt() {
-    // Re-arm the timer for the next quantum
-    // Use 10ms time slice
-    crate::drivers::interrupt::set_timer_relative(10_000);  // 10ms in microseconds
+    // Re-arm the timer for the next quantum using direct CLINT MMIO
+    // This avoids the SBI_SET_TIMER hang issue with RustSBI 0.4.0
+    let mtime = unsafe { *(0x0200bff8usize as *const u64) };
+    let interval = 100_000u64; // 10ms at 10MHz
+    let mtimecmp = mtime.wrapping_add(interval);
+    let mtimecmp_addr = 0x02004000usize; // CLINT mtimecmp for hart 0
+    unsafe {
+        *(mtimecmp_addr as *mut u64) = mtimecmp;
+    }
 
     // Request the scheduler to preempt the current task
     crate::process::schedule_preempt();

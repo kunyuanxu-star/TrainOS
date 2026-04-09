@@ -206,6 +206,10 @@ extern "C" fn rust_main() -> ! {
             inout("a1") ptr, inout("a2") remaining);
     }
 
+    // Enable timer interrupt BEFORE trap::init() to avoid sie write hang
+    // sie.STIE must be set before trap handling is fully initialized
+    crate::trap::enable_timer_interrupt();
+
     // Initialize trap handling
     crate::trap::init();
 

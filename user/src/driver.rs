@@ -116,9 +116,9 @@ pub extern "C" fn _start() {
         }
     }
 
-    print("driver: Ready (IPC placeholder - Phase 3)\n");
+    print("driver: Ready for IPC block I/O\n");
 
-    // Phase 4: Create endpoint on DRIVER_PORT for IPC
+    // Create endpoint on DRIVER_PORT for IPC
     let driver_port = syscall(SYS_ENDPOINT_CREATE, 0, 0, 0, 0, 0, 0) as u32;
     if driver_port < 2 {
         print("driver: Failed to create endpoint\n");
@@ -131,16 +131,61 @@ pub extern "C" fn _start() {
     print_hex(driver_port as usize);
     print("\n");
 
-    // Buffer for IPC requests
+    // Buffer for IPC requests and responses
     let mut req_buf: [u8; 256] = [0; 256];
+    let mut resp_buf: [u8; 516] = [0; 516]; // status (4 bytes) + data (512 bytes)
 
     loop {
-        // Phase 4 IPC stub: just yield for now
-        // In Phase 5, we will:
-        // 1. Receive BlockReadRequest / BlockWriteRequest on driver_port
-        // 2. Process using VirtIO driver
-        // 3. Send response back
-        syscall(SYS_SCHED_YIELD, 0, 0, 0, 0, 0, 0);
+        // Receive request (blocking)
+        let size = syscall(SYS_RECV, driver_port as usize, req_buf.as_mut_ptr() as usize, 256, 0, 0, 0) as usize;
+
+        if size > 0 && size >= 20 {
+            // Parse IPC header (20 bytes)
+            // from (4 bytes) | to (4 bytes) | port (4 bytes) | payload_size (4 bytes) | reply_port (4 bytes)
+            let from: u32 = unsafe { *(req_buf.as_ptr() as *const u32) };
+            let _to: u32 = unsafe { *(req_buf.as_ptr().add(4) as *const u32) };
+            let _port: u32 = unsafe { *(req_buf.as_ptr().add(8) as *const u32) };
+            let _payload_size: u32 = unsafe { *(req_buf.as_ptr().add(12) as *const u32) };
+            let reply_port: u32 = unsafe { *(req_buf.as_ptr().add(16) as *const u32) };
+
+            // Get payload pointer (after 20-byte header)
+            let payload = 20usize;
+
+            // First u32 of payload is the operation (0=read, 1=write)
+            let op: u32 = unsafe { *(req_buf.as_ptr().add(payload) as *const u32) };
+
+            if op == 0 {
+                // Block read request
+                let sector: u64 = unsafe { *(req_buf.as_ptr().add(payload + 4) as *const u64) };
+
+                print("driver: Block read sector ");
+                print_hex(sector as usize);
+                print("\n");
+
+                // TODO: Perform actual VirtIO block read
+                // Response: status (4 bytes) + data (512 bytes)
+                unsafe { *(resp_buf.as_mut_ptr() as *mut i32) = 0; } // status = OK
+
+                // Send response
+                if reply_port > 0 {
+                    syscall(SYS_SEND, from as usize, reply_port as usize,
+                           resp_buf.as_ptr() as usize, 516, 0, 0);
+                }
+            } else if op == 1 {
+                // Block write request
+                print("driver: Block write\n");
+
+                // TODO: Perform actual VirtIO block write
+                // Response: status (4 bytes)
+                unsafe { *(resp_buf.as_mut_ptr() as *mut i32) = 0; } // status = OK
+
+                if reply_port > 0 {
+                    syscall(SYS_SEND, from as usize, reply_port as usize,
+                           resp_buf.as_ptr() as usize, 4, 0, 0);
+                }
+            }
+        }
+
         unsafe { core::arch::asm!("wfi"); }
     }
 }

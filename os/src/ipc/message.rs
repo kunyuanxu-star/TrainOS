@@ -2,8 +2,8 @@
 
 use crate::ipc::{Pid, PortId};
 
-/// Maximum message size (4KB - one page)
-pub const MAX_MESSAGE_SIZE: usize = 4096;
+/// Maximum message size (256 bytes)
+pub const MAX_MESSAGE_SIZE: usize = 256;
 
 /// Message header (16 bytes)
 #[repr(C)]
@@ -17,7 +17,7 @@ pub struct MessageHeader {
 }
 
 /// Full IPC message with header and inline payload
-/// Total size: 16 + 4080 = 4096 bytes (one page)
+/// Total size: 16 + 240 = 256 bytes
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct IpcMessage {

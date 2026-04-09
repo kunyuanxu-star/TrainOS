@@ -21,6 +21,17 @@ SECTIONS
     .data (BASE_ADDRESS + 0x200000) : {
         *(.data)
         *(.data.*)
+        . = ALIGN(4096);
+    }
+
+    /DISCARD/ : {
+        *(.debug_abbrev)
+        *(.debug_info)
+        *(.debug_line)
+        *(.debug_str)
+        *(.debug_ranges)
+        *(.debug_aranges)
+        *(.comment)
     }
 
     .bss.uninit (BASE_ADDRESS + 0x300000) : {

@@ -7,7 +7,7 @@ pub const MAX_MESSAGE_SIZE: usize = 4096;
 
 /// Message header (16 bytes)
 #[repr(C)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct MessageHeader {
     pub from: Pid,        // Source PID
     pub to: Pid,          // Destination PID
@@ -19,7 +19,7 @@ pub struct MessageHeader {
 /// Full IPC message with header and inline payload
 /// Total size: 16 + 4080 = 4096 bytes (one page)
 #[repr(C)]
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct IpcMessage {
     pub header: MessageHeader,
     pub payload: [u8; MAX_MESSAGE_SIZE - 16],

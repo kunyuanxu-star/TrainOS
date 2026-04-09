@@ -11,6 +11,7 @@ pub mod error;
 mod elf;
 mod memory;
 mod process;
+pub mod ipc;
 mod trap;
 mod fs;
 mod syscall;

@@ -1,6 +1,6 @@
 //! Endpoint management
 
-use crate::ipc::{PortId, Pid, ENDPOINT_TABLE, MAX_ENDPOINTS, EndpointEntry};
+use crate::ipc::{PortId, Pid, MAX_ENDPOINTS, EndpointEntry, ENDPOINT_TABLE};
 
 /// Create a new endpoint for a process
 /// Returns (port_id, endpoint_entry) on success

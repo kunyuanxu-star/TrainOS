@@ -1,6 +1,6 @@
 //! IPC channel operations
 
-use crate::ipc::{Pid, PortId, message::IpcMessage, MAX_MESSAGE_SIZE};
+use crate::ipc::{Pid, PortId, IpcMessage, MAX_MESSAGE_SIZE};
 
 /// Send a message to a process/port
 /// Returns 0 on success, -1 on error

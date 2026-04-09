@@ -10,6 +10,7 @@ pub mod context;
 use spin::Mutex;
 use task::{TaskControlBlock, TaskId};
 use scheduler::Scheduler;
+use crate::ipc::{Pid, PortId, IpcMessage};
 
 /// Global task manager - const so can be used in static initialization
 static TASK_MANAGER: Mutex<TaskManager> = Mutex::new(TaskManager::new());
@@ -39,6 +40,104 @@ pub static SCHEDULE_REQUESTED: Mutex<bool> = Mutex::new(false);
 /// Request a schedule - called from sys_sched_yield
 pub fn request_schedule() {
     *SCHEDULE_REQUESTED.lock() = true;
+}
+
+// ============================================================================
+// Process struct with mailbox for IPC
+// ============================================================================
+
+/// Maximum messages in a process mailbox
+const MAILBOX_CAPACITY: usize = 4;
+
+/// Maximum entries in capability table
+const CAPABILITY_TABLE_SIZE: usize = 16;
+
+/// Process struct - holds per-process IPC mailbox
+#[derive(Copy, Clone)]
+pub struct Process {
+    pub pid: Pid,
+    pub task: TaskControlBlock,
+    mailbox: [Option<IpcMessage>; MAILBOX_CAPACITY],
+    mailbox_count: usize,
+    capability_table: [u64; CAPABILITY_TABLE_SIZE],
+}
+
+impl Process {
+    pub fn new(pid: Pid, task: TaskControlBlock) -> Self {
+        Self {
+            pid,
+            task,
+            mailbox: [None, None, None, None],
+            mailbox_count: 0,
+            capability_table: [0; CAPABILITY_TABLE_SIZE],
+        }
+    }
+
+    /// Add a message to the mailbox
+    pub fn add_to_mailbox(&mut self, msg: IpcMessage) -> bool {
+        if self.mailbox_count >= MAILBOX_CAPACITY {
+            return false; // Mailbox full
+        }
+        // Find an empty slot
+        for i in 0..MAILBOX_CAPACITY {
+            if self.mailbox[i].is_none() {
+                self.mailbox[i] = Some(msg);
+                self.mailbox_count += 1;
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Pop a message for a specific port from the mailbox
+    pub fn pop_from_mailbox(&mut self, port: PortId) -> Option<IpcMessage> {
+        for i in 0..MAILBOX_CAPACITY {
+            if let Some(ref msg) = self.mailbox[i] {
+                if msg.header.port == port {
+                    self.mailbox_count -= 1;
+                    return self.mailbox[i].take();
+                }
+            }
+        }
+        None
+    }
+}
+
+// Process table - maps PID to Process (fixed-size array for no_std)
+const MAX_PROCESSES: usize = 64;
+static PROCESS_TABLE: Mutex<[Option<Process>; MAX_PROCESSES]> = Mutex::new([None; MAX_PROCESSES]);
+
+// Current PID - separate from syscall's CURRENT_PID
+static CURRENT_PID: Mutex<usize> = Mutex::new(1);
+
+/// Get current PID
+pub fn get_current_pid() -> Pid {
+    *CURRENT_PID.lock() as Pid
+}
+
+/// Get process by PID
+pub fn get_process(pid: Pid) -> Option<spin::MutexGuard<'static, [Option<Process>; MAX_PROCESSES]>> {
+    let table = PROCESS_TABLE.lock();
+    if (pid as usize) < MAX_PROCESSES {
+        Some(table)
+    } else {
+        None
+    }
+}
+
+/// Register a new process
+pub fn register_process(pid: Pid, task: TaskControlBlock) -> bool {
+    let mut table = PROCESS_TABLE.lock();
+    if (pid as usize) < MAX_PROCESSES && table[pid as usize].is_none() {
+        table[pid as usize] = Some(Process::new(pid, task));
+        return true;
+    }
+    false
+}
+
+/// Yield the current process
+pub fn yield_current() {
+    request_schedule();
 }
 
 /// Task Manager - manages all task control blocks

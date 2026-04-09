@@ -8,6 +8,10 @@ pub mod message;
 
 use spin::Mutex;
 
+// Re-export for convenience
+pub use message::{IpcMessage, MessageHeader, MAX_MESSAGE_SIZE};
+pub use endpoint::{lookup_endpoint, create_endpoint, delete_endpoint};
+
 // Maximum number of endpoints in the system
 pub const MAX_ENDPOINTS: usize = 256;
 
@@ -15,13 +19,13 @@ pub const MAX_ENDPOINTS: usize = 256;
 static ENDPOINT_TABLE: Mutex<EndpointTable> = Mutex::new(EndpointTable::new());
 
 // Next available port ID
-static NEXT_PORT: Mutex<PortId> = Mutex::new(PortId::min());
+static NEXT_PORT: Mutex<PortId> = Mutex::new(PortId::MIN);
 
 pub type PortId = u32;
 pub type Pid = u32;
 
 /// Endpoint table entry
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct EndpointEntry {
     pub owner_pid: Pid,
     pub port: PortId,

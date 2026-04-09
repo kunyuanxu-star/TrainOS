@@ -176,3 +176,43 @@ cargo run --release -p os
 **Status**: Timer cannot be enabled via sie.STIE due to sie write hang.
 
 **Current workaround**: Direct CLINT MMIO access for timer, but interrupts still not enabled because sie.STIE cannot be set.
+
+## Microkernel Architecture
+
+TrainOS implements a **microkernel design** where the kernel only provides minimal core services:
+
+### Kernel Services (in kernel space)
+- **Scheduling**: MLFQ scheduler manages task execution and preemption
+- **Memory Management**: Sv39 page table, COW semantics, page fault handling
+- **IPC (Inter-Process Communication)**: Message passing between processes via mailbox
+- **Trap Handling**: Exception and interrupt dispatch, syscalls
+
+### User-Space Services (run as normal processes)
+- **Drivers**: Device drivers (display, keyboard, network, etc.)
+- **Filesystem**: VFS with pluggable backends (RAM fs, eventually ext2, network fs)
+- **Init Service**: First user process (PID 1), responsible for system initialization
+- **Shell**: Command-line interface
+- **Applications**: User applications
+
+### IPC System Calls (1000-1004)
+| Syscall | Name | Description |
+|---------|------|-------------|
+| 1000 | ipc_register | Register a port for IPC |
+| 1001 | ipc_connect | Connect to a named port |
+| 1002 | ipc_send | Send a message to a port |
+| 1003 | ipc_recv | Receive a message (blocking) |
+| 1004 | ipc_call | Send and wait for response |
+
+### Process Structure
+Each process has:
+- **TaskControlBlock**: Kernel state (registers, stack pointers, page table)
+- **Mailbox**: Queue of pending IPC messages
+- **PID**: Process identifier (PID 0 = idle, PID 1 = init)
+- **Status**: Ready, Running, Blocked, Exited
+
+### IPC Flow
+1. Process A calls `ipc_send(dest_port, message)` via syscall
+2. Kernel delivers message to Process B's mailbox
+3. If Process B is blocked on `ipc_recv()`, it becomes Ready
+4. Scheduler picks Process B to run
+5. Process B calls `ipc_recv()` to retrieve message from mailbox

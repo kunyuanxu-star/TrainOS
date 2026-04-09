@@ -220,6 +220,12 @@ pub fn init() {
     manager.init_idle_task();
     drop(manager);
 
+    // Create init process (PID 1)
+    let init_task = TaskControlBlock::new(1);
+    if !register_process(1, init_task) {
+        crate::println!("[process] Failed to register init process");
+    }
+
     // Get idle task and set as current
     let manager = TASK_MANAGER.lock();
     if let Some(idle_task) = manager.get_task(0) {

@@ -9,6 +9,7 @@ pub mod net;
 pub mod fd;
 pub mod newlib;
 pub mod ipc;
+pub mod device;
 
 use core::ops::Add;
 use spin::Mutex;
@@ -196,6 +197,11 @@ pub mod nr {
     pub const SEND: usize = 1002;
     pub const RECV: usize = 1003;
     pub const CALL: usize = 1004;
+
+    // Device access (custom TrainOS - for driver services)
+    pub const DEVICE_READ: usize = 1100;
+    pub const DEVICE_WRITE: usize = 1101;
+    pub const DEVICE_INTERRUPT_ENABLE: usize = 1102;
 }
 
 /// Current process ID
@@ -413,6 +419,11 @@ pub extern "C" fn do_syscall(trap_frame: *mut crate::process::context::TrapFrame
         1002 => ipc::sys_send(get_arg0(), get_arg1(), get_arg2(), get_arg3()), // send
         1003 => ipc::sys_recv(get_arg0(), get_arg1(), get_arg2()),              // recv
         1004 => ipc::sys_call(get_arg0(), get_arg1(), get_arg2(), get_arg3(), get_arg4(), get_arg5()), // call
+
+        // Device access syscalls (for driver services)
+        1100 => device::sys_device_read(get_arg0(), get_arg1(), get_arg2()),
+        1101 => device::sys_device_write(get_arg0(), get_arg1(), get_arg2(), get_arg3()),
+        1102 => device::sys_device_interrupt_enable(get_arg0(), get_arg1()),
 
         _ => {
             crate::println!("[syscall] Unknown syscall: unknown");

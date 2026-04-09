@@ -221,6 +221,9 @@ extern "C" fn rust_main() -> ! {
     // Initialize file system
     crate::fs::init();
 
+    // Initialize device table for driver services
+    crate::syscall::device::init_devices();
+
     // Output "Boot 6" directly
     unsafe {
         let s = "Boot 6\r\n";

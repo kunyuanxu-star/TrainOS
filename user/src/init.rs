@@ -59,6 +59,13 @@ fn syscall(n: usize, a0: usize, a1: usize, a2: usize, a3: usize, a4: usize, a5: 
     ret
 }
 
+#[panic_handler]
+fn panic(_info: &core::panic::PanicInfo) -> ! {
+    loop {
+        unsafe { core::arch::asm!("wfi"); }
+    }
+}
+
 #[no_mangle]
 pub extern "C" fn _start() {
     print("init: Starting TrainOS services\n");
@@ -101,7 +108,39 @@ pub extern "C" fn _start() {
         syscall(SYS_SCHED_YIELD, 0, 0, 0, 0, 0, 0);
     }
 
-    // Step 3: Spawn shell
+    // Step 3: Spawn network service
+    print("init: Spawning network...\n");
+    let net_pid = syscall(SYS_SPAWN, 3, 0, 0, 0, 0, 0);
+    if net_pid < 0 {
+        print("init: Failed to spawn network\n");
+    } else {
+        print("init: Network spawned with pid ");
+        print_hex(net_pid as usize);
+        print("\n");
+    }
+
+    // Wait for network to initialize
+    for _ in 0..100 {
+        syscall(SYS_SCHED_YIELD, 0, 0, 0, 0, 0, 0);
+    }
+
+    // Step 4: Spawn VFS service
+    print("init: Spawning vfs...\n");
+    let vfs_pid = syscall(SYS_SPAWN, 4, 0, 0, 0, 0, 0);
+    if vfs_pid < 0 {
+        print("init: Failed to spawn vfs\n");
+    } else {
+        print("init: VFS spawned with pid ");
+        print_hex(vfs_pid as usize);
+        print("\n");
+    }
+
+    // Wait for vfs to initialize
+    for _ in 0..100 {
+        syscall(SYS_SCHED_YIELD, 0, 0, 0, 0, 0, 0);
+    }
+
+    // Step 5: Spawn shell
     print("init: Spawning shell...\n");
     let shell_pid = syscall(SYS_SPAWN, 2, 0, 0, 0, 0, 0);
     if shell_pid < 0 {

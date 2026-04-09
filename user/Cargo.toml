@@ -31,5 +31,9 @@ path = "src/network.rs"
 name = "vfs"
 path = "src/vfs_service.rs"
 
+[[bin]]
+name = "init"
+path = "src/init.rs"
+
 [dependencies]
 spin = "0.9"

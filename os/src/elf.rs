@@ -45,6 +45,9 @@ pub static SHELL_ELF: &[u8] = include_bytes!("../bin/shell.bin");
 pub static NETWORK_ELF: &[u8] = include_bytes!("../bin/network.bin");
 pub static VFS_ELF: &[u8] = include_bytes!("../bin/vfs.bin");
 
+/// Initial process ELF (loaded at boot as PID 1)
+pub static INIT_ELF: &[u8] = include_bytes!("../bin/init.bin");
+
 /// ELF result
 pub enum ElfResult {
     Success,

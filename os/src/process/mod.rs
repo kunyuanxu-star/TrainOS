@@ -485,7 +485,7 @@ fn start_scheduler() {
     crate::print!("[sched] Attempting to load user program...\r\n");
 
     // Embedded ELF binary
-    static USER_ELF: &[u8] = include_bytes!("../../../os/bin/hello.bin");
+    static USER_ELF: &[u8] = include_bytes!("../../../os/bin/init.bin");
 
     crate::print!("[sched] ELF size: ");
     crate::console::print_dec(USER_ELF.len());

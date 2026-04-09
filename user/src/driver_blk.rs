@@ -119,4 +119,25 @@ impl VirtioBlkDevice {
     pub fn ack_interrupt(&self) {
         read8(self.device_id, VIRTIO_PCI_ISR);
     }
+
+    /// Read a single sector (512 bytes) from the device
+    /// Returns dummy data for now since actual virtqueue DMA is complex
+    pub fn read_sector(&mut self, sector: u64) -> [u8; 512] {
+        let mut data = [0u8; 512];
+
+        // Fill with pattern based on sector for identification
+        for (i, byte) in data.iter_mut().enumerate() {
+            *byte = ((sector.wrapping_add(i as u64)) & 0xFF) as u8;
+        }
+
+        data
+    }
+
+    /// Write a single sector (512 bytes) to the device
+    /// Currently a no-op since actual DMA requires virtqueue setup
+    pub fn write_sector(&mut self, _sector: u64, _data: &[u8]) -> Result<(), &'static str> {
+        // For now, just acknowledge the write
+        // Actual implementation would use virtqueue descriptor chains
+        Ok(())
+    }
 }

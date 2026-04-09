@@ -162,9 +162,12 @@ pub extern "C" fn _start() {
                 print_hex(sector as usize);
                 print("\n");
 
-                // TODO: Perform actual VirtIO block read
+                // Perform VirtIO block read
+                let data = blk.read_sector(sector);
+
                 // Response: status (4 bytes) + data (512 bytes)
                 unsafe { *(resp_buf.as_mut_ptr() as *mut i32) = 0; } // status = OK
+                resp_buf[4..516].copy_from_slice(&data);
 
                 // Send response
                 if reply_port > 0 {
@@ -173,11 +176,27 @@ pub extern "C" fn _start() {
                 }
             } else if op == 1 {
                 // Block write request
-                print("driver: Block write\n");
+                let sector: u64 = unsafe { *(req_buf.as_ptr().add(payload + 4) as *const u64) };
+                let data_start = payload + 12;
+                let data_len = if size > data_start { size - data_start } else { 0 };
+                let data = &req_buf[data_start..data_start.min(data_len).min(512)];
 
-                // TODO: Perform actual VirtIO block write
-                // Response: status (4 bytes)
-                unsafe { *(resp_buf.as_mut_ptr() as *mut i32) = 0; } // status = OK
+                print("driver: Block write sector ");
+                print_hex(sector as usize);
+                print("\n");
+
+                // Perform VirtIO block write
+                match blk.write_sector(sector, data) {
+                    Ok(_) => {
+                        unsafe { *(resp_buf.as_mut_ptr() as *mut i32) = 0; } // status = OK
+                    }
+                    Err(e) => {
+                        print("driver: Write error: ");
+                        print(e);
+                        print("\n");
+                        unsafe { *(resp_buf.as_mut_ptr() as *mut i32) = 1; } // status = ERR
+                    }
+                }
 
                 if reply_port > 0 {
                     syscall(SYS_SEND, from as usize, reply_port as usize,

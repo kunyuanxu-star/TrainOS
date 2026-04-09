@@ -5,9 +5,20 @@ TrainOS is an educational operating system written in Rust for RISC-V 64-bit arc
 
 **Goal**: Surpass Linux in kernel architecture, security, performance, and developer experience.
 
-## Current Status (2026-04-03)
+## Current Status (2026-04-09)
 
-### Phase 1: Make It Runnable (In Progress)
+### Phase 1: Make It Runnable (Complete)
+
+Phase 1 is complete. TrainOS boots successfully and runs user programs.
+
+### Phase 2: Driver Service (Complete)
+
+VirtIO drivers have been moved to user space:
+- `user/src/driver/` - driver service module
+- `syscall/device.rs` - MMIO access syscalls (1100-1102)
+- Driver service initializes VirtIO block and net devices
+
+The driver service runs as a user-space process and accesses devices via syscalls. In Phase 3, init will spawn the driver service.
 
 **Completed**:
 - Boot sequence runs successfully through all stages

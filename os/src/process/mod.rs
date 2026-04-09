@@ -642,6 +642,18 @@ fn allocate_kernel_trap_frame() -> *mut crate::process::context::TrapFrame {
     (page as *mut crate::process::context::TrapFrame)
 }
 
+/// Spawn the driver service (called from init in Phase 3)
+/// For Phase 2, this is a stub that returns None
+pub fn spawn_driver_service() -> Option<TaskId> {
+    // In Phase 3:
+    // 1. Load driver binary
+    // 2. Create process with PMP configured for VirtIO-MMIO access
+    // 3. Return the new task's TaskId
+
+    crate::println!("[process] spawn_driver_service: stub - will be implemented in Phase 3");
+    None
+}
+
 /// Idle loop when nothing else to do
 fn loop_idle() {
     crate::print!("[sched] Entering idle loop\r\n");

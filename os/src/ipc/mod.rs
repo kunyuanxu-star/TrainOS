@@ -5,6 +5,7 @@
 pub mod channel;
 pub mod endpoint;
 pub mod message;
+pub mod cap;
 
 use spin::Mutex;
 

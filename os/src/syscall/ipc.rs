@@ -1,6 +1,6 @@
 //! IPC system call handlers
 
-use crate::ipc::{endpoint, channel, message::MAX_MESSAGE_SIZE, Pid, PortId};
+use crate::ipc::{endpoint, channel, message::MAX_MESSAGE_SIZE, Pid, PortId, cap::{Cap, CapRights}};
 use crate::process::get_current_pid;
 
 /// Syscall numbers for IPC (custom TrainOS numbers)
@@ -9,6 +9,11 @@ pub const ENDPOINT_DELETE: usize = 1001;
 pub const SEND: usize = 1002;
 pub const RECV: usize = 1003;
 pub const CALL: usize = 1004;
+
+/// Syscall numbers for capabilities
+pub const CAP_GRANT: usize = 1010;
+pub const CAP_REVOKE: usize = 1011;
+pub const CAP_CHECK: usize = 1012;
 
 /// sys_endpoint_create - Create a new endpoint
 /// Returns port_id on success, -1 on error
@@ -84,4 +89,40 @@ pub fn sys_call(target_pid: usize, port: usize, data_ptr: usize, size: usize,
     let _ = sys_endpoint_delete(reply_port as usize);
 
     recv_result
+}
+
+/// sys_cap_grant - Grant a capability to another process
+/// a0 = target_pid, a1 = port, a2 = rights
+pub fn sys_cap_grant(target_pid: usize, port: PortId, rights: u32) -> isize {
+    let cap = Cap::new(port, CapRights(rights));
+    let pid = get_current_pid();
+
+    // Add to target process's capability table
+    if crate::process::add_capability(target_pid as Pid, cap) {
+        0
+    } else {
+        -1
+    }
+}
+
+/// sys_cap_revoke - Revoke a capability by ID
+/// a0 = cap_id
+pub fn sys_cap_revoke(cap_id: u64) -> isize {
+    let pid = get_current_pid();
+    if crate::process::revoke_capability(pid, cap_id) {
+        0
+    } else {
+        -1
+    }
+}
+
+/// sys_cap_check - Check if current process has rights to use a port
+/// a0 = port, a1 = required rights
+pub fn sys_cap_check(port: PortId, required_rights: u32) -> isize {
+    let pid = get_current_pid();
+    if crate::process::check_capability(pid, port, CapRights(required_rights)) {
+        0
+    } else {
+        -1
+    }
 }

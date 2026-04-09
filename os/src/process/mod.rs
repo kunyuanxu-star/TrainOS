@@ -10,7 +10,7 @@ pub mod context;
 use spin::Mutex;
 use task::{TaskControlBlock, TaskId};
 use scheduler::Scheduler;
-use crate::ipc::{Pid, PortId, IpcMessage};
+use crate::ipc::{Pid, PortId, IpcMessage, cap::{Cap, CapRights}};
 
 /// Global task manager - const so can be used in static initialization
 static TASK_MANAGER: Mutex<TaskManager> = Mutex::new(TaskManager::new());
@@ -662,4 +662,113 @@ fn loop_idle() {
             core::arch::asm!("wfi");
         }
     }
+}
+
+// ============================================================================
+// Capability Management
+// ============================================================================
+
+/// Maximum number of capabilities in the system
+const MAX_CAPABILITIES: usize = 256;
+
+/// Global capability table
+static CAP_TABLE: Mutex<[Option<Cap>; MAX_CAPABILITIES]> = Mutex::new([None; MAX_CAPABILITIES]);
+
+/// Add a capability to a process
+/// Returns true on success, false on failure (table full or invalid PID)
+pub fn add_capability(pid: Pid, cap: Cap) -> bool {
+    let mut table = PROCESS_TABLE.lock();
+    if (pid as usize) >= MAX_PROCESSES {
+        return false;
+    }
+    let process = match &mut table[pid as usize] {
+        Some(p) => p,
+        None => return false,
+    };
+
+    // Find a free slot in the process's capability table
+    for i in 0..CAPABILITY_TABLE_SIZE {
+        if process.capability_table[i] == 0 {
+            // Find a free slot in global cap table
+            let mut cap_table = CAP_TABLE.lock();
+            for j in 0..MAX_CAPABILITIES {
+                if cap_table[j].is_none() {
+                    cap_table[j] = Some(cap);
+                    process.capability_table[i] = (j + 1) as u64; // Store 1-based index (0 = empty)
+                    return true;
+                }
+            }
+            return false; // Global cap table full
+        }
+    }
+    false // Process cap table full
+}
+
+/// Revoke a capability by ID
+/// Returns true on success, false on failure
+pub fn revoke_capability(pid: Pid, cap_id: u64) -> bool {
+    let table = PROCESS_TABLE.lock();
+    if (pid as usize) >= MAX_PROCESSES {
+        return false;
+    }
+    let process = match &table[pid as usize] {
+        Some(p) => p,
+        None => return false,
+    };
+
+    // Find the capability in this process's table
+    for i in 0..CAPABILITY_TABLE_SIZE {
+        let cap_idx = process.capability_table[i];
+        if cap_idx != 0 {
+            let global_idx = (cap_idx - 1) as usize;
+            if global_idx < MAX_CAPABILITIES {
+                let mut cap_table = CAP_TABLE.lock();
+                if let Some(ref cap) = cap_table[global_idx] {
+                    if cap.id == cap_id {
+                        // Remove the capability
+                        cap_table[global_idx] = None;
+                        // Clear the process's reference
+                        drop(cap_table);
+                        drop(table);
+                        let mut table = PROCESS_TABLE.lock();
+                        if let Some(ref mut p) = table[pid as usize] {
+                            p.capability_table[i] = 0;
+                        }
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    false
+}
+
+/// Check if a process has a capability with required rights for a port
+/// Returns true if the capability exists and has the required rights
+pub fn check_capability(pid: Pid, port: PortId, required_rights: CapRights) -> bool {
+    let table = PROCESS_TABLE.lock();
+    if (pid as usize) >= MAX_PROCESSES {
+        return false;
+    }
+    let process = match &table[pid as usize] {
+        Some(p) => p,
+        None => return false,
+    };
+
+    // Find the capability for this port
+    for i in 0..CAPABILITY_TABLE_SIZE {
+        let cap_idx = process.capability_table[i];
+        if cap_idx != 0 {
+            let global_idx = (cap_idx - 1) as usize;
+            if global_idx < MAX_CAPABILITIES {
+                let cap_table = CAP_TABLE.lock();
+                if let Some(ref cap) = cap_table[global_idx] {
+                    if cap.port == port && cap.rights.contains(required_rights) {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    false
 }

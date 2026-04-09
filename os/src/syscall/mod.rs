@@ -198,6 +198,11 @@ pub mod nr {
     pub const RECV: usize = 1003;
     pub const CALL: usize = 1004;
 
+    // Capability syscalls (custom TrainOS numbers)
+    pub const CAP_GRANT: usize = 1010;
+    pub const CAP_REVOKE: usize = 1011;
+    pub const CAP_CHECK: usize = 1012;
+
     // Device access (custom TrainOS - for driver services)
     pub const DEVICE_READ: usize = 1100;
     pub const DEVICE_WRITE: usize = 1101;
@@ -422,6 +427,11 @@ pub extern "C" fn do_syscall(trap_frame: *mut crate::process::context::TrapFrame
         1002 => ipc::sys_send(get_arg0(), get_arg1(), get_arg2(), get_arg3()), // send
         1003 => ipc::sys_recv(get_arg0(), get_arg1(), get_arg2()),              // recv
         1004 => ipc::sys_call(get_arg0(), get_arg1(), get_arg2(), get_arg3(), get_arg4(), get_arg5()), // call
+
+        // Capability syscalls (custom TrainOS numbers)
+        1010 => ipc::sys_cap_grant(get_arg0(), get_arg1() as u32, get_arg2() as u32), // cap_grant
+        1011 => ipc::sys_cap_revoke(get_arg0() as u64),  // cap_revoke
+        1012 => ipc::sys_cap_check(get_arg0() as u32, get_arg1() as u32),              // cap_check
 
         // Device access syscalls (for driver services)
         1100 => device::sys_device_read(get_arg0(), get_arg1(), get_arg2()),

@@ -6,7 +6,14 @@
 #![no_std]
 #![no_main]
 
-mod driver;
+mod driver_blk;
+mod driver_net;
+mod driver_mmio;
+
+use driver_blk::VirtioBlkDevice;
+use driver_mmio::DEVICE_VIRTIO_BLK;
+use driver_net::VirtioNetDevice;
+use driver_mmio::DEVICE_VIRTIO_NET;
 
 // Syscall numbers
 const SYS_WRITE: usize = 64;
@@ -14,6 +21,13 @@ const SYS_EXIT: usize = 93;
 const SYS_ENDPOINT_CREATE: usize = 1000;
 const SYS_SEND: usize = 1002;
 const SYS_RECV: usize = 1003;
+
+#[panic_handler]
+fn panic(_info: &core::panic::PanicInfo) -> ! {
+    loop {
+        unsafe { core::arch::asm!("wfi"); }
+    }
+}
 
 /// Write character to console
 fn putchar(c: u8) {
@@ -49,14 +63,14 @@ pub extern "C" fn _start() {
     print("driver: VirtIO driver service starting\n");
 
     // Initialize VirtIO block device
-    let mut blk = driver::virtio_blk::VirtioBlkDevice::new(driver::mmio::DEVICE_VIRTIO_BLK);
+    let mut blk = VirtioBlkDevice::new(DEVICE_VIRTIO_BLK);
 
     match blk.init() {
         Ok(_) => {
             print("driver: VirtIO block device initialized\n");
             let cap = blk.capacity();
             print("driver: Block device capacity: 0x");
-            print_hex(cap);
+            print_hex(cap as usize);
             print("\n");
         }
         Err(e) => {
@@ -67,7 +81,7 @@ pub extern "C" fn _start() {
     }
 
     // Initialize VirtIO net device
-    let mut net = driver::virtio_net::VirtioNetDevice::new(driver::mmio::DEVICE_VIRTIO_NET);
+    let mut net = VirtioNetDevice::new(DEVICE_VIRTIO_NET);
     match net.init() {
         Ok(_) => print("driver: VirtIO net device initialized\n"),
         Err(e) => {

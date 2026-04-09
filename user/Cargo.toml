@@ -19,4 +19,8 @@ path = "src/vi.rs"
 name = "test_minimal"
 path = "src/test_minimal.rs"
 
+[[bin]]
+name = "driver"
+path = "src/driver.rs"
+
 [dependencies]

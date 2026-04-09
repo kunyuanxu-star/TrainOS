@@ -8,6 +8,7 @@ pub mod fs;
 pub mod net;
 pub mod fd;
 pub mod newlib;
+pub mod ipc;
 
 use core::ops::Add;
 use spin::Mutex;
@@ -188,6 +189,13 @@ pub mod nr {
 
     // Misc
     pub const GETCPU: usize = 168;
+
+    // IPC (custom TrainOS numbers)
+    pub const ENDPOINT_CREATE: usize = 1000;
+    pub const ENDPOINT_DELETE: usize = 1001;
+    pub const SEND: usize = 1002;
+    pub const RECV: usize = 1003;
+    pub const CALL: usize = 1004;
 }
 
 /// Current process ID
@@ -398,6 +406,13 @@ pub extern "C" fn do_syscall(trap_frame: *mut crate::process::context::TrapFrame
         20 => sys_epoll_create(get_arg0()), // epoll_create
         227 => sys_epoll_ctl(get_arg0(), get_arg1(), get_arg2(), get_arg3()), // epoll_ctl
         229 => sys_epoll_wait(get_arg0(), get_arg1(), get_arg2(), get_arg3()), // epoll_wait
+
+        // IPC syscalls (custom TrainOS numbers)
+        1000 => ipc::sys_endpoint_create(),           // endpoint_create
+        1001 => ipc::sys_endpoint_delete(get_arg0()),  // endpoint_delete
+        1002 => ipc::sys_send(get_arg0(), get_arg1(), get_arg2(), get_arg3()), // send
+        1003 => ipc::sys_recv(get_arg0(), get_arg1(), get_arg2()),              // recv
+        1004 => ipc::sys_call(get_arg0(), get_arg1(), get_arg2(), get_arg3(), get_arg4(), get_arg5()), // call
 
         _ => {
             crate::println!("[syscall] Unknown syscall: unknown");

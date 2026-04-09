@@ -2,6 +2,7 @@
 //!
 //! Provides multi-core infrastructure for TrainOS
 
+pub mod boot;
 pub mod cpu;
 pub mod ipi;
 pub mod hart;
@@ -26,6 +27,9 @@ pub fn init() {
         );
     }
 
+    // Initialize boot data structures
+    boot::init_boot();
+
     // Detect number of HARTs from DT
     detect_harts();
 
@@ -34,6 +38,9 @@ pub fn init() {
 
     // Set up IPI (Inter-Processor Interrupt) handling
     ipi::init();
+
+    // Start other HARTs (secondary cores)
+    boot::start_other_harts();
 
     // Output 'E' for end
     unsafe {

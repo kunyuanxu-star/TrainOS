@@ -70,9 +70,9 @@ pub fn get_per_cpu(cpu: usize) -> Option<&'static Mutex<PerCpu>> {
 
 /// Get current CPU's per-CPU data
 pub fn get_current_cpu() -> &'static Mutex<PerCpu> {
-    // For now, just return CPU 0
-    // In a real implementation, we would read the tp (thread pointer) register
-    &PER_CPU_MUTEX[0]
+    // Read HART ID from tp register
+    let hart_id = get_hart_id();
+    &PER_CPU_MUTEX[hart_id.min(MAX_CPUS - 1)]
 }
 
 /// Increment interrupt count for current CPU
@@ -80,6 +80,28 @@ pub fn increment_irq_count() {
     let per_cpu = get_current_cpu();
     let mut data = per_cpu.lock();
     data.irq_count += 1;
+}
+
+/// Per-CPU initialization for SMP
+/// Called when a secondary HART starts up
+pub fn smp_percpu_init() {
+    // Get HART ID from tp register
+    let hart_id = get_hart_id();
+
+    // Set this HART's per-CPU data
+    // In a full implementation, we would configure per-CPU timers, local interrupts, etc.
+    crate::print!("[cpu] Per-CPU init for HART ");
+    crate::console::print_dec(hart_id);
+    crate::println!("");
+}
+
+/// Get current HART ID from tp register
+pub fn get_hart_id() -> usize {
+    let hart_id: usize;
+    unsafe {
+        core::arch::asm!("mv {0}, tp", out(reg) hart_id);
+    }
+    hart_id
 }
 
 /// Get current task ID on this CPU

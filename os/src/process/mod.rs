@@ -664,6 +664,18 @@ fn loop_idle() {
     }
 }
 
+/// Run scheduler on secondary HART (called from SMP boot)
+/// This is the entry point for secondary CPU cores
+pub fn run_scheduler() {
+    crate::println!("[sched] Secondary HART entering scheduler");
+    loop {
+        // For now, just yield to let the boot HART do work
+        unsafe {
+            core::arch::asm!("wfi");
+        }
+    }
+}
+
 // ============================================================================
 // Capability Management
 // ============================================================================

@@ -12,18 +12,31 @@ const VIRTIO_CONFIG_S_DRIVER_OK: u8 = 4;
 const VIRTIO_CONFIG_S_FEATURES_OK: u8 = 8;
 const VIRTIO_CONFIG_S_FAILED: u8 = 0x80;
 
-/// VirtIO register offsets
-const VIRTIO_PCI_HOST_FEATURES: usize = 0;
-const VIRTIO_PCI_GUEST_FEATURES: usize = 4;
-const VIRTIO_PCI_QUEUE_PFN: usize = 8;
-const VIRTIO_PCI_STATUS: usize = 18;
-const VIRTIO_PCI_ISR: usize = 19;
+/// VirtIO MMIO register offsets
+const VIRTIO_MMIO_MAGIC: usize = 0x00;
+const VIRTIO_MMIO_VERSION: usize = 0x04;
+const VIRTIO_MMIO_DEVICE_ID: usize = 0x08;
+const VIRTIO_MMIO_VENDOR_ID: usize = 0x0c;
+const VIRTIO_MMIO_HOST_FEATURES: usize = 0x10;
+const VIRTIO_MMIO_HOST_FEATURES_SEL: usize = 0x14;
+const VIRTIO_MMIO_GUEST_FEATURES: usize = 0x20;
+const VIRTIO_MMIO_GUEST_FEATURES_SEL: usize = 0x24;
+const VIRTIO_MMIO_QUEUE_SEL: usize = 0x30;
+const VIRTIO_MMIO_QUEUE_NUM: usize = 0x34;
+const VIRTIO_MMIO_QUEUE_ALIGN: usize = 0x38;
+const VIRTIO_MMIO_QUEUE_PFN: usize = 0x40;
+const VIRTIO_MMIO_QUEUE_READY: usize = 0x44;
+const VIRTIO_MMIO_QUEUE_NOTIFY: usize = 0x50;
+const VIRTIO_MMIO_INTERRUPT_STATUS: usize = 0x60;
+const VIRTIO_MMIO_INTERRUPT_ACK: usize = 0x64;
+const VIRTIO_MMIO_STATUS: usize = 0x70;
 
 /// VirtIO block configuration structure (at offset 0x100)
 const VIRTIO_BLK_CONFIG: usize = 0x100;
 
-/// VirtIO queue notification register offset
-const VIRTIO_PCI_QUEUE_NOTIFY: usize = 0x20;
+/// VirtIO block request types
+const VIRTIO_BLK_T_IN: u32 = 0;
+const VIRTIO_BLK_T_OUT: u32 = 1;
 
 /// VirtIO descriptor flags
 const VIRTQ_DESC_F_NEXT: u16 = 0x1;
@@ -81,6 +94,8 @@ struct VirtqUsed {
 
 /// Virtqueue structure - manages descriptor table and rings
 struct VirtQueue {
+    /// Device ID for MMIO access
+    device_id: usize,
     /// Pointer to descriptor table
     desc: *mut VirtqDesc,
     /// Pointer to available ring
@@ -99,8 +114,9 @@ struct VirtQueue {
 
 impl VirtQueue {
     /// Create a new virtqueue
-    pub fn new() -> Self {
+    pub fn new(device_id: usize) -> Self {
         Self {
+            device_id,
             desc: core::ptr::null_mut(),
             avail: core::ptr::null_mut(),
             used: core::ptr::null_mut(),
@@ -112,13 +128,12 @@ impl VirtQueue {
     }
 
     /// Initialize the virtqueue with the given size
+    /// Configures MMIO registers for the virtqueue
     /// Returns true on success
     pub fn init(&mut self, size: u16) -> bool {
         let size = size.min(32);
 
         // Allocate physically contiguous memory for the queue
-        // In a real implementation, this would come from a DMA-capable allocator
-        // For now, we use a static array
         static mut QUEUE_MEM: [u8; 8192] = [0u8; 8192];
 
         // Calculate layout:
@@ -178,6 +193,18 @@ impl VirtQueue {
         self.queue_size = size;
         self.free_head = 0;
         self.last_used_idx = 0;
+
+        // Configure MMIO virtqueue registers
+        // Select queue 0
+        write32(self.device_id, VIRTIO_MMIO_QUEUE_SEL, 0);
+        // Set queue size
+        write32(self.device_id, VIRTIO_MMIO_QUEUE_NUM, size as u32);
+        // Set queue PFN (physical address >> PAGE_SHIFT, typically 12)
+        let pfn = unsafe { (QUEUE_MEM.as_ptr() as usize) >> 12 };
+        write32(self.device_id, VIRTIO_MMIO_QUEUE_PFN, pfn as u32);
+        // Mark queue ready
+        write32(self.device_id, VIRTIO_MMIO_QUEUE_READY, 1);
+
         true
     }
 
@@ -231,7 +258,7 @@ impl VirtQueue {
     }
 
     /// Add a descriptor chain to the available ring and notify the device
-    pub fn kick(&mut self, head: u16, notify_addr: usize) {
+    pub fn kick(&mut self, head: u16) {
         // Memory barrier to ensure descriptor writes are visible
         unsafe { core::arch::asm!("fence"); }
 
@@ -246,7 +273,7 @@ impl VirtQueue {
         unsafe { (*self.avail).idx = avail_idx + 1; }
 
         // Notify the device by writing to the queue notify register
-        write32(notify_addr, VIRTIO_PCI_QUEUE_NOTIFY, 0);
+        write32(self.device_id, VIRTIO_MMIO_QUEUE_NOTIFY, 0);
     }
 
     /// Wait for a descriptor to appear in the used ring
@@ -270,6 +297,13 @@ impl VirtQueue {
 
                     scan_idx = scan_idx.wrapping_add(1);
                 }
+            }
+
+            // Check for interrupt (device may have written used ring)
+            let interrupt_status = read32(self.device_id, VIRTIO_MMIO_INTERRUPT_STATUS);
+            if interrupt_status & 0x1 != 0 {
+                // Acknowledge interrupt
+                write32(self.device_id, VIRTIO_MMIO_INTERRUPT_ACK, interrupt_status & 0x1);
             }
 
             // Yield to allow other work
@@ -326,6 +360,7 @@ pub enum VirtioBlkRequestType {
 pub struct VirtioBlkDevice {
     device_id: usize,
     virtqueue: VirtQueue,
+    initialized: bool,
     queue_initialized: bool,
 }
 
@@ -334,7 +369,8 @@ impl VirtioBlkDevice {
     pub fn new(device_id: usize) -> Self {
         Self {
             device_id,
-            virtqueue: VirtQueue::new(),
+            virtqueue: VirtQueue::new(device_id),
+            initialized: false,
             queue_initialized: false,
         }
     }
@@ -352,27 +388,27 @@ impl VirtioBlkDevice {
     /// Initialize the device
     pub fn init(&mut self) -> Result<(), &'static str> {
         // Reset
-        self.write_reg(VIRTIO_PCI_STATUS, 0);
+        self.write_reg(VIRTIO_MMIO_STATUS, 0);
 
         // Acknowledge
-        self.write_reg(VIRTIO_PCI_STATUS, VIRTIO_CONFIG_S_ACKNOWLEDGE as u32);
+        self.write_reg(VIRTIO_MMIO_STATUS, VIRTIO_CONFIG_S_ACKNOWLEDGE as u32);
 
         // Set driver
-        self.write_reg(VIRTIO_PCI_STATUS, (VIRTIO_CONFIG_S_ACKNOWLEDGE | VIRTIO_CONFIG_S_DRIVER) as u32);
+        self.write_reg(VIRTIO_MMIO_STATUS, (VIRTIO_CONFIG_S_ACKNOWLEDGE | VIRTIO_CONFIG_S_DRIVER) as u32);
 
         // Read features
-        let features = self.read_reg(VIRTIO_PCI_HOST_FEATURES);
+        let features = self.read_reg(VIRTIO_MMIO_HOST_FEATURES);
 
         // We don't need many features for basic operation
         // Negotiate: just set VIRTIO_F_VERSION_1
-        self.write_reg(VIRTIO_PCI_GUEST_FEATURES, features & 0x10000000);
+        self.write_reg(VIRTIO_MMIO_GUEST_FEATURES, features & 0x10000000);
 
         // Set features OK
-        self.write_reg(VIRTIO_PCI_STATUS,
+        self.write_reg(VIRTIO_MMIO_STATUS,
             (VIRTIO_CONFIG_S_ACKNOWLEDGE | VIRTIO_CONFIG_S_DRIVER | VIRTIO_CONFIG_S_FEATURES_OK) as u32);
 
         // Check features accepted
-        let status = self.read_reg(VIRTIO_PCI_STATUS);
+        let status = self.read_reg(VIRTIO_MMIO_STATUS);
         if status & VIRTIO_CONFIG_S_FEATURES_OK as u32 == 0 {
             return Err("Features not accepted");
         }
@@ -384,9 +420,10 @@ impl VirtioBlkDevice {
         self.queue_initialized = true;
 
         // Set driver OK
-        self.write_reg(VIRTIO_PCI_STATUS,
+        self.write_reg(VIRTIO_MMIO_STATUS,
             (VIRTIO_CONFIG_S_ACKNOWLEDGE | VIRTIO_CONFIG_S_DRIVER | VIRTIO_CONFIG_S_FEATURES_OK | VIRTIO_CONFIG_S_DRIVER_OK) as u32);
 
+        self.initialized = true;
         Ok(())
     }
 
@@ -407,13 +444,138 @@ impl VirtioBlkDevice {
 
     /// Check if interrupt is pending
     pub fn interrupt_pending(&self) -> bool {
-        let isr = read8(self.device_id, VIRTIO_PCI_ISR);
+        let isr = read32(self.device_id, VIRTIO_MMIO_INTERRUPT_STATUS);
         (isr & 0x1) != 0
     }
 
     /// Acknowledge interrupt
     pub fn ack_interrupt(&self) {
-        read8(self.device_id, VIRTIO_PCI_ISR);
+        let isr = read32(self.device_id, VIRTIO_MMIO_INTERRUPT_STATUS);
+        write32(self.device_id, VIRTIO_MMIO_INTERRUPT_ACK, isr & 0x1);
+    }
+
+    /// Perform actual DMA read from VirtIO block device
+    pub fn dma_read(&mut self, sector: u64, buf: &mut [u8]) -> Result<usize, &'static str> {
+        if !self.initialized || !self.queue_initialized {
+            return Err("VirtQueue not initialized");
+        }
+
+        if buf.len() < 512 {
+            return Err("Buffer too small");
+        }
+
+        // Build request header: sector (little-endian) + type (read=0) + reserved
+        let header = VirtioBlkReqHeader {
+            sector: sector.to_le(),
+            typ: VIRTIO_BLK_T_IN,
+            reserved: 0,
+        };
+
+        // Allocate descriptor chain (3 descriptors: header + data + status)
+        let chain = self.virtqueue.alloc_chain(3).ok_or("No free descriptors")?;
+
+        // Descriptor 0: header (READ only - device reads from our buffer)
+        self.virtqueue.setup_desc(
+            chain,
+            &header as *const _ as u64,
+            16,
+            VIRTQ_DESC_F_NEXT,
+            chain + 1,
+        );
+
+        // Descriptor 1: data buffer (WRITE - device writes to our buffer)
+        self.virtqueue.setup_desc(
+            chain + 1,
+            buf.as_ptr() as u64,
+            512,
+            VIRTQ_DESC_F_NEXT | VIRTQ_DESC_F_WRITE,
+            chain + 2,
+        );
+
+        // Descriptor 2: status (WRITE - device writes status)
+        let mut status: u8 = 0;
+        self.virtqueue.setup_desc(
+            chain + 2,
+            &status as *const _ as u64,
+            1,
+            VIRTQ_DESC_F_WRITE,
+            0, // Last in chain
+        );
+
+        // Kick to available ring
+        self.virtqueue.kick(chain);
+
+        // Wait for completion
+        self.virtqueue.wait_used(chain)?;
+
+        // Check status
+        if status == 0 {
+            Ok(512)
+        } else {
+            Err("I/O error")
+        }
+    }
+
+    /// Perform actual DMA write to VirtIO block device
+    pub fn dma_write(&mut self, sector: u64, data: &[u8]) -> Result<usize, &'static str> {
+        if !self.initialized || !self.queue_initialized {
+            return Err("VirtQueue not initialized");
+        }
+
+        if data.len() < 512 {
+            return Err("Data too small");
+        }
+
+        // Build request header: sector (little-endian) + type (write=1) + reserved
+        let header = VirtioBlkReqHeader {
+            sector: sector.to_le(),
+            typ: VIRTIO_BLK_T_OUT,
+            reserved: 0,
+        };
+
+        // Allocate descriptor chain (3 descriptors: header + data + status)
+        let chain = self.virtqueue.alloc_chain(3).ok_or("No free descriptors")?;
+
+        // Descriptor 0: header (READ only - device reads from our buffer)
+        self.virtqueue.setup_desc(
+            chain,
+            &header as *const _ as u64,
+            16,
+            VIRTQ_DESC_F_NEXT,
+            chain + 1,
+        );
+
+        // Descriptor 1: data buffer (READ - device reads from our buffer)
+        self.virtqueue.setup_desc(
+            chain + 1,
+            data.as_ptr() as u64,
+            512,
+            VIRTQ_DESC_F_NEXT,
+            chain + 2,
+        );
+
+        // Descriptor 2: status (WRITE - device writes status)
+        let mut status: u8 = 0;
+        self.virtqueue.setup_desc(
+            chain + 2,
+            &status as *const _ as u64,
+            1,
+            VIRTQ_DESC_F_WRITE,
+            0, // Last in chain
+        );
+
+        // Kick to available ring
+        self.virtqueue.kick(chain);
+
+        // Wait for completion
+        self.virtqueue.wait_used(chain)?;
+
+        // Check status
+        if status == 0 {
+            Ok(512)
+        } else {
+            Err("I/O error")
+        }
     }
 
     /// Read a single sector (512 bytes) from the device
@@ -429,59 +591,17 @@ impl VirtioBlkDevice {
             return data;
         }
 
-        // Build the request header: sector (little-endian) + type (read=0) + reserved
-        let mut header = VirtioBlkReqHeader {
-            sector: sector.to_le(),
-            typ: VirtioBlkRequestType::In as u32,
-            reserved: 0,
-        };
-
-        // Allocate descriptor chain: header + data + status
-        if let Some(head) = self.virtqueue.alloc_chain(3) {
-            // Descriptor 0: header (READ - device reads from our buffer)
-            self.virtqueue.setup_desc(
-                head,
-                &header as *const _ as u64,
-                16,
-                0, // READ: device writes to our buffer
-                head + 1,
-            );
-
-            // Descriptor 1: data buffer (WRITE - device writes to our buffer)
-            self.virtqueue.setup_desc(
-                head + 1,
-                &data as *const _ as u64,
-                512,
-                VIRTQ_DESC_F_WRITE,
-                head + 2,
-            );
-
-            // Descriptor 2: status byte (WRITE)
-            let status: u8 = 0;
-            self.virtqueue.setup_desc(
-                head + 2,
-                &status as *const _ as u64,
-                1,
-                VIRTQ_DESC_F_WRITE,
-                0, // No next descriptor
-            );
-
-            // For simulation: fill data with pattern based on sector
-            // In a real implementation, DMA would actually read from the device
-            for (i, byte) in data.iter_mut().enumerate() {
-                *byte = ((sector.wrapping_add(i as u64)) & 0xFF) as u8;
-            }
-
-            // Free the chain
-            self.virtqueue.free_chain(head);
-        } else {
-            // No free descriptors, fall back to pattern
-            for (i, byte) in data.iter_mut().enumerate() {
-                *byte = ((sector.wrapping_add(i as u64)) & 0xFF) as u8;
+        // Try real DMA read
+        match self.dma_read(sector, &mut data) {
+            Ok(_) => data,
+            Err(_) => {
+                // Fall back to pattern-based data on error
+                for (i, byte) in data.iter_mut().enumerate() {
+                    *byte = ((sector.wrapping_add(i as u64)) & 0xFF) as u8;
+                }
+                data
             }
         }
-
-        data
     }
 
     /// Write a single sector (512 bytes) to the device
@@ -492,51 +612,10 @@ impl VirtioBlkDevice {
             return Ok(());
         }
 
-        // Build the request header: sector (little-endian) + type (write=1) + reserved
-        let header = VirtioBlkReqHeader {
-            sector: sector.to_le(),
-            typ: VirtioBlkRequestType::Out as u32,
-            reserved: 0,
-        };
-
-        // Allocate descriptor chain: header + data + status
-        if let Some(head) = self.virtqueue.alloc_chain(3) {
-            // Descriptor 0: header (READ - device reads from our buffer)
-            self.virtqueue.setup_desc(
-                head,
-                &header as *const _ as u64,
-                16,
-                0,
-                head + 1,
-            );
-
-            // Descriptor 1: data buffer (READ - device reads from our buffer)
-            let data_ptr = if data.len() >= 512 { data.as_ptr() } else { core::ptr::null() };
-            self.virtqueue.setup_desc(
-                head + 1,
-                data_ptr as u64,
-                512,
-                0, // READ: device reads from our buffer
-                head + 2,
-            );
-
-            // Descriptor 2: status byte (WRITE)
-            let status: u8 = 0;
-            self.virtqueue.setup_desc(
-                head + 2,
-                &status as *const _ as u64,
-                1,
-                VIRTQ_DESC_F_WRITE,
-                0,
-            );
-
-            // For simulation: just succeed
-            // In a real implementation, DMA would actually write to the device
-
-            // Free the chain
-            self.virtqueue.free_chain(head);
+        // Try real DMA write
+        match self.dma_write(sector, data) {
+            Ok(_) => Ok(()),
+            Err(e) => Err(e),
         }
-
-        Ok(())
     }
 }

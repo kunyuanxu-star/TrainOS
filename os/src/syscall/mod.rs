@@ -202,6 +202,9 @@ pub mod nr {
     pub const DEVICE_READ: usize = 1100;
     pub const DEVICE_WRITE: usize = 1101;
     pub const DEVICE_INTERRUPT_ENABLE: usize = 1102;
+
+    // Service spawning (custom TrainOS - for microkernel)
+    pub const SPAWN: usize = 1105;
 }
 
 /// Current process ID
@@ -424,6 +427,9 @@ pub extern "C" fn do_syscall(trap_frame: *mut crate::process::context::TrapFrame
         1100 => device::sys_device_read(get_arg0(), get_arg1(), get_arg2()),
         1101 => device::sys_device_write(get_arg0(), get_arg1(), get_arg2(), get_arg3()),
         1102 => device::sys_device_interrupt_enable(get_arg0(), get_arg1()),
+
+        // Service spawning (custom TrainOS - for microkernel)
+        1105 => sys_spawn(get_arg0()),
 
         _ => {
             crate::println!("[syscall] Unknown syscall: unknown");
@@ -1178,6 +1184,27 @@ fn sys_capget(_hdr: usize, _data: usize) -> isize {
 }
 
 fn sys_capset(_hdr: usize, _data: usize) -> isize {
+    -1
+}
+
+// ============================================
+// Service Spawning (Microkernel)
+// ============================================
+
+/// Syscall to spawn a new service process
+/// For Phase 3/4, this is a stub
+pub const SYS_SPAWN: usize = 1105;
+
+pub fn sys_spawn(_flags: usize) -> isize {
+    // In Phase 4:
+    // 1. Load binary from file system
+    // 2. Create new process with TaskControlBlock
+    // 3. Set up PMP for device access if needed
+    // 4. Register with process table
+    // 5. Return new PID
+
+    // For now, return -1 (not implemented)
+    crate::println!("[syscall] sys_spawn called (stub)");
     -1
 }
 

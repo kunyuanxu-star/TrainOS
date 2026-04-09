@@ -61,6 +61,27 @@ fn print_hex(val: usize) {
     }
 }
 
+/// Make a syscall
+fn syscall(n: usize, a0: usize, a1: usize, a2: usize, a3: usize, a4: usize, a5: usize) -> isize {
+    let ret;
+    unsafe {
+        core::arch::asm!(
+            "mv a7, {syscall_num}",
+            "mv a0, {arg0}; mv a1, {arg1}; mv a2, {arg2}; mv a3, {arg3}; mv a4, {arg4}; mv a5, {arg5}",
+            "ecall",
+            lateout("a0") ret,
+            arg0 = in(reg) a0,
+            arg1 = in(reg) a1,
+            arg2 = in(reg) a2,
+            arg3 = in(reg) a3,
+            arg4 = in(reg) a4,
+            arg5 = in(reg) a5,
+            syscall_num = in(reg) n,
+        );
+    }
+    ret
+}
+
 /// Driver service main
 #[no_mangle]
 pub extern "C" fn _start() {

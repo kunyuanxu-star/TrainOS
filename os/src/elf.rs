@@ -37,6 +37,12 @@ pub const PF_X: u32 = 1;  // Executable
 pub const PF_W: u32 = 2;  // Writable
 pub const PF_R: u32 = 4;  // Readable
 
+/// Embedded service ELF binaries
+/// These are loaded by sys_spawn to launch service processes
+pub static DRIVER_ELF: &[u8] = include_bytes!("../bin/driver.bin");
+pub static FS_ELF: &[u8] = include_bytes!("../bin/fs.bin");
+pub static SHELL_ELF: &[u8] = include_bytes!("../bin/shell.bin");
+
 /// ELF result
 pub enum ElfResult {
     Success,

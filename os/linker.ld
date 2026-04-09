@@ -3,6 +3,10 @@ ENTRY(_start)
 
 BASE_ADDRESS = 0x80200000;
 
+/* Embedded binaries are large (driver.bin ~741KB, shell.bin ~801KB, fs.bin ~6KB)
+ * Total ~1.5MB, so we need more space for .rodata
+ * We also need to avoid overlap between sections
+ */
 SECTIONS
 {
     .text BASE_ADDRESS : {
@@ -11,14 +15,15 @@ SECTIONS
         *(.text.*)
     }
 
-    /* Place rodata right after text to keep within PC-relative range */
+    /* Place rodata right after text - expanded to 2MB to hold embedded binaries */
     .rodata (BASE_ADDRESS + 0x100000) : {
         *(.rodata)
         *(.rodata.*)
         *(.srodata)
     }
 
-    .data (BASE_ADDRESS + 0x200000) : {
+    /* .data starts after rodata - ensure no overlap with .rodata which can be ~2MB with binaries */
+    .data (BASE_ADDRESS + 0x300000) : {
         *(.data)
         *(.data.*)
         . = ALIGN(4096);
@@ -34,15 +39,15 @@ SECTIONS
         *(.comment)
     }
 
-    .bss.uninit (BASE_ADDRESS + 0x300000) : {
+    .bss.uninit (BASE_ADDRESS + 0x400000) : {
         *(.bss.uninit)
     }
 
-    .bss (BASE_ADDRESS + 0x400000) : {
+    .bss (BASE_ADDRESS + 0x500000) : {
         *(.bss)
         *(.bss.*)
         *(.sbss)
     }
 
-    PROVIDE(end = BASE_ADDRESS + 0x500000);
+    PROVIDE(end = BASE_ADDRESS + 0x600000);
 }

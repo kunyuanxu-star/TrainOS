@@ -1192,20 +1192,104 @@ fn sys_capset(_hdr: usize, _data: usize) -> isize {
 // ============================================
 
 /// Syscall to spawn a new service process
-/// For Phase 3/4, this is a stub
-pub const SYS_SPAWN: usize = 1105;
+/// a0 = service_id (0=driver, 1=fs, 2=shell)
+pub fn sys_spawn(service_id: usize) -> isize {
+    match service_id {
+        0 => {
+            // Driver service
+            spawn_user_process(crate::elf::DRIVER_ELF)
+        }
+        1 => {
+            // FS service
+            spawn_user_process(crate::elf::FS_ELF)
+        }
+        2 => {
+            // Shell
+            spawn_user_process(crate::elf::SHELL_ELF)
+        }
+        _ => {
+            crate::print!("[syscall] sys_spawn: unknown service_id=");
+            crate::console::print_dec(service_id);
+            crate::println!("");
+            -1
+        }
+    }
+}
 
-pub fn sys_spawn(_flags: usize) -> isize {
-    // In Phase 4:
-    // 1. Load binary from file system
-    // 2. Create new process with TaskControlBlock
-    // 3. Set up PMP for device access if needed
-    // 4. Register with process table
-    // 5. Return new PID
+/// Spawn a user process from embedded ELF binary
+fn spawn_user_process(elf_data: &[u8]) -> isize {
+    crate::print!("[syscall] spawn_user_process: ELF size=");
+    crate::console::print_dec(elf_data.len());
+    crate::println!("");
 
-    // For now, return -1 (not implemented)
-    crate::println!("[syscall] sys_spawn called (stub)");
-    -1
+    // Validate ELF header
+    if elf_data.len() < 64 {
+        crate::println!("[syscall] spawn_user_process: ELF too small");
+        return -1;
+    }
+    if elf_data[0..4] != [0x7F, b'E', b'L', b'F'] {
+        crate::println!("[syscall] spawn_user_process: invalid ELF magic");
+        return -1;
+    }
+
+    // Create user address space
+    let mut user_space = match crate::memory::Sv39::UserAddressSpace::new() {
+        Some(us) => us,
+        None => {
+            crate::println!("[syscall] spawn_user_process: failed to create user address space");
+            return -1;
+        }
+    };
+    crate::println!("[syscall] spawn_user_process: user address space created");
+
+    // Load ELF into user address space
+    let (entry, sp) = match crate::elf::load_elf(elf_data, &mut user_space) {
+        Ok((ep, stack)) => (ep, stack),
+        Err(_) => {
+            crate::println!("[syscall] spawn_user_process: ELF load failed");
+            return -1;
+        }
+    };
+    crate::print!("[syscall] spawn_user_process: ELF loaded, entry=0x");
+    crate::console::print_hex(entry);
+    crate::print!(", sp=0x");
+    crate::console::print_hex(sp);
+    crate::println!("");
+
+    // Allocate PID
+    let pid = alloc_pid();
+    crate::print!("[syscall] spawn_user_process: allocated pid=");
+    crate::console::print_dec(pid);
+    crate::println!("");
+
+    // Create TaskControlBlock
+    let mut tcb = crate::process::task::TaskControlBlock::new(pid);
+    tcb.alloc_kernel_stack();
+    tcb.setup_trap_frame(entry, sp, 0);
+
+    // Set up user address space in TCB
+    let satp = user_space.get_satp();
+    tcb.satp = satp;
+    tcb.is_user_task = true;
+    tcb.status = crate::process::task::TaskStatus::Ready;
+
+    // Register process
+    if !crate::process::register_process(pid as u32, tcb) {
+        crate::println!("[syscall] spawn_user_process: failed to register process");
+        return -1;
+    }
+    crate::println!("[syscall] spawn_user_process: process registered");
+
+    // Add to scheduler
+    let mut scheduler = crate::process::get_scheduler().lock();
+    if scheduler.add_task(tcb).is_some() {
+        crate::println!("[syscall] spawn_user_process: task added to scheduler");
+    } else {
+        crate::println!("[syscall] spawn_user_process: failed to add to scheduler");
+        return -1;
+    }
+
+    pid as isize
 }
 
 // ============================================

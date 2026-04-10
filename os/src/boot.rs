@@ -222,6 +222,45 @@ extern "C" fn rust_main() -> ! {
             inout("a1") ptr, inout("a2") remaining);
     }
 
+    // Initialize CLINT timer FIRST (arm the timer) - before setting stvec
+    crate::drivers::interrupt::clint_init();
+
+    // Output "Boot 5.1" directly
+    unsafe {
+        let s = "Boot 5.1\r\n";
+        let len = s.len();
+        let mut ptr = s.as_ptr() as usize;
+        let mut remaining = len;
+        core::arch::asm!(
+            "1: lbu a0, 0(a1)",
+            "   li a7, 1",
+            "   ecall",
+            "   addi a1, a1, 1",
+            "   addi a2, a2, -1",
+            "   bnez a2, 1b",
+            inout("a1") ptr, inout("a2") remaining);
+    }
+
+    // Enable timer interrupt in sie BEFORE setting stvec
+    // This is done before trap init to avoid the sie-write-hang issue
+    crate::trap::enable_timer_interrupt();
+
+    // Output "Boot 5.1.1" directly
+    unsafe {
+        let s = "Boot 5.1.1\r\n";
+        let len = s.len();
+        let mut ptr = s.as_ptr() as usize;
+        let mut remaining = len;
+        core::arch::asm!(
+            "1: lbu a0, 0(a1)",
+            "   li a7, 1",
+            "   ecall",
+            "   addi a1, a1, 1",
+            "   addi a2, a2, -1",
+            "   bnez a2, 1b",
+            inout("a1") ptr, inout("a2") remaining);
+    }
+
     // Initialize trap handling (set stvec)
     crate::trap::init();
 
@@ -241,49 +280,7 @@ extern "C" fn rust_main() -> ! {
             inout("a1") ptr, inout("a2") remaining);
     }
 
-    // Initialize CLINT timer FIRST (arm the timer)
-    crate::drivers::interrupt::clint_init();
-
-    // Output "Boot 5.2.1" directly
-    unsafe {
-        let s = "Boot 5.2.1\r\n";
-        let len = s.len();
-        let mut ptr = s.as_ptr() as usize;
-        let mut remaining = len;
-        core::arch::asm!(
-            "1: lbu a0, 0(a1)",
-            "   li a7, 1",
-            "   ecall",
-            "   addi a1, a1, 1",
-            "   addi a2, a2, -1",
-            "   bnez a2, 1b",
-            inout("a1") ptr, inout("a2") remaining);
-    }
-
-    // THEN enable timer interrupt in sie (after timer is armed)
-    crate::trap::enable_timer_interrupt();
-
-    // Output "Boot 5.2.2" directly
-    unsafe {
-        let s = "Boot 5.2.2\r\n";
-        let len = s.len();
-        let mut ptr = s.as_ptr() as usize;
-        let mut remaining = len;
-        core::arch::asm!(
-            "1: lbu a0, 0(a1)",
-            "   li a7, 1",
-            "   ecall",
-            "   addi a1, a1, 1",
-            "   addi a2, a2, -1",
-            "   bnez a2, 1b",
-            inout("a1") ptr, inout("a2") remaining);
-    }
-
-    // Note: sie write after trap::init() hangs due to unknown cause
-
-    // Note: sie write after trap::init() hangs due to unknown cause
-    // Timer interrupts are enabled via sstatus.SIE in trap::init()
-    // sie.STIE is set via direct CLINT MMIO for now
+    // Note: sie is now set before trap::init(), so timer interrupts should work
 
     // Enable Sv39 MMU AFTER trap handler is set up
     // This way, if page tables are invalid and cause a page fault,

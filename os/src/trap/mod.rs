@@ -32,14 +32,20 @@ pub enum InterruptCause {
 }
 
 /// Enable timer interrupt in sie (Supervisor Interrupt Enable)
-/// This must be called BEFORE trap::init() because sie write hangs after trap init
+/// We need to enable STIE (bit 5) for timer interrupts to fire
 pub fn enable_timer_interrupt() {
-    // sie.STIE is bit 5 in the sie CSR
-    let stie_bit = 1usize << 5;
+    // Use a simple approach: read current sie, set STIE, write back
+    // Also enable SSIE (bit 1) and SEIE (bit 9) for completeness
     unsafe {
         core::arch::asm!(
-            "csrs sie, {0}",
-            in(reg) stie_bit
+            // Set STIE (bit 5) using csrs (atomic set)
+            "csrs sie, t0",
+            // Also set SSIE (bit 1) and SEIE (bit 9)
+            // SSIE enables software interrupts, SEIE enables external interrupts
+            // 0x422 = 0b10000100010 = SSIE(1) | STIE(5) | SEIE(9)
+            "li t0, 0x422",
+            "csrs sie, t0",
+            out("t0") _,
         );
     }
 }

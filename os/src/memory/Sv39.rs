@@ -844,14 +844,46 @@ pub fn enable_sv39() {
         crate::println!("[vm] WARNING: MMU is DISABLED - running without virtual memory");
         *crate::process::context::MMU_ENABLED.lock() = false;
         return;
-        return;
     }
 
-    // Now try to write the actual satp value
-    // NOTE: On QEMU 10.2.2, this will hang, so we skip it
-    // Instead, just mark that MMU is not available
-    crate::println!("[vm] MMU not available - QEMU 10.2.2 satp write issue");
-    crate::println!("[vm] Running without MMU - user programs will use physical addresses");
+    // Write the actual satp value to enable MMU
+    crate::println!("[vm] Test satp write passed, attempting full MMU enable...");
+    unsafe {
+        core::arch::asm!(
+            "csrw satp, {0}",
+            in(reg) satp_value,
+            options(nostack)
+        );
+    }
+
+    // Flush TLB to ensure no stale translations
+    unsafe {
+        core::arch::asm!(
+            "sfence.vma zero, zero",
+            options(nostack)
+        );
+    }
+
+    // Verify the write worked
+    let satp_verify: usize;
+    unsafe {
+        core::arch::asm!(
+            "csrr {0}, satp",
+            out(reg) satp_verify,
+            options(nostack)
+        );
+    }
+
+    if (satp_verify >> 60) == 8 {
+        crate::println!("[vm] MMU enabled successfully!");
+        *crate::process::context::MMU_ENABLED.lock() = true;
+    } else {
+        crate::println!("[vm] MMU enable failed, satp verify = 0x");
+        crate::console::print_hex(satp_verify);
+        crate::println!("");
+        crate::println!("[vm] WARNING: MMU is DISABLED - running without virtual memory");
+        *crate::process::context::MMU_ENABLED.lock() = false;
+    }
 }
 
 // ============================================

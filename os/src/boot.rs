@@ -215,8 +215,11 @@ extern "C" fn rust_main() -> ! {
     // This affects ALL QEMU versions including 9.2.0, 10.1.2, 10.2.0, 10.2.2.
     // FOR MACHINA: MMU enable causes hang - investigation needed.
     // The page table appears correct but machina hangs after SATP write.
-    // Debug output shows: "Boot 1", "Mapped 2304 pages", then hang.
-    // This suggests the issue is in the enable_sv39() function itself.
+    // Debug observation: Release build hangs after "Boot 1" and
+    // "[vm] Mapped 2304 pages" - never reaches "Kernel page table ready".
+    // Debug build shows same behavior when MMU is enabled.
+    // Machina's Sv39 MMU tests pass, suggesting the issue is
+    // specific to TrainOS's page table setup or the SATP write sequence.
     for c in b"Before enable_sv39\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
     // crate::memory::Sv39::enable_sv39(); // DISABLED - causes hang
     for c in b"After enable_sv39 (MMU test disabled)\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }

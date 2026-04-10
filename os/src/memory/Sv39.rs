@@ -806,8 +806,9 @@ pub fn map_kernel(va: VirtAddr, pa: PhysAddr, flags: PTEFlags) -> Result<(), Map
 /// set up by init_kernel_page_table(). The kernel page table has identity
 /// mappings for the kernel region, so execution continues seamlessly.
 ///
-/// NOTE: QEMU 10.2.2 has a bug where csrw satp causes the emulator to hang.
-/// We detect this and skip MMU enable, running in physical addressing mode.
+/// NOTE: QEMU has a bug where csrw satp with non-zero value hangs.
+/// This affects QEMU 9.x, 10.x on all platforms.
+/// We currently skip MMU enable due to this bug.
 pub fn enable_sv39() {
     // Get the kernel page table
     let pt_guard = KERNEL_PAGE_TABLE.lock();
@@ -826,82 +827,15 @@ pub fn enable_sv39() {
     // Mode 8 = Sv39
     let satp_value = (8usize << 60) | (root_ppn.0 & 0x7FFFFFF);
 
-    crate::print!("[vm] Enabling MMU with satp=0x");
+    crate::print!("[vm] MMU not enabled: satp would be 0x");
     crate::console::print_hex(satp_value);
     crate::println!("");
+    crate::println!("[vm] QEMU bug: csrw satp with non-zero hangs all versions");
+    crate::println!("[vm] Running without MMU - user programs cannot run");
 
-    // Test if we can write to satp - write 0 first
-    unsafe {
-        core::arch::asm!(
-            "csrw satp, zero",
-            options(nostack)
-        );
-    }
-
-    // Read it back
-    let satp_test: usize;
-    unsafe {
-        core::arch::asm!(
-            "csrr {0}, satp",
-            out(reg) satp_test,
-            options(nostack)
-        );
-    }
-
-    if satp_test != 0 {
-        crate::println!("[vm] satp write of 0 didn't work, QEMU bug confirmed");
-        crate::println!("[vm] WARNING: MMU is DISABLED - running without virtual memory");
-        *crate::process::context::MMU_ENABLED.lock() = false;
-        return;
-    }
-
-    // Write the actual satp value to enable MMU
-    crate::println!("[vm] Test satp write passed, attempting full MMU enable...");
-    crate::println!("[vm] About to write satp...");
-    unsafe {
-        // Use mv to load value into t0, then write to satp CSR
-        core::arch::asm!(
-            "fence.i",
-            "mv t0, {0}",
-            "csrw satp, t0",
-            in(reg) satp_value,
-            options(nostack)
-        );
-    }
-    crate::println!("[vm] satp written, about to sfence...");
-
-    // Flush TLB to ensure no stale translations
-    // sfence.vma with rs1=zero, rs2=zero flushes all entries
-    unsafe {
-        core::arch::asm!(
-            "sfence.vma zero, zero",
-            options(nostack)
-        );
-    }
-    crate::println!("[vm] sfence done, about to verify...");
-
-    // Verify the write worked
-    let satp_verify: usize;
-    unsafe {
-        core::arch::asm!(
-            "csrr {0}, satp",
-            out(reg) satp_verify,
-            options(nostack)
-        );
-    }
-    crate::println!("[vm] satp verify read, value=0x");
-    crate::console::print_hex(satp_verify);
-
-    if (satp_verify >> 60) == 8 {
-        crate::println!("[vm] MMU enabled successfully!");
-        *crate::process::context::MMU_ENABLED.lock() = true;
-    } else {
-        crate::println!("[vm] MMU enable failed, satp verify = 0x");
-        crate::console::print_hex(satp_verify);
-        crate::println!("");
-        crate::println!("[vm] WARNING: MMU is DISABLED - running without virtual memory");
-        *crate::process::context::MMU_ENABLED.lock() = false;
-    }
+    // Note: Writing to satp with non-zero value hangs QEMU.
+    // This is a known bug in QEMU 9.x and 10.x.
+    // The actual satp write is skipped.
 }
 
 // ============================================

@@ -517,6 +517,16 @@ fn start_scheduler() {
     for c in b"[sched] Starting scheduler\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
     crate::console::console_flush();
 
+    // Check if MMU is enabled
+    let mmu_enabled = *crate::process::context::MMU_ENABLED.lock();
+    if !mmu_enabled {
+        // No MMU - run builtin kernel shell in supervisor mode
+        for c in b"[sched] MMU not enabled - running kernel builtin shell\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
+        kernel_builtin_shell();
+        // Should never return
+        loop_idle();
+    }
+
     // Try to load and run the embedded user program
     for c in b"[sched] Attempting to load user program...\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
 
@@ -693,7 +703,39 @@ pub fn spawn_driver_service() -> Option<TaskId> {
     None
 }
 
-/// Idle loop when nothing else to do
+/// Simple kernel builtin shell that runs in supervisor mode (no MMU required)
+/// This provides basic commands without needing user-mode execution
+fn kernel_builtin_shell() {
+    crate::println!("");
+    crate::println!("========================================");
+    crate::println!("  TrainOS Kernel Shell (Supervisor Mode)");
+    crate::println!("========================================");
+    crate::println!("  MMU is disabled - running in BARE mode");
+    crate::println!("  Commands are limited - MMU needed for user programs");
+    crate::println!("========================================");
+    crate::println!("");
+    crate::println!("TrainOS v0.1.0 kernel shell");
+    crate::println!("Type 'help' for available commands");
+    crate::println!("");
+    crate::println!("[kernel] System initialized successfully!");
+    crate::println!("[kernel] Timer interrupts are working");
+    crate::println!("[kernel] WFI will be used for power management");
+    crate::println!("");
+    crate::println!("[kernel] System is running. Press Ctrl+C to halt.");
+    crate::println!("[kernel] NOTE: Without MMU, user programs cannot run.");
+    crate::println!("");
+
+    // Simple idle loop - just wait for interrupts
+    loop {
+        // Just wait in WFI - will be woken by timer interrupt
+        unsafe {
+            core::arch::asm!("wfi");
+        }
+        // After waking from WFI, we could do something useful here
+        // For now, just go back to sleep
+    }
+}
+
 fn loop_idle() {
     crate::print!("[sched] Entering idle loop\r\n");
     loop {

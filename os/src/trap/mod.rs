@@ -143,7 +143,50 @@ extern "C" fn handle_trap(trap_frame: *mut crate::process::context::TrapFrame) {
                     handle_page_fault(trap_frame);
                 }
                 _ => {
-                    crate::println!("[trap] Exception occurred");
+                    // Print the exception details using raw putchar
+                    for c in b"[trap] Exception: scause=" {
+                        crate::console::sbi_console_putchar_raw(*c as usize);
+                    }
+                    // Print scause value
+                    let sc: usize;
+                    unsafe {
+                        core::arch::asm!("csrr {0}, scause", out(reg) sc);
+                    }
+                    // Print scause as hex
+                    let mut hex_buf = [0u8; 16];
+                    let mut i = 0;
+                    let mut v = sc;
+                    while v > 0 && i < 16 {
+                        let d = (v & 0xf) as u8;
+                        hex_buf[i] = if d < 10 { b'0' + d } else { b'a' + d - 10 };
+                        i += 1;
+                        v >>= 4;
+                    }
+                    for j in (0..i).rev() {
+                        crate::console::sbi_console_putchar_raw(hex_buf[j] as usize);
+                    }
+                    for c in b", sepc=\r\n" {
+                        crate::console::sbi_console_putchar_raw(*c as usize);
+                    }
+                    // Also print sepc
+                    let epc: usize;
+                    unsafe {
+                        core::arch::asm!("csrr {0}, sepc", out(reg) epc);
+                    }
+                    let mut v = epc;
+                    let mut i = 0;
+                    while v > 0 && i < 16 {
+                        let d = (v & 0xf) as u8;
+                        hex_buf[i] = if d < 10 { b'0' + d } else { b'a' + d - 10 };
+                        i += 1;
+                        v >>= 4;
+                    }
+                    for j in (0..i).rev() {
+                        crate::console::sbi_console_putchar_raw(hex_buf[j] as usize);
+                    }
+                    for c in b"\r\n" {
+                        crate::console::sbi_console_putchar_raw(*c as usize);
+                    }
                     loop {}
                 }
             }

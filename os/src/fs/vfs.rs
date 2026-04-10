@@ -307,10 +307,12 @@ impl Default for VfsInstance {
 
 /// Initialize VFS
 pub fn init() {
-    crate::println!("[vfs] Initializing VFS...");
+    for c in b"[vfs] init start\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
+    for c in b"[vfs] Initializing VFS...\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
     let mut vfs = VFS.lock();
+    for c in b"[vfs] Got VFS lock\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
     *vfs = Some(VfsInstance::new());
-    crate::println!("[vfs] VFS initialized");
+    for c in b"[vfs] VFS initialized\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
 }
 
 /// Get VFS instance

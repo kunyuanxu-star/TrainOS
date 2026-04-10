@@ -37,13 +37,10 @@ static IPI_PENDING: Mutex<[bool; 8]> = Mutex::new([false; 8]);
 /// Initialize IPI handling
 pub fn init() {
     // Output 'I' using inline asm
-    unsafe {
-        core::arch::asm!(
-            "li a7, 1",
-            "li a0, 73",  // 'I'
-            "ecall"
-        );
+    for c in b"ipi::init start\n" {
+        crate::console::sbi_console_putchar_raw(*c as usize);
     }
+    crate::console::console_flush();
 }
 
 /// Send an IPI to a specific CPU

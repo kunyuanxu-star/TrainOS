@@ -213,28 +213,59 @@ impl Default for TaskManager {
 
 /// Initialize the process management subsystem
 pub fn init() {
-    crate::println!("[process] Init start");
+    // Use raw output to ensure we see it even if we hang
+    for c in b"[process] Init start\r\n" {
+        crate::console::sbi_console_putchar_raw(*c as usize);
+    }
 
     // Initialize task manager with idle task
     let mut manager = TASK_MANAGER.lock();
-    manager.init_idle_task();
-    drop(manager);
-
-    // Create init process (PID 1)
-    let init_task = TaskControlBlock::new(1);
-    if !register_process(1, init_task) {
-        crate::println!("[process] Failed to register init process");
+    for c in b"[process] Got manager lock\r\n" {
+        crate::console::sbi_console_putchar_raw(*c as usize);
     }
 
+    manager.init_idle_task();
+    for c in b"[process] Idle task inited\r\n" {
+        crate::console::sbi_console_putchar_raw(*c as usize);
+    }
+    drop(manager);
+
+    for c in b"[process] Manager dropped\r\n" {
+        crate::console::sbi_console_putchar_raw(*c as usize);
+    }
+
+    // Create init process (PID 1) - SIMPLIFIED to avoid any issues
+    for c in b"[process] Creating init task\r\n" {
+        crate::console::sbi_console_putchar_raw(*c as usize);
+    }
+    let init_task = TaskControlBlock::new(1);
+
+    for c in b"[process] Registering process\r\n" {
+        crate::console::sbi_console_putchar_raw(*c as usize);
+    }
+    if !register_process(1, init_task) {
+        for c in b"[process] Failed to register!\r\n" {
+            crate::console::sbi_console_putchar_raw(*c as usize);
+        }
+    }
+
+    for c in b"[process] Getting idle task\r\n" {
+        crate::console::sbi_console_putchar_raw(*c as usize);
+    }
     // Get idle task and set as current
     let manager = TASK_MANAGER.lock();
     if let Some(idle_task) = manager.get_task(0) {
         let mut current = CURRENT_TASK.lock();
         *current = Some(*idle_task);
+        for c in b"[process] Current task set\r\n" {
+            crate::console::sbi_console_putchar_raw(*c as usize);
+        }
     }
     drop(manager);
 
-    crate::println!("[process] Init OK");
+    for c in b"[process] Init OK\r\n" {
+        crate::console::sbi_console_putchar_raw(*c as usize);
+    }
 }
 
 /// Get the global task manager
@@ -439,9 +470,12 @@ pub fn create_process(entry: usize, stack: usize, is_user: bool) -> Option<TaskI
 
 /// Initialize and run the first process
 pub fn run_first_process() -> ! {
-    crate::println!("[run] Starting first process");
+    for c in b"[run] run_first_process entry\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
+    for c in b"[run] Starting first process\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
+    crate::console::console_flush();
 
     // Start the scheduler
+    for c in b"[run] about to call start_scheduler\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
     start_scheduler();
 
     // Should never reach here
@@ -479,17 +513,22 @@ fn test_task() {
 
 /// Start the scheduler and run the first user process
 fn start_scheduler() {
-    crate::println!("[sched] Starting scheduler");
+    for c in b"[sched] start_scheduler entry\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
+    for c in b"[sched] Starting scheduler\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
+    crate::console::console_flush();
 
     // Try to load and run the embedded user program
-    crate::print!("[sched] Attempting to load user program...\r\n");
+    for c in b"[sched] Attempting to load user program...\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
 
-    // Embedded ELF binary
-    static USER_ELF: &[u8] = include_bytes!("../../../os/bin/init.bin");
+    // Embedded ELF binary - relative path from os/src/process/
+    static USER_ELF: &[u8] = include_bytes!("../../bin/init.bin");
 
-    crate::print!("[sched] ELF size: ");
+    for c in b"[sched] ELF size: " { crate::console::sbi_console_putchar_raw(*c as usize); }
     crate::console::print_dec(USER_ELF.len());
-    crate::println!(" bytes");
+    for c in b" bytes\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
+    crate::console::console_flush();
+
+    for c in b"[sched] Validating ELF header...\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
 
     // Validate ELF header
     if USER_ELF.len() < 64 {

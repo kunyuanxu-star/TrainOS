@@ -127,5 +127,8 @@ pub fn init_boot() {
             BOOT_STARTS[i] = BOOT_STACKS[i].as_ptr() as usize;
         }
     }
-    crate::println!("[boot] Boot data initialized");
+    for c in b"[boot] init_boot done\n" {
+        crate::console::sbi_console_putchar_raw(*c as usize);
+    }
+    crate::console::console_flush();
 }

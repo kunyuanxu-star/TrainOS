@@ -301,13 +301,18 @@ pub fn get_ramfs() -> &'static RamFs {
 
 /// Initialize RAM filesystem
 pub fn init() {
-    crate::println!("[ramfs] Initializing RAM filesystem...");
-    crate::println!("[ramfs] Files: 32, Size per file: 4KB");
+    for c in b"[ramfs] init start\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
+    for c in b"[ramfs] Initializing RAM filesystem...\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
+    for c in b"[ramfs] About to create files\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
+    for c in b"[ramfs] Files: 32, Size per file: 4KB\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
 
     // Create some default device files
     let _ = RAM_FS.create("/dev/null", 0o666);
+    for c in b"[ramfs] created /dev/null\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
     let _ = RAM_FS.create("/dev/zero", 0o666);
+    for c in b"[ramfs] created /dev/zero\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
     let _ = RAM_FS.create("/dev/console", 0o666);
+    for c in b"[ramfs] created /dev/console\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
 
-    crate::println!("[ramfs] OK");
+    for c in b"[ramfs] OK\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
 }

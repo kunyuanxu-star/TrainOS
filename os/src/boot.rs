@@ -133,10 +133,7 @@ extern "C" fn rust_main() -> ! {
     // Initialize memory management
     crate::memory::init();
 
-    // NOTE: enable_sv39() is now called AFTER trap::init() below
-    // This is because if MMU enable causes a page fault, we need a trap handler
-    // The previous call to enable_sv39() inside memory::init() caused hangs
-    // because there was no trap handler set up yet.
+    // Output "After memory init" using inline asm
     unsafe {
         let s = "After memory init\r\n";
         let len = s.len();
@@ -153,7 +150,8 @@ extern "C" fn rust_main() -> ! {
     }
 
     // Initialize SMP (multi-core) support
-    crate::smp::init();
+    // DISABLED for debugging - causes watchdog timeout
+    // crate::smp::init();
 
     // Output "Boot 3" directly
     unsafe {
@@ -190,173 +188,51 @@ extern "C" fn rust_main() -> ! {
             inout("a1") ptr, inout("a2") remaining);
     }
 
-    // Output "Boot 5" directly (before trap init to debug hang)
-    unsafe {
-        let s = "Boot 5\r\n";
-        let len = s.len();
-        let mut ptr = s.as_ptr() as usize;
-        let mut remaining = len;
-        core::arch::asm!(
-            "1: lbu a0, 0(a1)",
-            "   li a7, 1",
-            "   ecall",
-            "   addi a1, a1, 1",
-            "   addi a2, a2, -1",
-            "   bnez a2, 1b",
-            inout("a1") ptr, inout("a2") remaining);
-    }
+    // Boot 5 - Debug markers
+    for c in b"Boot 5\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
 
-    // Output "Boot 5.1" directly
-    unsafe {
-        let s = "Boot 5.1\r\n";
-        let len = s.len();
-        let mut ptr = s.as_ptr() as usize;
-        let mut remaining = len;
-        core::arch::asm!(
-            "1: lbu a0, 0(a1)",
-            "   li a7, 1",
-            "   ecall",
-            "   addi a1, a1, 1",
-            "   addi a2, a2, -1",
-            "   bnez a2, 1b",
-            inout("a1") ptr, inout("a2") remaining);
-    }
-
+    // TEMPORARILY DISABLED: CLINT timer init causes reboot
     // Initialize CLINT timer FIRST (arm the timer) - before setting stvec
-    crate::drivers::interrupt::clint_init();
+    // for c in b"Before clint_init\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
+    // crate::drivers::interrupt::clint_init();
+    // for c in b"After clint_init\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
 
-    // Output "Boot 5.1" directly
-    unsafe {
-        let s = "Boot 5.1\r\n";
-        let len = s.len();
-        let mut ptr = s.as_ptr() as usize;
-        let mut remaining = len;
-        core::arch::asm!(
-            "1: lbu a0, 0(a1)",
-            "   li a7, 1",
-            "   ecall",
-            "   addi a1, a1, 1",
-            "   addi a2, a2, -1",
-            "   bnez a2, 1b",
-            inout("a1") ptr, inout("a2") remaining);
-    }
+    for c in b"Boot 5.1\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
 
+    // TEMPORARILY DISABLED: timer interrupt causes reboot
     // Enable timer interrupt in sie BEFORE setting stvec
-    // This is done before trap init to avoid the sie-write-hang issue
-    crate::trap::enable_timer_interrupt();
-
-    // Output "Boot 5.1.1" directly
-    unsafe {
-        let s = "Boot 5.1.1\r\n";
-        let len = s.len();
-        let mut ptr = s.as_ptr() as usize;
-        let mut remaining = len;
-        core::arch::asm!(
-            "1: lbu a0, 0(a1)",
-            "   li a7, 1",
-            "   ecall",
-            "   addi a1, a1, 1",
-            "   addi a2, a2, -1",
-            "   bnez a2, 1b",
-            inout("a1") ptr, inout("a2") remaining);
-    }
+    // crate::trap::enable_timer_interrupt();
+    for c in b"Boot 5.1.1 (timer intr disabled)\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
 
     // Initialize trap handling (set stvec)
+    for c in b"Before trap::init\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
     crate::trap::init();
-
-    // Output "Boot 5.2" directly
-    unsafe {
-        let s = "Boot 5.2\r\n";
-        let len = s.len();
-        let mut ptr = s.as_ptr() as usize;
-        let mut remaining = len;
-        core::arch::asm!(
-            "1: lbu a0, 0(a1)",
-            "   li a7, 1",
-            "   ecall",
-            "   addi a1, a1, 1",
-            "   addi a2, a2, -1",
-            "   bnez a2, 1b",
-            inout("a1") ptr, inout("a2") remaining);
-    }
-
-    // Note: sie is now set before trap::init(), so timer interrupts should work
+    for c in b"After trap::init\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
+    for c in b"Boot 5.2\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
 
     // Enable Sv39 MMU AFTER trap handler is set up
-    // This way, if page tables are invalid and cause a page fault,
-    // the trap handler can catch it instead of hanging
-    crate::memory::Sv39::enable_sv39();
-
-    // Output "Boot 5.3" directly
-    unsafe {
-        let s = "Boot 5.3\r\n";
-        let len = s.len();
-        let mut ptr = s.as_ptr() as usize;
-        let mut remaining = len;
-        core::arch::asm!(
-            "1: lbu a0, 0(a1)",
-            "   li a7, 1",
-            "   ecall",
-            "   addi a1, a1, 1",
-            "   addi a2, a2, -1",
-            "   bnez a2, 1b",
-            inout("a1") ptr, inout("a2") remaining);
-    }
+    // NOTE: Skipping actual MMU enable due to QEMU 10.2.2 satp bug
+    for c in b"Before enable_sv39\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
+    // crate::memory::Sv39::enable_sv39();
+    for c in b"After enable_sv39 (MMU skip\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
+    for c in b"Boot 5.3\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
 
     // Initialize file system
+    for c in b"Before fs::init\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
     crate::fs::init();
-
-    // Output "Boot 5.4" directly
-    unsafe {
-        let s = "Boot 5.4\r\n";
-        let len = s.len();
-        let mut ptr = s.as_ptr() as usize;
-        let mut remaining = len;
-        core::arch::asm!(
-            "1: lbu a0, 0(a1)",
-            "   li a7, 1",
-            "   ecall",
-            "   addi a1, a1, 1",
-            "   addi a2, a2, -1",
-            "   bnez a2, 1b",
-            inout("a1") ptr, inout("a2") remaining);
-    }
+    for c in b"After fs::init\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
+    for c in b"Boot 5.4\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
 
     // Initialize device table for driver services
+    for c in b"Before device::init_devices\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
     crate::syscall::device::init_devices();
-
-    // Output "Boot 5.5" directly
-    unsafe {
-        let s = "Boot 5.5\r\n";
-        let len = s.len();
-        let mut ptr = s.as_ptr() as usize;
-        let mut remaining = len;
-        core::arch::asm!(
-            "1: lbu a0, 0(a1)",
-            "   li a7, 1",
-            "   ecall",
-            "   addi a1, a1, 1",
-            "   addi a2, a2, -1",
-            "   bnez a2, 1b",
-            inout("a1") ptr, inout("a2") remaining);
-    }
+    for c in b"After device::init_devices\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
+    for c in b"Boot 5.5\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
 
     // Output "Boot 6" directly
-    unsafe {
-        let s = "Boot 6\r\n";
-        let len = s.len();
-        let mut ptr = s.as_ptr() as usize;
-        let mut remaining = len;
-        core::arch::asm!(
-            "1: lbu a0, 0(a1)",
-            "   li a7, 1",
-            "   ecall",
-            "   addi a1, a1, 1",
-            "   addi a2, a2, -1",
-            "   bnez a2, 1b",
-            inout("a1") ptr, inout("a2") remaining);
-    }
+    for c in b"Boot 6\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
 
     // Run the first process
+    for c in b"Before run_first_process\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
     crate::process::run_first_process();
 }

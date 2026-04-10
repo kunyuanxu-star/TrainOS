@@ -213,10 +213,10 @@ extern "C" fn rust_main() -> ! {
     // Enable Sv39 MMU AFTER trap handler is set up
     // NOTE: QEMU has a bug where csrw satp with non-zero value hangs.
     // This affects ALL QEMU versions including 9.2.0, 10.1.2, 10.2.0, 10.2.2.
-    // For now, we skip MMU enable and run without virtual memory.
+    // FOR MACHINA: Test MMU enable - but it seems to cause issues.
     for c in b"Before enable_sv39\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
-    // crate::memory::Sv39::enable_sv39(); // DISABLED due to QEMU satp bug
-    for c in b"After enable_sv39 (MMU skip - QEMU bug)\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
+    // crate::memory::Sv39::enable_sv39(); // Temporarily disabled - MMU enable causes issues
+    for c in b"After enable_sv39 (MMU test disabled)\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
     *crate::process::context::MMU_ENABLED.lock() = false;
     for c in b"Boot 5.3\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
 

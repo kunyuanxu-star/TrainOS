@@ -808,7 +808,7 @@ pub fn map_kernel(va: VirtAddr, pa: PhysAddr, flags: PTEFlags) -> Result<(), Map
 ///
 /// NOTE: QEMU has a bug where csrw satp with non-zero value hangs.
 /// This affects QEMU 9.x, 10.x on all platforms.
-/// We currently skip MMU enable due to this bug.
+/// FOR MACHINA: Machina does NOT have this bug, so we enable MMU here.
 pub fn enable_sv39() {
     // Get the kernel page table
     let pt_guard = KERNEL_PAGE_TABLE.lock();
@@ -827,15 +827,27 @@ pub fn enable_sv39() {
     // Mode 8 = Sv39
     let satp_value = (8usize << 60) | (root_ppn.0 & 0x7FFFFFF);
 
-    crate::print!("[vm] MMU not enabled: satp would be 0x");
+    crate::print!("[vm] Enabling MMU with satp=0x");
     crate::console::print_hex(satp_value);
     crate::println!("");
-    crate::println!("[vm] QEMU bug: csrw satp with non-zero hangs all versions");
-    crate::println!("[vm] Running without MMU - user programs cannot run");
 
-    // Note: Writing to satp with non-zero value hangs QEMU.
-    // This is a known bug in QEMU 9.x and 10.x.
-    // The actual satp write is skipped.
+    // Actually write to SATP to enable MMU
+    // This will cause an sfence.vma to ensure TLB is flushed
+    unsafe {
+        // Flush TLB before enabling MMU
+        core::arch::asm!("sfence.vma");
+
+        // Write to satp to enable Sv39
+        core::arch::asm!("csrw satp, {0}", in(reg) satp_value);
+
+        // Flush TLB again after enabling
+        core::arch::asm!("sfence.vma");
+    }
+
+    // Update global state
+    *crate::process::context::MMU_ENABLED.lock() = true;
+
+    crate::println!("[vm] MMU enabled successfully");
 }
 
 // ============================================

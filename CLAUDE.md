@@ -22,13 +22,22 @@ TrainOS is an educational operating system written in Rust for RISC-V 64-bit arc
 
 ### Known Issues
 
-**Release Build Hang** (2026-04-10):
-- Release build (`cargo build -p os --release`) hangs at "Boot 1" on both QEMU and machina
-- Debug build (`cargo build -p os`) boots successfully to Boot 6
-- Issue occurs with all optimization levels (tested 0, 1, "z", 2)
-- Root cause unknown - appears to be in memory::init() or inline asm
-- Disassembly shows the hang happens during init_kernel_page_table() call
-- **Workaround**: Use debug build for development
+**QEMU SATP Bug** (2026-04-10):
+- QEMU 10.2.2 has a bug where `csrw satp` with non-zero value hangs
+- This prevents MMU (Sv39) from being enabled
+- User programs cannot run without MMU
+- **Workaround**: Use machina (which doesn't have this bug) for testing MMU features
+- Alternative: Wait for QEMU bug fix or use older QEMU version
+
+**Timer Interrupt Issue** (2026-04-10):
+- `sie.STIE` write causes hang in both QEMU and machina
+- CLINT MMIO direct access works
+- Timer-based preemption is disabled until this is resolved
+
+**Release Build Hang FIXED** (2026-04-10):
+- Root cause: LLVM optimizer issue with functions using inline asm + spin::Mutex in release mode
+- Fix: Added `#[inline(never)]` to `sbi_console_putchar_raw` (console.rs) and `init_page_table_allocator_with_pool` (Sv39.rs)
+- Release build now boots successfully to Boot 6 like debug build
 
 ## Architecture
 

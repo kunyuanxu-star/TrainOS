@@ -20,7 +20,9 @@ pub fn init() {
     // Initialize the kernel page table
     Sv39::init_kernel_page_table();
 
-    // Output "memory init done" using volatile inline asm to prevent optimization
+    // Output "memory init done" using inline asm to prevent optimization issues
+    // Note: Using inline asm directly instead of console functions due to
+    // LLVM optimizer issue with inline asm + spin::Mutex in release mode
     unsafe {
         let s = "memory init done\n";
         let len = s.len();

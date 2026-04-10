@@ -63,7 +63,7 @@ impl ConsoleBuffer {
 }
 
 /// SBI console putchar - outputs a single character (raw, no buffering)
-#[inline(always)]
+#[inline(never)]
 pub fn sbi_console_putchar_raw(c: usize) {
     unsafe {
         core::arch::asm!(

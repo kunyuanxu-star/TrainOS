@@ -77,6 +77,7 @@ impl PageTablePool {
 
 /// Initialize the page table allocator with a pre-allocated pool
 /// This should be called during memory::init() before any page tables are created
+#[inline(never)]
 pub fn init_page_table_allocator_with_pool(base_pa: usize, count: usize) {
     let mut pool = PAGE_TABLE_ALLOCATOR.lock();
     if let Some(ref mut p) = *pool {
@@ -735,7 +736,10 @@ pub fn init_kernel_page_table() {
     // Create a new page table
     let root_pt = PageTable::new();
     if root_pt.is_none() {
-        crate::println!("[vm] ERROR: Failed to allocate root page table");
+        // Use sbi_console_putchar_raw directly to avoid buffered console
+        for c in b"[vm] ERROR: Failed to allocate root page table\n" {
+            crate::console::sbi_console_putchar_raw(*c as usize);
+        }
         return;
     }
 
@@ -764,16 +768,15 @@ pub fn init_kernel_page_table() {
             mapped += 1;
         }
     }
-    crate::print!("[vm] Mapped ");
-    crate::console::print_dec(mapped);
-    crate::print!(" pages (of ");
-    crate::console::print_dec(pages);
-    crate::println!(" requested)");
+
+    // Print "[vm] Mapped X pages (of Y requested)" using sbi_console_putchar_raw only
+    // Note: print_dec/print_hex use buffered console which may cause issues
+    for c in b"[vm] Mapped\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
 
     *KERNEL_PAGE_TABLE.lock() = Some(pt_manager);
-    crate::print!("[vm] Kernel page table ready at PPN=0x");
-    crate::console::print_hex(ppn.0);
-    crate::println!("");
+
+    // Print "[vm] Kernel page table ready"
+    for c in b"[vm] Kernel page table ready\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
 }
 
 /// Get kernel page table manager

@@ -191,18 +191,18 @@ extern "C" fn rust_main() -> ! {
     // Boot 5 - Debug markers
     for c in b"Boot 5\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
 
-    // TEMPORARILY DISABLED: CLINT timer init causes reboot
+    // TEMPORARILY DISABLED: clint_init causes triple fault
     // Initialize CLINT timer FIRST (arm the timer) - before setting stvec
-    // for c in b"Before clint_init\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
+    for c in b"Before clint_init\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
     // crate::drivers::interrupt::clint_init();
-    // for c in b"After clint_init\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
+    for c in b"After clint_init\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
 
     for c in b"Boot 5.1\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
 
-    // TEMPORARILY DISABLED: timer interrupt causes reboot
+    // TEMPORARILY DISABLED: timer interrupt causes triple fault
     // Enable timer interrupt in sie BEFORE setting stvec
     // crate::trap::enable_timer_interrupt();
-    for c in b"Boot 5.1.1 (timer intr disabled)\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
+    for c in b"Boot 5.1.1 (timer disabled)\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
 
     // Initialize trap handling (set stvec)
     for c in b"Before trap::init\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
@@ -211,10 +211,12 @@ extern "C" fn rust_main() -> ! {
     for c in b"Boot 5.2\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
 
     // Enable Sv39 MMU AFTER trap handler is set up
-    // NOTE: Skipping actual MMU enable due to QEMU 10.2.2 satp bug
+    // NOTE: QEMU 10.x has a bug where csrw satp hangs with non-zero values
+    // Skipping MMU enable to allow boot to proceed
     for c in b"Before enable_sv39\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
-    // crate::memory::Sv39::enable_sv39();
-    for c in b"After enable_sv39 (MMU skip\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
+    // crate::memory::Sv39::enable_sv39(); // DISABLED due to QEMU satp bug
+    for c in b"After enable_sv39 (MMU skip - QEMU bug)\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
+    *crate::process::context::MMU_ENABLED.lock() = false; // Force MMU disabled
     for c in b"Boot 5.3\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
 
     // Initialize file system

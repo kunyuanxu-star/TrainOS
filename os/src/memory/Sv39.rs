@@ -756,15 +756,24 @@ pub fn init_kernel_page_table() {
     // CRITICAL: Without execute permission, the CPU cannot fetch instructions
     // from the mapped pages, causing hangs when trying to execute code.
     let pages = region_size / PAGE_SIZE;
+    let mut mapped = 0;
     for i in 0..pages {
         let va = VirtAddr::new(region_base + i * PAGE_SIZE);
         let pa = PhysAddr::new(region_base + i * PAGE_SIZE);
-        if pt_manager.map(va, pa, PTEFlags::kernel_rwx()).is_err() {
-            break;
+        if pt_manager.map(va, pa, PTEFlags::kernel_rwx()).is_ok() {
+            mapped += 1;
         }
     }
+    crate::print!("[vm] Mapped ");
+    crate::console::print_dec(mapped);
+    crate::print!(" pages (of ");
+    crate::console::print_dec(pages);
+    crate::println!(" requested)");
 
     *KERNEL_PAGE_TABLE.lock() = Some(pt_manager);
+    crate::print!("[vm] Kernel page table ready at PPN=0x");
+    crate::console::print_hex(ppn.0);
+    crate::println!("");
 }
 
 /// Get kernel page table manager
@@ -848,21 +857,28 @@ pub fn enable_sv39() {
 
     // Write the actual satp value to enable MMU
     crate::println!("[vm] Test satp write passed, attempting full MMU enable...");
+    crate::println!("[vm] About to write satp...");
     unsafe {
+        // Use mv to load value into t0, then write to satp CSR
         core::arch::asm!(
-            "csrw satp, {0}",
+            "fence.i",
+            "mv t0, {0}",
+            "csrw satp, t0",
             in(reg) satp_value,
             options(nostack)
         );
     }
+    crate::println!("[vm] satp written, about to sfence...");
 
     // Flush TLB to ensure no stale translations
+    // sfence.vma with rs1=zero, rs2=zero flushes all entries
     unsafe {
         core::arch::asm!(
             "sfence.vma zero, zero",
             options(nostack)
         );
     }
+    crate::println!("[vm] sfence done, about to verify...");
 
     // Verify the write worked
     let satp_verify: usize;
@@ -873,6 +889,8 @@ pub fn enable_sv39() {
             options(nostack)
         );
     }
+    crate::println!("[vm] satp verify read, value=0x");
+    crate::console::print_hex(satp_verify);
 
     if (satp_verify >> 60) == 8 {
         crate::println!("[vm] MMU enabled successfully!");

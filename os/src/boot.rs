@@ -191,18 +191,18 @@ extern "C" fn rust_main() -> ! {
     // Boot 5 - Debug markers
     for c in b"Boot 5\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
 
-    // TEMPORARILY DISABLED: clint_init causes triple fault
     // Initialize CLINT timer FIRST (arm the timer) - before setting stvec
     for c in b"Before clint_init\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
-    // crate::drivers::interrupt::clint_init();
+    crate::drivers::interrupt::clint_init();
     for c in b"After clint_init\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
 
     for c in b"Boot 5.1\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
 
-    // TEMPORARILY DISABLED: timer interrupt causes triple fault
     // Enable timer interrupt in sie BEFORE setting stvec
-    // crate::trap::enable_timer_interrupt();
-    for c in b"Boot 5.1.1 (timer disabled)\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
+    for c in b"Before enable_timer_interrupt\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
+    crate::trap::enable_timer_interrupt();
+    for c in b"After enable_timer_interrupt\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
+    for c in b"Boot 5.1.1\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
 
     // Initialize trap handling (set stvec)
     for c in b"Before trap::init\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }

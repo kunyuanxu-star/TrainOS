@@ -874,8 +874,20 @@ pub fn enable_sv39() {
         crate::console::sbi_console_putchar_raw(*c as usize);
     }
 
-    // Update global state - pretend MMU is enabled so code compiles
-    *crate::process::context::MMU_ENABLED.lock() = true;
+    // Reset SATP to BARE mode (0) to clear any previous test value
+    // This ensures we're in physical addressing mode
+    for c in b"[vm] Resetting SATP to BARE mode\n" {
+        crate::console::sbi_console_putchar_raw(*c as usize);
+    }
+    unsafe {
+        core::arch::asm!(
+            "csrw satp, zero",
+            options(nostack)
+        );
+    }
+
+    // Update global state - MMU is NOT enabled
+    *crate::process::context::MMU_ENABLED.lock() = false;
 
     for c in b"[vm] MMU not enabled (workaround)\n" {
         crate::console::sbi_console_putchar_raw(*c as usize);

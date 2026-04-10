@@ -34,16 +34,13 @@ pub enum InterruptCause {
 /// Enable timer interrupt in sie (Supervisor Interrupt Enable)
 /// We need to enable STIE (bit 5) for timer interrupts to fire
 pub fn enable_timer_interrupt() {
-    // Use a simple approach: read current sie, set STIE, write back
+    // Use a simple approach: load immediate, then set bits in sie
     // Also enable SSIE (bit 1) and SEIE (bit 9) for completeness
     unsafe {
         core::arch::asm!(
-            // Set STIE (bit 5) using csrs (atomic set)
-            "csrs sie, t0",
-            // Also set SSIE (bit 1) and SEIE (bit 9)
-            // SSIE enables software interrupts, SEIE enables external interrupts
             // 0x422 = 0b10000100010 = SSIE(1) | STIE(5) | SEIE(9)
             "li t0, 0x422",
+            // Set SSIE, STIE, SEIE bits using csrs (atomic set)
             "csrs sie, t0",
             out("t0") _,
         );

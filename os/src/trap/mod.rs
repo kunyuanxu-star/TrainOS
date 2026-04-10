@@ -53,32 +53,6 @@ pub fn init() {
     unsafe {
         let stvec_val = __trap_entry as *const () as usize;
         core::arch::asm!("csrw stvec, {0}", in(reg) stvec_val);
-
-        // Enable interrupts - set SIE bit in sstatus
-        let sie_bit = 1usize << 1;
-        core::arch::asm!(
-            "csrr t0, sstatus",
-            "or t0, t0, {0}",
-            "csrw sstatus, t0",
-            in(reg) sie_bit,
-            out("t0") _
-        );
-    }
-
-    // Initialize CLINT timer for preemption
-    crate::drivers::interrupt::clint_init();
-
-    // Print OK using inline asm
-    unsafe {
-        core::arch::asm!(
-            "li a7, 1",
-            "li a0, 79",  // 'O'
-            "ecall",
-            "li a0, 75",  // 'K'
-            "ecall",
-            "li a0, 10",  // '\n'
-            "ecall"
-        );
     }
 }
 

@@ -348,7 +348,7 @@ pub extern "C" fn do_syscall(trap_frame: *mut crate::process::context::TrapFrame
         226 => sys_mprotect(get_arg0(), get_arg1(), get_arg2()), // mprotect
         214 => sys_brk(get_arg0()),                           // brk
         228 => sys_mlock(get_arg0(), get_arg1()),              // mlock
-        229 => sys_munlock(get_arg0(), get_arg1()),            // munlock
+        230 => sys_munlock(get_arg0(), get_arg1()),            // munlock
 
         // Info
         179 => sys_sysinfo(),                                  // sysinfo

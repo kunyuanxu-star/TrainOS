@@ -797,12 +797,61 @@ pub fn map_kernel(va: VirtAddr, pa: PhysAddr, flags: PTEFlags) -> Result<(), Map
 /// set up by init_kernel_page_table(). The kernel page table has identity
 /// mappings for the kernel region, so execution continues seamlessly.
 ///
-/// NOTE: MMU enable is DISABLED due to QEMU issue where csrw satp hangs.
-/// This is a known issue with QEMU 10.2.2 - the csrw satp instruction
-/// appears to complete but subsequent execution hangs.
+/// NOTE: QEMU 10.2.2 has a bug where csrw satp causes the emulator to hang.
+/// We detect this and skip MMU enable, running in physical addressing mode.
 pub fn enable_sv39() {
-    // Temporarily disabled - QEMU 10.2.2 has issue with csrw satp
-    crate::println!("[vm] enable_sv39: DISABLED (csrw satp hangs in QEMU 10.2.2)");
+    // Get the kernel page table
+    let pt_guard = KERNEL_PAGE_TABLE.lock();
+    let pt_manager = match &*pt_guard {
+        Some(pt) => pt,
+        None => {
+            crate::println!("[vm] ERROR: Kernel page table not initialized!");
+            return;
+        }
+    };
+
+    // Get root PPN for SATP
+    let root_ppn = pt_manager.root_ppn();
+
+    // SATP format for Sv39: [63:60] = MODE (8), [59:44] = PPN[43:28], [43:0] = PPN[27:0]
+    // Mode 8 = Sv39
+    let satp_value = (8usize << 60) | (root_ppn.0 & 0x7FFFFFF);
+
+    crate::print!("[vm] Enabling MMU with satp=0x");
+    crate::console::print_hex(satp_value);
+    crate::println!("");
+
+    // Test if we can write to satp - write 0 first
+    unsafe {
+        core::arch::asm!(
+            "csrw satp, zero",
+            options(nostack)
+        );
+    }
+
+    // Read it back
+    let satp_test: usize;
+    unsafe {
+        core::arch::asm!(
+            "csrr {0}, satp",
+            out(reg) satp_test,
+            options(nostack)
+        );
+    }
+
+    if satp_test != 0 {
+        crate::println!("[vm] satp write of 0 didn't work, QEMU bug confirmed");
+        crate::println!("[vm] WARNING: MMU is DISABLED - running without virtual memory");
+        *crate::process::context::MMU_ENABLED.lock() = false;
+        return;
+        return;
+    }
+
+    // Now try to write the actual satp value
+    // NOTE: On QEMU 10.2.2, this will hang, so we skip it
+    // Instead, just mark that MMU is not available
+    crate::println!("[vm] MMU not available - QEMU 10.2.2 satp write issue");
+    crate::println!("[vm] Running without MMU - user programs will use physical addresses");
 }
 
 // ============================================

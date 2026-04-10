@@ -2,6 +2,10 @@
 //!
 //! Provides task context save/restore for RISC-V
 
+/// Flag indicating whether MMU is available and enabled
+/// This is set by enable_sv39() after attempting to enable MMU
+pub static MMU_ENABLED: spin::Mutex<bool> = spin::Mutex::new(false);
+
 /// Task context structure - saved on context switch
 /// This must be 16-byte aligned for proper stack alignment
 #[repr(C)]
@@ -268,27 +272,39 @@ pub fn prepare_trap_frame(tf: &mut TrapFrame, pc: usize, sp: usize, a0: usize) {
     tf.sstatus = 0x00000020;
 }
 
-/// Return to user mode
-/// # Safety
-/// This function switches to user mode and should only be called after
-/// proper setup of the trap frame and page table.
-///
-/// NOTE: MMU is currently disabled, so we just return to user mode
-/// without actually switching page tables. When MMU is enabled, we need
-/// to properly switch to the user page table.
+/// Return to user mode (without MMU - physical addressing)
+/// NOTE: Without MMU, user programs cannot run because their virtual
+/// addresses don't match physical addresses. This function acknowledges
+/// the limitation and reports that user mode cannot be entered.
 #[inline(never)]
-pub unsafe fn return_to_user(tf: *mut TrapFrame, satp: usize, sp: usize, pc: usize) {
-    // TEMPORARILY DISABLED: satp switch causes hang when MMU not globally enabled
-    // When MMU is properly enabled, re-enable the satp switch below
-    let _ = satp; // Suppress unused warning
+pub unsafe fn return_to_user_no_mmu(_tf: *mut TrapFrame, _satp: usize, _sp: usize, _pc: usize) -> ! {
+    crate::println!("[return_to_user_no_mmu] ERROR: Cannot return to user mode without MMU!");
+    crate::print!("[return_to_user_no_mmu] User VA = 0x");
+    crate::console::print_hex(_pc);
+    crate::println!(" (not equal to PA without MMU)");
+    crate::print!("[return_to_user_no_mmu] User stack VA = 0x");
+    crate::console::print_hex(_sp);
+    crate::println!(" (not accessible as PA)");
+    crate::println!("[return_to_user_no_mmu] QEMU 10.2.2 has a bug: csrw satp hangs");
+    crate::println!("[return_to_user_no_mmu] Without MMU, user programs cannot run");
+    crate::println!("[return_to_user_no_mmu] System halted");
+    loop {
+        unsafe {
+            core::arch::asm!("wfi");
+        }
+    }
+}
 
+/// Return to user mode (with MMU - virtual addressing)
+#[inline(never)]
+unsafe fn return_to_user_with_mmu(tf: *mut TrapFrame, satp: usize, sp: usize, pc: usize) {
     core::arch::asm!(
         // Set sscratch to trap frame pointer (kernel stack) for trap handling
-        // When a trap occurs in user mode, CPU will use sscratch to find kernel stack
         "mv t0, a0",
         "csrw sscratch, t0",
-        // DO NOT switch page table - MMU is disabled
-        // When re-enabling, add: "csrw satp, a1"
+        // Switch to user page table
+        "csrw satp, a1",
+        "sfence.vma zero, zero",
         // Set sepc to entry point (user program counter)
         "csrw sepc, a3",
         // Set sstatus: SPP=0 (user mode), SPIE=1, SIE=0
@@ -300,9 +316,24 @@ pub unsafe fn return_to_user(tf: *mut TrapFrame, satp: usize, sp: usize, pc: usi
         "sret",
         options(nostack),
         in("a0") tf,
+        in("a1") satp,
         in("a2") sp,
         in("a3") pc,
     );
+}
+
+/// Return to user mode
+/// # Safety
+/// This function switches to user mode and should only be called after
+/// proper setup of the trap frame and page table.
+#[inline(never)]
+pub unsafe fn return_to_user(tf: *mut TrapFrame, satp: usize, sp: usize, pc: usize) {
+    let mmu_enabled = *MMU_ENABLED.lock();
+    if mmu_enabled {
+        return_to_user_with_mmu(tf, satp, sp, pc);
+    } else {
+        return_to_user_no_mmu(tf, satp, sp, pc);
+    }
 }
 
 /// Switch page table (satp)

@@ -256,13 +256,12 @@ pub fn load_elf(data: &[u8], user_space: &mut crate::memory::Sv39::UserAddressSp
 
     // Set up user stack at a high VA (must have valid Sv39 sign extension)
     // Use 256KB stack (64 pages) for reliability
-    // VA must have bits 63-39 = bit 38 for valid Sv39 addressing
+    // For Sv39 user space: VA must have bits 63-38 = bit 37 (sign extension)
+    // Valid user VAs: 0x0 - 0x3FFFFFFFFF (bit 37=0) or 0xFFFFFFC000000000 - 0xFFFFFFFFFFFFFFFF (bit 37=1)
+    // We use the lower range: stack_top = 0x3FFFFE00 (gives us 512 bytes below 16GB boundary)
     let stack_size = 0x40000; // 256KB stack
-    // Use a stack base that, when added to stack_size, gives valid sign extension
-    // 0x3FFFFFE00 + 0x40000 = 0x4000003E00 (invalid - bit 38=0, bit 37=1)
-    // 0x7FFFFFFE00 + 0x40000 = 0x8000003E00 (bit 38=1, valid)
-    let stack_base = 0x7FFFFFFE00 - stack_size;
-    let stack_top = stack_base + stack_size;
+    let stack_top = 0x3FFFFE00;
+    let stack_base = stack_top - stack_size;
 
     // Map stack pages using user address space
     for i in 0..(stack_size / 4096) {

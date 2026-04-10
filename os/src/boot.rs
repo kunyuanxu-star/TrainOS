@@ -206,12 +206,80 @@ extern "C" fn rust_main() -> ! {
             inout("a1") ptr, inout("a2") remaining);
     }
 
-    // Enable timer interrupt BEFORE trap::init() to avoid sie write hang
-    // sie.STIE must be set before trap handling is fully initialized
+    // Output "Boot 5.1" directly
+    unsafe {
+        let s = "Boot 5.1\r\n";
+        let len = s.len();
+        let mut ptr = s.as_ptr() as usize;
+        let mut remaining = len;
+        core::arch::asm!(
+            "1: lbu a0, 0(a1)",
+            "   li a7, 1",
+            "   ecall",
+            "   addi a1, a1, 1",
+            "   addi a2, a2, -1",
+            "   bnez a2, 1b",
+            inout("a1") ptr, inout("a2") remaining);
+    }
+
+    // Initialize trap handling (set stvec)
+    crate::trap::init();
+
+    // Output "Boot 5.2" directly
+    unsafe {
+        let s = "Boot 5.2\r\n";
+        let len = s.len();
+        let mut ptr = s.as_ptr() as usize;
+        let mut remaining = len;
+        core::arch::asm!(
+            "1: lbu a0, 0(a1)",
+            "   li a7, 1",
+            "   ecall",
+            "   addi a1, a1, 1",
+            "   addi a2, a2, -1",
+            "   bnez a2, 1b",
+            inout("a1") ptr, inout("a2") remaining);
+    }
+
+    // Initialize CLINT timer FIRST (arm the timer)
+    crate::drivers::interrupt::clint_init();
+
+    // Output "Boot 5.2.1" directly
+    unsafe {
+        let s = "Boot 5.2.1\r\n";
+        let len = s.len();
+        let mut ptr = s.as_ptr() as usize;
+        let mut remaining = len;
+        core::arch::asm!(
+            "1: lbu a0, 0(a1)",
+            "   li a7, 1",
+            "   ecall",
+            "   addi a1, a1, 1",
+            "   addi a2, a2, -1",
+            "   bnez a2, 1b",
+            inout("a1") ptr, inout("a2") remaining);
+    }
+
+    // THEN enable timer interrupt in sie (after timer is armed)
     crate::trap::enable_timer_interrupt();
 
-    // Initialize trap handling
-    crate::trap::init();
+    // Output "Boot 5.2.2" directly
+    unsafe {
+        let s = "Boot 5.2.2\r\n";
+        let len = s.len();
+        let mut ptr = s.as_ptr() as usize;
+        let mut remaining = len;
+        core::arch::asm!(
+            "1: lbu a0, 0(a1)",
+            "   li a7, 1",
+            "   ecall",
+            "   addi a1, a1, 1",
+            "   addi a2, a2, -1",
+            "   bnez a2, 1b",
+            inout("a1") ptr, inout("a2") remaining);
+    }
+
+    // Note: sie write after trap::init() hangs due to unknown cause
 
     // Note: sie write after trap::init() hangs due to unknown cause
     // Timer interrupts are enabled via sstatus.SIE in trap::init()
@@ -222,11 +290,59 @@ extern "C" fn rust_main() -> ! {
     // the trap handler can catch it instead of hanging
     crate::memory::Sv39::enable_sv39();
 
+    // Output "Boot 5.3" directly
+    unsafe {
+        let s = "Boot 5.3\r\n";
+        let len = s.len();
+        let mut ptr = s.as_ptr() as usize;
+        let mut remaining = len;
+        core::arch::asm!(
+            "1: lbu a0, 0(a1)",
+            "   li a7, 1",
+            "   ecall",
+            "   addi a1, a1, 1",
+            "   addi a2, a2, -1",
+            "   bnez a2, 1b",
+            inout("a1") ptr, inout("a2") remaining);
+    }
+
     // Initialize file system
     crate::fs::init();
 
+    // Output "Boot 5.4" directly
+    unsafe {
+        let s = "Boot 5.4\r\n";
+        let len = s.len();
+        let mut ptr = s.as_ptr() as usize;
+        let mut remaining = len;
+        core::arch::asm!(
+            "1: lbu a0, 0(a1)",
+            "   li a7, 1",
+            "   ecall",
+            "   addi a1, a1, 1",
+            "   addi a2, a2, -1",
+            "   bnez a2, 1b",
+            inout("a1") ptr, inout("a2") remaining);
+    }
+
     // Initialize device table for driver services
     crate::syscall::device::init_devices();
+
+    // Output "Boot 5.5" directly
+    unsafe {
+        let s = "Boot 5.5\r\n";
+        let len = s.len();
+        let mut ptr = s.as_ptr() as usize;
+        let mut remaining = len;
+        core::arch::asm!(
+            "1: lbu a0, 0(a1)",
+            "   li a7, 1",
+            "   ecall",
+            "   addi a1, a1, 1",
+            "   addi a2, a2, -1",
+            "   bnez a2, 1b",
+            inout("a1") ptr, inout("a2") remaining);
+    }
 
     // Output "Boot 6" directly
     unsafe {

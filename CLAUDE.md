@@ -1,7 +1,7 @@
 # TrainOS - Claude Code Context
 
 ## Project Overview
-TrainOS is an educational operating system written in Rust for RISC-V 64-bit architecture (rv64gc). Uses RustSBI as boot firmware, runs in QEMU virt machine.
+TrainOS is an educational operating system written in Rust for RISC-V 64-bit architecture (rv64gc). Uses RustSBI as boot firmware, runs on **machina** (preferred) or QEMU.
 
 **Goal**: Surpass Linux in kernel architecture, security, performance, and developer experience.
 
@@ -20,14 +20,28 @@ TrainOS is an educational operating system written in Rust for RISC-V 64-bit arc
 - procfs and sysfs virtual filesystems
 - TCP/IP stack in user-space network service
 
+### Runtime Environment
+
+**Primary**: machina (RISC-V full-system emulator with JIT)
+- Build: `cargo build --release -p os`
+- Run: `./machina/target/debug/machina -M riscv64-ref -bios machina/pc-bios/rustsbi-riscv64-machina-fw_dynamic.bin -kernel TrainOS/target/riscv64gc-unknown-none-elf/release/os -nographic`
+
+**Secondary**: QEMU (has SATP bug, not recommended)
+- Build: `cargo build --release -p os`
+- Run: `qemu-system-riscv64 -machine virt -nographic -bios rustsbi-qemu-new.bin -kernel target/riscv64gc-unknown-none-elf/release/os`
+
 ### Known Issues
+
+**Machina MMU Enable Hang** (2026-04-10):
+- TrainOS hangs during `csrw satp` instruction when enabling MMU on machina
+- Machina's own Sv39 tests pass, suggesting issue is with TrainOS's page table setup
+- MMU is currently disabled; system runs without virtual memory
+- **Investigation needed**: Page table format or SATP value construction may be incorrect
 
 **QEMU SATP Bug** (2026-04-10):
 - QEMU 10.2.2 has a bug where `csrw satp` with non-zero value hangs
-- This prevents MMU (Sv39) from being enabled
-- User programs cannot run without MMU
-- **Workaround**: Use machina (which doesn't have this bug) for testing MMU features
-- Alternative: Wait for QEMU bug fix or use older QEMU version
+- This prevents MMU (Sv39) from being enabled on QEMU
+- **Use machina instead** for MMU testing
 
 **Timer Interrupt Issue** (2026-04-10):
 - `sie.STIE` write causes hang in both QEMU and machina

@@ -34,22 +34,26 @@ TrainOS is an educational operating system written in Rust for RISC-V 64-bit arc
 
 **Machina MMU Enable Hang** (2026-04-10):
 - TrainOS hangs during `csrw satp` instruction when writing a non-zero PPN
-- Root cause identified: `csrwi satp, 8` (mode=Sv39, PPN=0) works, but `csrw satp, t0` where t0 contains PPN=0x80080 hangs
+- Root cause identified:
+  - `csrwi satp, 8` (mode=Sv39, PPN=0) works
+  - `csrw satp, t0` where t0 contains 0x0 works
+  - `csrw satp, t0` where t0 contains non-zero PPN hangs
 - The hang occurs in the `csrw` instruction itself, not in subsequent code
-- This appears to be a machina-specific issue - machina's own Sv39 tests pass with `csrw`
+- This appears to be a machina JIT issue, not MMU setup - machina's own Sv39 unit tests pass (they call `mmu.set_satp()` directly, not through the CSR instruction)
 - MMU is currently DISABLED; system runs in BARE mode without virtual memory
-- **Symptom**: Writing SATP with non-zero PPN causes CPU to hang
-- **TODO**: Investigate machina's MMU implementation for potential differences from spec
+- Without MMU, user programs cannot run (VA != PA)
+- **TODO**: Investigate machina's JIT compilation of `csrw satp` instruction
 
 **QEMU SATP Bug** (2026-04-10):
 - QEMU 10.2.2 has a bug where `csrw satp` with non-zero value hangs
 - This prevents MMU (Sv39) from being enabled on QEMU
 - **Use machina instead** for MMU testing
 
-**Timer Interrupt Issue** (2026-04-10):
-- `sie.STIE` write causes hang in both QEMU and machina
-- CLINT MMIO direct access works
-- Timer-based preemption is disabled until this is resolved
+**Timer Interrupt Issue FIXED** (2026-04-10):
+- Root cause: Instruction order bug in `enable_timer_interrupt()` - `li t0` came AFTER `csrs sie, t0`
+- Fix: Corrected instruction order to load immediate before using it
+- Timer interrupt setup now works on machina
+- Timer-based preemption is disabled because system runs without MMU
 
 **Release Build Hang FIXED** (2026-04-10):
 - Root cause: LLVM optimizer issue with functions using inline asm + spin::Mutex in release mode

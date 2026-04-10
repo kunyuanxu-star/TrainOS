@@ -726,6 +726,7 @@ static KERNEL_PAGE_TABLE: Mutex<Option<PageTableManager>> = Mutex::new(None);
 
 /// Initialize the kernel page table
 /// We create a new page table and add identity mappings for the kernel.
+#[inline(never)]
 pub fn init_kernel_page_table() {
     // Read the current SATP
     let satp: usize;
@@ -812,45 +813,73 @@ pub fn map_kernel(va: VirtAddr, pa: PhysAddr, flags: PTEFlags) -> Result<(), Map
 /// NOTE: QEMU has a bug where csrw satp with non-zero value hangs.
 /// This affects QEMU 9.x, 10.x on all platforms.
 /// FOR MACHINA: Machina does NOT have this bug, so we enable MMU here.
+#[inline(never)]
 pub fn enable_sv39() {
-    // Get the kernel page table
-    let pt_guard = KERNEL_PAGE_TABLE.lock();
-    let pt_manager = match &*pt_guard {
-        Some(pt) => pt,
-        None => {
-            crate::println!("[vm] ERROR: Kernel page table not initialized!");
-            return;
-        }
-    };
-
     // Get root PPN for SATP
-    let root_ppn = pt_manager.root_ppn();
+    let satp_value;
+    {
+        // Get the kernel page table
+        let pt_guard = KERNEL_PAGE_TABLE.lock();
+        let pt_manager = match &*pt_guard {
+            Some(pt) => pt,
+            None => {
+                for c in b"[vm] ERROR: Kernel page table not initialized!\n" {
+                    crate::console::sbi_console_putchar_raw(*c as usize);
+                }
+                return;
+            }
+        };
 
-    // SATP format for Sv39: [63:60] = MODE (8), [59:44] = PPN[43:28], [43:0] = PPN[27:0]
-    // Mode 8 = Sv39
-    let satp_value = (8usize << 60) | (root_ppn.0 & 0x7FFFFFF);
+        // Get root PPN for SATP
+        let root_ppn = pt_manager.root_ppn();
 
-    crate::print!("[vm] Enabling MMU with satp=0x");
-    crate::console::print_hex(satp_value);
-    crate::println!("");
+        // SATP format for Sv39: [63:60] = MODE (8), [59:44] = PPN[43:28], [43:0] = PPN[27:0]
+        // Mode 8 = Sv39
+        satp_value = (8usize << 60) | (root_ppn.0 & 0x7FFFFFF);
+    } // pt_guard dropped here - don't hold lock while enabling MMU
+
+    // Print the SATP value in hex using raw console
+    for c in b"[vm] Enabling MMU with satp=0x" {
+        crate::console::sbi_console_putchar_raw(*c as usize);
+    }
+    // Print hex digits manually to avoid buffered console
+    let hex_chars = b"0123456789abcdef";
+    let mut printed = false;
+    for i in (0..16).rev() {
+        let nibble = (satp_value >> (i * 4)) & 0xf;
+        if nibble != 0 || printed || i == 0 {
+            printed = true;
+            crate::console::sbi_console_putchar_raw(hex_chars[nibble as usize] as usize);
+        }
+    }
+    for c in b"\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
 
     // Actually write to SATP to enable MMU
-    // This will cause an sfence.vma to ensure TLB is flushed
+    for c in b"[vm] About to write SATP\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
+
     unsafe {
-        // Flush TLB before enabling MMU
-        core::arch::asm!("sfence.vma");
+        // Use csrrs to write to SATP (atomic read-set)
+        let _ = satp_value;
+        core::arch::asm!(
+            "csrw satp, {0}",
+            in(reg) satp_value,
+            options(nostack)
+        );
+    }
+    for c in b"[vm] SATP write done\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
 
-        // Write to satp to enable Sv39
-        core::arch::asm!("csrw satp, {0}", in(reg) satp_value);
-
-        // Flush TLB again after enabling
+    // Flush TLB after enabling
+    unsafe {
         core::arch::asm!("sfence.vma");
     }
+    for c in b"[vm] sfence.vma done\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
 
     // Update global state
     *crate::process::context::MMU_ENABLED.lock() = true;
 
-    crate::println!("[vm] MMU enabled successfully");
+    for c in b"[vm] MMU enabled successfully\n" {
+        crate::console::sbi_console_putchar_raw(*c as usize);
+    }
 }
 
 // ============================================

@@ -42,6 +42,7 @@ TrainOS is an educational operating system written in Rust for RISC-V 64-bit arc
 - This appears to be a machina JIT issue, not MMU setup - machina's own Sv39 unit tests pass (they call `mmu.set_satp()` directly, not through the CSR instruction)
 - MMU is currently DISABLED; system runs in BARE mode without virtual memory
 - Without MMU, user programs cannot run (VA != PA)
+- **Workaround**: Kernel builtin shell runs in supervisor mode (no MMU required)
 - **TODO**: Investigate machina's JIT compilation of `csrw satp` instruction
 
 **QEMU SATP Bug** (2026-04-10):
@@ -52,13 +53,19 @@ TrainOS is an educational operating system written in Rust for RISC-V 64-bit arc
 **Timer Interrupt Issue FIXED** (2026-04-10):
 - Root cause: Instruction order bug in `enable_timer_interrupt()` - `li t0` came AFTER `csrs sie, t0`
 - Fix: Corrected instruction order to load immediate before using it
-- Timer interrupt setup now works on machina
-- Timer-based preemption is disabled because system runs without MMU
+- Timer interrupts now fire correctly (WFI returns on timer tick)
+- Preemptive scheduling requires MMU to switch to user mode
 
 **Release Build Hang FIXED** (2026-04-10):
 - Root cause: LLVM optimizer issue with functions using inline asm + spin::Mutex in release mode
 - Fix: Added `#[inline(never)]` to `sbi_console_putchar_raw` (console.rs) and `init_page_table_allocator_with_pool` (Sv39.rs)
 - Release build now boots successfully to Boot 6 like debug build
+
+**Kernel Builtin Shell** (2026-04-10):
+- When MMU is disabled, system runs a kernel builtin shell in supervisor mode
+- Displays system banner and status on boot
+- Uses WFI for power management when idle
+- Timer interrupts wake the system from WFI
 
 ## Architecture
 

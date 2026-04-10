@@ -33,10 +33,13 @@ TrainOS is an educational operating system written in Rust for RISC-V 64-bit arc
 ### Known Issues
 
 **Machina MMU Enable Hang** (2026-04-10):
-- TrainOS hangs during `csrw satp` instruction when enabling MMU on machina
-- Machina's own Sv39 tests pass, suggesting issue is with TrainOS's page table setup
-- MMU is currently disabled; system runs without virtual memory
-- **Investigation needed**: Page table format or SATP value construction may be incorrect
+- TrainOS hangs during `csrw satp` instruction when writing a non-zero PPN
+- Root cause identified: `csrwi satp, 8` (mode=Sv39, PPN=0) works, but `csrw satp, t0` where t0 contains PPN=0x80080 hangs
+- The hang occurs in the `csrw` instruction itself, not in subsequent code
+- This appears to be a machina-specific issue - machina's own Sv39 tests pass with `csrw`
+- MMU is currently DISABLED; system runs in BARE mode without virtual memory
+- **Symptom**: Writing SATP with non-zero PPN causes CPU to hang
+- **TODO**: Investigate machina's MMU implementation for potential differences from spec
 
 **QEMU SATP Bug** (2026-04-10):
 - QEMU 10.2.2 has a bug where `csrw satp` with non-zero value hangs

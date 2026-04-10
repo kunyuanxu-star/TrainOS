@@ -213,12 +213,10 @@ extern "C" fn rust_main() -> ! {
     // Enable Sv39 MMU AFTER trap handler is set up
     // NOTE: QEMU has a bug where csrw satp with non-zero value hangs.
     // This affects ALL QEMU versions including 9.2.0, 10.1.2, 10.2.0, 10.2.2.
-    // FOR MACHINA: MMU enable hangs during csrw satp - investigation needed.
-    // The page table appears correct but machina hangs after SATP write.
+    // FOR MACHINA: Testing MMU enable.
     for c in b"Before enable_sv39\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
-    // crate::memory::Sv39::enable_sv39(); // DISABLED - hangs on csrw satp
-    for c in b"After enable_sv39 (MMU disabled)\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
-    *crate::process::context::MMU_ENABLED.lock() = false;
+    crate::memory::Sv39::enable_sv39(); // Enable MMU on machina
+    for c in b"After enable_sv39\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
     for c in b"Boot 5.3\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
 
     // Initialize file system

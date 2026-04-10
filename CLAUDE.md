@@ -5,7 +5,7 @@ TrainOS is an educational operating system written in Rust for RISC-V 64-bit arc
 
 **Goal**: Surpass Linux in kernel architecture, security, performance, and developer experience.
 
-## Current Status (2026-04-09)
+## Current Status (2026-04-10)
 
 ### Completed Phases
 
@@ -19,6 +19,16 @@ TrainOS is an educational operating system written in Rust for RISC-V 64-bit arc
 - SMP multicore support
 - procfs and sysfs virtual filesystems
 - TCP/IP stack in user-space network service
+
+### Known Issues
+
+**Release Build Hang** (2026-04-10):
+- Release build (`cargo build -p os --release`) hangs at "Boot 1" on both QEMU and machina
+- Debug build (`cargo build -p os`) boots successfully to Boot 6
+- Issue occurs with all optimization levels (tested 0, 1, "z", 2)
+- Root cause unknown - appears to be in memory::init() or inline asm
+- Disassembly shows the hang happens during init_kernel_page_table() call
+- **Workaround**: Use debug build for development
 
 ## Architecture
 

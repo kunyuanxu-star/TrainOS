@@ -187,8 +187,15 @@ cargo objcopy -p user --bin <name> -- -O binary os/bin/<name>.bin
 
 ## Next Steps
 
-1. **Network virtqueue DMA** - Implement actual DMA-based frame send/receive
-2. **Enhanced shell** - More commands, better usability
-3. **Error handling** - Improve robustness of services
-4. **Security hardening** - Full capability enforcement
-5. **Namespace isolation** - Process isolation improvements
+1. **Investigate machina SATP hang** (HIGH PRIORITY):
+   - `csrw satp` with non-zero PPN hangs in machina JIT
+   - `csrwi satp, 8` (mode=Sv39, PPN=0) works
+   - `csrw satp, t0` where t0=0 works, but t0=0x80080 hangs
+   - Likely issue in machina JIT code generation for csrw with non-zero immediate register
+   - Need to add debug logging in cpus.rs handle_priv_csr for SATP writes
+
+2. **Network virtqueue DMA** - Implement actual DMA-based frame send/receive
+3. **Enhanced shell** - More commands, better usability
+4. **Error handling** - Improve robustness of services
+5. **Security hardening** - Full capability enforcement
+6. **Namespace isolation** - Process isolation improvements

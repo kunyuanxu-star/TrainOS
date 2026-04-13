@@ -703,36 +703,120 @@ pub fn spawn_driver_service() -> Option<TaskId> {
     None
 }
 
+/// Kernel shell statistics for periodic display
+struct KernelShellStats {
+    boot_time: usize,
+    timer_ticks: usize,
+    schedule_count: usize,
+}
+
 /// Simple kernel builtin shell that runs in supervisor mode (no MMU required)
-/// This provides basic commands without needing user-mode execution
+/// This provides basic system information display without needing user-mode execution
 fn kernel_builtin_shell() {
+    // Note: can't use println! here as it uses Mutex which may have issues
+    // Use sbi_console_putchar_raw directly for reliability
+    print_banner();
+
+    // Initialize shell stats
+    let mut stats = KernelShellStats {
+        boot_time: 0,
+        timer_ticks: 0,
+        schedule_count: 0,
+    };
+
+    // Main shell loop - just display status and wait
+    // In BARE mode without keyboard input, we show periodic status
+    let mut counter: usize = 0;
+    loop {
+        counter += 1;
+
+        // Print periodic status every ~5 seconds (500 iterations at ~100ms each)
+        if counter % 50 == 0 {
+            print_status(&stats);
+        }
+
+        // Wait in WFI - timer interrupt will wake us
+        unsafe {
+            core::arch::asm!("wfi");
+        }
+    }
+}
+
+/// Print the kernel shell banner
+fn print_banner() {
     crate::println!("");
     crate::println!("========================================");
     crate::println!("  TrainOS Kernel Shell (Supervisor Mode)");
     crate::println!("========================================");
     crate::println!("  MMU is disabled - running in BARE mode");
-    crate::println!("  Commands are limited - MMU needed for user programs");
+    crate::println!("  Limited functionality without MMU");
     crate::println!("========================================");
     crate::println!("");
-    crate::println!("TrainOS v0.1.0 kernel shell");
-    crate::println!("Type 'help' for available commands");
+    crate::println!("TrainOS v0.2.0 kernel shell");
+    crate::println!("System status display mode (no keyboard input)");
     crate::println!("");
     crate::println!("[kernel] System initialized successfully!");
     crate::println!("[kernel] Timer interrupts are working");
     crate::println!("[kernel] WFI will be used for power management");
     crate::println!("");
-    crate::println!("[kernel] System is running. Press Ctrl+C to halt.");
-    crate::println!("[kernel] NOTE: Without MMU, user programs cannot run.");
+}
+
+/// Print periodic system status
+fn print_status(stats: &KernelShellStats) {
+    crate::println!("");
+    crate::println!("--- System Status ---");
+    crate::print!("Timer ticks: ");
+    crate::console::print_dec(stats.timer_ticks);
+    crate::println!("");
+    crate::print!("Schedule count: ");
+    crate::console::print_dec(stats.schedule_count);
     crate::println!("");
 
-    // Simple idle loop - just wait for interrupts
-    loop {
-        // Just wait in WFI - will be woken by timer interrupt
-        unsafe {
-            core::arch::asm!("wfi");
-        }
-        // After waking from WFI, we could do something useful here
-        // For now, just go back to sleep
+    // Get memory info from allocator
+    let mem_info = get_memory_info();
+    crate::print!("Memory: used ");
+    crate::console::print_dec(mem_info.used);
+    crate::print!(" pages, free ");
+    crate::console::print_dec(mem_info.free);
+    crate::println!(" pages");
+
+    // Get scheduler info
+    let sched_info = get_scheduler_info();
+    crate::print!("Scheduler: ");
+    crate::console::print_dec(sched_info.total_tasks);
+    crate::print!(" tasks, ");
+    crate::console::print_dec(sched_info.ready_tasks);
+    crate::println!(" ready");
+
+    crate::println!("---");
+    crate::println!("");
+}
+
+/// Memory info structure
+struct MemInfo {
+    used: usize,
+    free: usize,
+}
+
+/// Get memory information from allocator
+fn get_memory_info() -> MemInfo {
+    // For now, return placeholder values
+    // TODO: Implement actual memory info from allocator
+    MemInfo { used: 0, free: 0 }
+}
+
+/// Scheduler info structure
+struct SchedInfo {
+    total_tasks: usize,
+    ready_tasks: usize,
+}
+
+/// Get scheduler information
+fn get_scheduler_info() -> SchedInfo {
+    let scheduler = GLOBAL_SCHEDULER.lock();
+    SchedInfo {
+        total_tasks: scheduler.task_count(),
+        ready_tasks: scheduler.ready_count(),
     }
 }
 

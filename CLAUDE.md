@@ -61,19 +61,26 @@ TrainOS is an educational operating system written in Rust for RISC-V 64-bit arc
 - Fix: Added `#[inline(never)]` to `sbi_console_putchar_raw` (console.rs) and `init_page_table_allocator_with_pool` (Sv39.rs)
 - Release build now boots successfully to Boot 6 like debug build
 
-**Kernel Builtin Shell** (2026-04-10):
+**Kernel Builtin Shell** (2026-04-13):
 - When MMU is disabled, system runs a kernel builtin shell in supervisor mode
-- Displays system banner and status on boot
+- Displays system banner and periodic status (timer ticks, scheduler info, memory info)
 - Uses WFI for power management when idle
 - Timer interrupts wake the system from WFI
+- Shows "--- System Status ---" every ~5 seconds with live tick counter
 
 ## Architecture
 
 **Memory Layout**:
 - 0x80000000: DRAM base (physical)
-- 0x80000000-0x80090000: Page table pool (identity-mapped, 9MB)
+- 0x80080000-0x88000000: Page table pool (128 pages = 512KB)
 - 0x80200000: Kernel text start
 - Sv39 user space: 0x0 - 0x3FFFFFFFFFFF (128GB)
+
+**Page Table Pool**:
+- Located at PA 0x80080000 (128 pages, 512KB total)
+- Pool base address was previously 0x88000000 but that address is at the RAM boundary (0x80000000 + 128MB) and is not valid RAM
+- The debug print showing "root_ppn=880" was a print bug (printing truncated value), not actual truncation
+- Both debug and release builds correctly allocate page tables from the pool at 0x80080000
 
 **Key Constants**: PAGE_SIZE=4096, MAX_TASKS=256
 

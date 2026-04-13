@@ -16,6 +16,18 @@ core::arch::global_asm!(
 );
 
 // Trap entry point - all traps/interrupts go through here
+// Assembly helper for SATP write - placed in .text.boot section
+// Note: sfence.vma removed - in M-mode with PMP, sfence.vma is not needed
+// for SATP changes (sfence.vma is for VS-stage guest page table changes)
+core::arch::global_asm!(
+    ".section .text.boot,\"ax\",@progbits",
+    ".globl _write_satp",
+    ".align 2",
+    "_write_satp:",
+    "    csrw satp, a0",
+    "    ret",
+);
+
 core::arch::global_asm!(
     ".section .text.trap,\"ax\",@progbits",
     ".globl __trap_entry",
@@ -108,6 +120,21 @@ fn panic(_info: &core::panic::PanicInfo) -> ! {
         unsafe {
             core::arch::asm!("wfi");
         }
+    }
+}
+
+// External assembly function to write SATP and flush TLB
+// This is in a separate function to ensure JIT handles it correctly
+extern "C" {
+    fn _write_satp(satp: usize);
+}
+
+/// Write to SATP CSR and flush TLB
+/// Uses an external assembly wrapper to ensure proper JIT handling
+#[inline(never)]
+pub fn write_satp_and_flush(satp: usize) {
+    unsafe {
+        _write_satp(satp);
     }
 }
 
@@ -210,13 +237,9 @@ extern "C" fn rust_main() -> ! {
     for c in b"After trap::init\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
     for c in b"Boot 5.2\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
 
-    // Enable Sv39 MMU AFTER trap handler is set up
-    // NOTE: QEMU has a bug where csrw satp with non-zero value hangs.
-    // This affects ALL QEMU versions including 9.2.0, 10.1.2, 10.2.0, 10.2.2.
-    // FOR MACHINA: Testing MMU enable.
-    for c in b"Before enable_sv39\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
-    crate::memory::Sv39::enable_sv39(); // Enable MMU on machina
-    for c in b"After enable_sv39\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
+    // MMU DISABLED - csrw satp with non-zero PPN hangs in machina JIT
+    for c in b"[BOOT] MMU disabled (machina JIT issue)\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
+    // crate::memory::Sv39::enable_sv39();
     for c in b"Boot 5.3\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
 
     // Initialize file system

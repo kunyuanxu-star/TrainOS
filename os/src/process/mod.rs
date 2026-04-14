@@ -779,20 +779,26 @@ fn print_status(_stats: &KernelShellStats) {
 
     // Get real system ticks from the global counter
     let ticks = get_ticks() as usize;
-    crate::print!("System ticks: ");
+    let uptime_secs = ticks / 100;  // Timer fires at ~100Hz (10ms interval)
+    crate::print!("Uptime: ");
+    crate::console::print_dec(uptime_secs);
+    crate::print!("s (" );
     crate::console::print_dec(ticks);
-    crate::println!("");
+    crate::println!(" ticks)");
 
     // Get HART info
     let hart_id = crate::smp::cpu::get_hart_id();
     crate::print!("HART ID: ");
     crate::console::print_dec(hart_id);
 
-    // Get interrupt count
+    // Get interrupt count and calculate IRQ rate
     let irq_count = crate::smp::cpu::get_irq_count();
+    let irq_rate = if uptime_secs > 0 { irq_count / uptime_secs } else { 0 };
     crate::print!(", IRQs: ");
     crate::console::print_dec(irq_count);
-    crate::println!("");
+    crate::print!(" (");
+    crate::console::print_dec(irq_rate);
+    crate::println!("/s)");
 
     // Get memory info from allocator
     let mem_info = get_memory_info();

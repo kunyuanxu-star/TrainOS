@@ -293,25 +293,6 @@ pub extern "C" fn do_syscall(trap_frame: *mut crate::process::context::TrapFrame
         core::arch::asm!("mv {}, a7", out(reg) syscall_id);
     }
 
-    // Debug: print syscall number
-    // Print '0' to '9' for single digit, 'D' for double digit
-    let tmp = syscall_id;
-    if tmp >= 10 {
-        for c in b"D" {
-            crate::console::sbi_console_putchar_raw(*c as usize);
-        }
-    } else {
-        for c in &[b'0' + (tmp as u8)] {
-            crate::console::sbi_console_putchar_raw(*c as usize);
-        }
-    }
-
-    // Get arguments from trap frame
-    let _arg0 = unsafe { (*trap_frame).a0 };
-    let _arg1 = unsafe { (*trap_frame).a1 };
-    let _arg2 = unsafe { (*trap_frame).a2 };
-    let _arg3 = unsafe { (*trap_frame).a3 };
-
     let result = match syscall_id {
         // File operations (Linux numbers)
         63 => sys_read(get_arg0(), get_arg1(), get_arg2()),     // read
@@ -442,7 +423,7 @@ pub extern "C" fn do_syscall(trap_frame: *mut crate::process::context::TrapFrame
         1105 => sys_spawn(get_arg0()),
 
         _ => {
-            crate::println!("[syscall] Unknown syscall: unknown");
+            // Unknown syscall - return error
             -1
         }
     };

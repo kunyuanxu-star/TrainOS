@@ -22,6 +22,8 @@ TrainOS is an educational operating system written in Rust for RISC-V 64-bit arc
 
 ### Kernel Shell Features (BARE Mode)
 - Global system tick counter incremented by timer interrupts
+- Uptime display (seconds and total ticks)
+- IRQ count and rate (interrupts per second)
 - MLFQ scheduler queue visualization (4 queues, pri 0-3)
 - Real-time memory usage statistics (used/total/free and percentage)
 - HART ID display
@@ -29,11 +31,11 @@ TrainOS is an educational operating system written in Rust for RISC-V 64-bit arc
 - WFI power management
 
 ### Recent Changes (2026-04-14)
-- Added SYSTEM_TICKS global counter for real-time tick tracking
-- Enhanced kernel shell with task queue distribution display
-- Added total_pages stat to allocator
-- Improved memory display to show used/total KB and percentage
-- Committed TB flush fix to machina upstream
+- Added uptime and IRQ rate to periodic status display
+- Fixed duplicate syscall numbers (29, 96, 200, 201)
+- Removed dead code and unused imports
+- Applied cargo fix suggestions for code quality
+- Removed debug print from syscall handler
 
 **Phase 1-8: Core Infrastructure Complete**
 

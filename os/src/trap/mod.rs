@@ -209,6 +209,9 @@ extern "C" fn handle_trap(trap_frame: *mut crate::process::context::TrapFrame) {
 
 /// Handle timer interrupt - trigger task scheduling
 fn handle_timer_interrupt() {
+    // Increment system tick counter
+    crate::process::increment_ticks();
+
     // Re-arm the timer for the next quantum using direct CLINT MMIO
     // This avoids the SBI_SET_TIMER hang issue with RustSBI 0.4.0
     let mtime = unsafe { *(0x0200bff8usize as *const u64) };

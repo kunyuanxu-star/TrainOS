@@ -37,6 +37,19 @@ pub static KERNEL_STACK_TOP: Mutex<Option<usize>> = Mutex::new(None);
 /// Flag to request scheduler reschedule
 pub static SCHEDULE_REQUESTED: Mutex<bool> = Mutex::new(false);
 
+/// Global system tick counter - incremented by timer interrupt
+pub static SYSTEM_TICKS: Mutex<u64> = Mutex::new(0);
+
+/// Increment the system tick counter (called from timer interrupt)
+pub fn increment_ticks() {
+    *SYSTEM_TICKS.lock() += 1;
+}
+
+/// Get current system ticks
+pub fn get_ticks() -> u64 {
+    *SYSTEM_TICKS.lock()
+}
+
 /// Request a schedule - called from sys_sched_yield
 pub fn request_schedule() {
     *SCHEDULE_REQUESTED.lock() = true;
@@ -765,20 +778,26 @@ fn print_banner() {
 fn print_status(stats: &KernelShellStats) {
     crate::println!("");
     crate::println!("--- System Status ---");
-    crate::print!("Timer ticks: ");
-    crate::console::print_dec(stats.timer_ticks);
+
+    // Get real system ticks from the global counter
+    let ticks = get_ticks() as usize;
+    crate::print!("System ticks: ");
+    crate::console::print_dec(ticks);
     crate::println!("");
-    crate::print!("Schedule count: ");
-    crate::console::print_dec(stats.schedule_count);
+
+    // Get HART info
+    let hart_id = crate::smp::cpu::get_hart_id();
+    crate::print!("HART ID: ");
+    crate::console::print_dec(hart_id);
     crate::println!("");
 
     // Get memory info from allocator
     let mem_info = get_memory_info();
     crate::print!("Memory: used ");
-    crate::console::print_dec(mem_info.used);
-    crate::print!(" pages, free ");
-    crate::console::print_dec(mem_info.free);
-    crate::println!(" pages");
+    crate::console::print_dec(mem_info.used * 4096 / 1024);
+    crate::print!(" KB, free ");
+    crate::console::print_dec(mem_info.free * 4096 / 1024);
+    crate::println!(" KB");
 
     // Get scheduler info
     let sched_info = get_scheduler_info();
@@ -800,9 +819,13 @@ struct MemInfo {
 
 /// Get memory information from allocator
 fn get_memory_info() -> MemInfo {
-    // For now, return placeholder values
-    // TODO: Implement actual memory info from allocator
-    MemInfo { used: 0, free: 0 }
+    let allocator = crate::memory::allocator::PAGE_ALLOCATOR.lock();
+    let stats = allocator.get_stats();
+    let free = allocator.free_pages();
+    MemInfo {
+        used: stats.pages_allocated,
+        free,
+    }
 }
 
 /// Scheduler info structure

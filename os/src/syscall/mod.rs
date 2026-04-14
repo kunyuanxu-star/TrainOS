@@ -1253,15 +1253,61 @@ fn sys_setpgid(_pid: usize, _pgid: usize) -> isize {
 }
 
 /// Getrusage - get resource usage
+/// struct rusage { struct timeval ru_utime; struct timeval ru_stime; ... }
+/// Linux x86_64 rusage is 112 bytes total
 fn sys_getrusage(_who: usize, usage: usize) -> isize {
-    crate::println!("[syscall] getrusage called");
-    // Return zeros
-    if usage != 0 {
-        let ptr = usage as *mut u64;
-        for _i in 0..16 {
-            unsafe { ptr.write(0); }
-        }
+    if usage == 0 {
+        return -1;
     }
+
+    // Get system uptime
+    let ticks = crate::process::get_ticks();
+    let uptime_secs = ticks * 10 / 1_000_000;
+    let uptime_usecs = (ticks * 10) % 1_000_000;
+
+    // Get memory stats
+    let allocator = crate::memory::allocator::PAGE_ALLOCATOR.lock();
+    let stats = allocator.get_stats();
+
+    unsafe {
+        let ptr = usage as *mut u64;
+
+        // ru_utime.tv_sec (offset 0)
+        ptr.write(uptime_secs as u64);
+        // ru_utime.tv_usec (offset 8)
+        *((ptr as *mut u8).add(8) as *mut u64) = uptime_usecs as u64;
+
+        // ru_stime.tv_sec (offset 16)
+        *((ptr as *mut u8).add(16) as *mut u64) = uptime_secs as u64;
+        // ru_stime.tv_usec (offset 24)
+        *((ptr as *mut u8).add(24) as *mut u64) = uptime_usecs as u64;
+
+        // ru_maxrss - maximum resident set size (in KB)
+        // This is the peak memory used
+        *((ptr as *mut u8).add(48) as *mut u64) = (stats.pages_allocated * 4) as u64;
+
+        // ru_ixrss - shared memory size (0)
+        *((ptr as *mut u8).add(56) as *mut u64) = 0;
+
+        // ru_idrss - unshared data size (0)
+        *((ptr as *mut u8).add(64) as *mut u64) = 0;
+
+        // ru_isrss - unshared stack size (0)
+        *((ptr as *mut u8).add(72) as *mut u64) = 0;
+
+        // ru_minflt - page reclaims (0)
+        *((ptr as *mut u8).add(80) as *mut u64) = 0;
+
+        // ru_cminflt - page reclaims (0)
+        *((ptr as *mut u8).add(88) as *mut u64) = 0;
+
+        // ru_majflt - page faults (0)
+        *((ptr as *mut u8).add(96) as *mut u64) = 0;
+
+        // ru_cmajflt - page faults (0)
+        *((ptr as *mut u8).add(104) as *mut u64) = 0;
+    }
+
     0
 }
 

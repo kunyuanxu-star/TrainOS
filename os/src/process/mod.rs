@@ -807,6 +807,26 @@ fn print_status(stats: &KernelShellStats) {
     crate::console::print_dec(sched_info.ready_tasks);
     crate::println!(" ready");
 
+    // Get detailed task info
+    let task_info = get_task_info();
+    crate::print!("  Q0(P0): ");
+    crate::console::print_dec(task_info.queue_len[0]);
+    crate::print!(" Q1(P1): ");
+    crate::console::print_dec(task_info.queue_len[1]);
+    crate::print!(" Q2(P2): ");
+    crate::console::print_dec(task_info.queue_len[2]);
+    crate::print!(" Q3(P3): ");
+    crate::console::print_dec(task_info.queue_len[3]);
+    crate::println!("");
+
+    if task_info.current_task_id > 0 {
+        crate::print!("  Running: task ");
+        crate::console::print_dec(task_info.current_task_id);
+        crate::print!(" (pri=");
+        crate::console::print_dec(task_info.current_priority);
+        crate::println!(")");
+    }
+
     crate::println!("---");
     crate::println!("");
 }
@@ -840,6 +860,26 @@ fn get_scheduler_info() -> SchedInfo {
     SchedInfo {
         total_tasks: scheduler.task_count(),
         ready_tasks: scheduler.ready_count(),
+    }
+}
+
+/// Task info structure for kernel shell display
+pub struct TaskInfo {
+    pub queue_len: [usize; 4],
+    pub current_task_id: usize,
+    pub current_priority: usize,
+    pub total_ready: usize,
+}
+
+/// Get task information from scheduler
+pub fn get_task_info() -> TaskInfo {
+    let scheduler = GLOBAL_SCHEDULER.lock();
+    let info = scheduler.get_task_info();
+    TaskInfo {
+        queue_len: info.queue_len,
+        current_task_id: info.current_task_id,
+        current_priority: info.current_priority,
+        total_ready: info.total_ready,
     }
 }
 

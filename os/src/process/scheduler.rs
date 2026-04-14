@@ -304,6 +304,39 @@ impl Scheduler {
     pub fn task_count(&self) -> usize {
         self.task_count
     }
+
+    /// Get information about all tasks in the scheduler
+    pub fn get_task_info(&self) -> SchedulerTaskInfo {
+        let mut info = SchedulerTaskInfo::default();
+
+        // Count tasks in each queue
+        for (i, q) in self.queues.iter().enumerate() {
+            info.queue_len[i] = q.len();
+            info.total_ready += q.len();
+        }
+
+        // Current task
+        if let Some(ref current) = self.current {
+            info.current_task_id = current.tcb.id.as_usize();
+            info.current_priority = current.priority;
+            info.total_ready += 1;
+        }
+
+        info
+    }
+}
+
+/// Information about tasks in the scheduler
+#[derive(Default)]
+pub struct SchedulerTaskInfo {
+    /// Number of tasks in each queue
+    pub queue_len: [usize; NUM_QUEUES],
+    /// Current running task ID
+    pub current_task_id: usize,
+    /// Current task priority
+    pub current_priority: usize,
+    /// Total ready tasks
+    pub total_ready: usize,
 }
 
 /// Global scheduler instance

@@ -469,17 +469,14 @@ fn advance_sepc() {
 fn sys_read(fd: usize, _buf: usize, _count: usize) -> isize {
     // For stdin (fd 0), return EOF for now (no keyboard input)
     if fd == 0 {
-        // In a real implementation, this would read from keyboard
-        // For now, return that no data is available
-        crate::println!("[syscall] read from stdin (not implemented)");
+        // No keyboard input available - return EOF
         0
     } else if fd == 1 || fd == 2 {
         // Can't read from stdout/stderr
         -1
     } else {
-        // File or other fd
-        crate::println!("[syscall] read from fd");
-        -1  // Not implemented yet
+        // File or other fd - not implemented
+        -1
     }
 }
 
@@ -503,9 +500,8 @@ pub fn sys_write(fd: usize, buf: usize, count: usize) -> isize {
         // Can't write to stdin
         -1
     } else {
-        // File or other fd
-        crate::println!("[syscall] write to fd");
-        -1  // Not implemented yet
+        // File or other fd - not implemented
+        -1
     }
 }
 

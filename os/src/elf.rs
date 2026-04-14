@@ -6,19 +6,13 @@
 pub const ELF_MAGIC: [u8; 4] = [0x7F, b'E', b'L', b'F'];
 
 /// ELF file class
-pub const ELFCLASS32: u8 = 1;
 pub const ELFCLASS64: u8 = 2;
 
 /// ELF endianness
 pub const ELFDATA2LSB: u8 = 1;  // Little endian
-pub const ELFDATA2MSB: u8 = 2;  // Big endian
 
 /// ELF type
-pub const ET_NONE: u16 = 0;
-pub const ET_REL: u16 = 1;     // Relocatable file
 pub const ET_EXEC: u16 = 2;     // Executable file
-pub const ET_DYN: u16 = 3;     // Shared object file
-pub const ET_CORE: u16 = 4;    // Core file
 
 /// ELF machine types
 pub const EM_RISCV: u16 = 243;
@@ -28,9 +22,6 @@ pub const PT_LOAD: u32 = 1;
 
 /// ELF section header types
 pub const SHT_NULL: u32 = 0;
-pub const SHT_PROGBITS: u32 = 1;
-pub const SHT_SYMTAB: u32 = 2;
-pub const SHT_STRTAB: u32 = 3;
 
 /// ELF segment flags
 pub const PF_X: u32 = 1;  // Executable
@@ -45,8 +36,6 @@ pub static SHELL_ELF: &[u8] = include_bytes!("../bin/shell.bin");
 pub static NETWORK_ELF: &[u8] = include_bytes!("../bin/network.bin");
 pub static VFS_ELF: &[u8] = include_bytes!("../bin/vfs.bin");
 
-/// Initial process ELF (loaded at boot as PID 1)
-pub static INIT_ELF: &[u8] = include_bytes!("../bin/init.bin");
 
 /// ELF result
 pub enum ElfResult {
@@ -62,22 +51,6 @@ pub fn is_elf_file(data: &[u8]) -> bool {
         return false;
     }
     data[0..4] == ELF_MAGIC
-}
-
-/// Get ELF class (32 or 64 bit)
-pub fn get_elf_class(data: &[u8]) -> Option<u8> {
-    if data.len() < 5 {
-        return None;
-    }
-    Some(data[4])
-}
-
-/// Get ELF endianness
-pub fn get_elf_endian(data: &[u8]) -> Option<u8> {
-    if data.len() < 6 {
-        return None;
-    }
-    Some(data[5])
 }
 
 /// Validate ELF header for RISC-V
@@ -284,30 +257,3 @@ pub fn load_elf(data: &[u8], user_space: &mut crate::memory::Sv39::UserAddressSp
     Ok((e_entry, stack_top - 16))
 }
 
-/// Get the entry point of an ELF file without loading it
-pub fn get_entry_point(data: &[u8]) -> Option<usize> {
-    if data.len() < 64 {
-        return None;
-    }
-    Some(unsafe { read_u64(data, 24) } as usize)
-}
-
-/// Get the number of program headers
-pub fn get_phdr_count(data: &[u8]) -> Option<usize> {
-    if data.len() < 64 {
-        return None;
-    }
-    Some(unsafe { read_u16(data, 56) } as usize)
-}
-
-/// Parse ELF symbols (for debugging)
-pub fn parse_symbols(data: &[u8]) {
-    if data.len() < 64 {
-        return;
-    }
-
-    let e_shnum = unsafe { read_u16(data, 60) } as usize;
-    if e_shnum == 0 {
-        return;
-    }
-}

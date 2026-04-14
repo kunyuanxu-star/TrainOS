@@ -375,7 +375,7 @@ pub extern "C" fn do_syscall(trap_frame: *mut crate::process::context::TrapFrame
         62 => sys_kill(get_arg0(), get_arg1()),                 // kill
 
         // I/O
-        29 => sys_select(get_arg0(), get_arg1(), get_arg2(), get_arg3(), get_arg4()), // select
+        44 => sys_select(get_arg0(), get_arg1(), get_arg2(), get_arg3(), get_arg4()), // select
         73 => sys_poll(get_arg0(), get_arg1(), get_arg2() as isize),     // poll
         25 => sys_sendfile(get_arg0(), get_arg1(), get_arg2(), get_arg3()), // sendfile
 
@@ -384,8 +384,8 @@ pub extern "C" fn do_syscall(trap_frame: *mut crate::process::context::TrapFrame
         29 => sys_ioctl(get_arg0(), get_arg1(), get_arg2()),     // ioctl
 
         // Time
-        96 => sys_gettimeofday(get_arg0(), get_arg1()),          // gettimeofday
-        201 => sys_settimeofday(get_arg0(), get_arg1()),        // settimeofday
+        169 => sys_gettimeofday(get_arg0(), get_arg1()),          // gettimeofday
+        164 => sys_settimeofday(get_arg0(), get_arg1()),        // settimeofday
         113 => sys_clock_gettime(get_arg0(), get_arg1()),         // clock_gettime
 
         // Process group
@@ -412,8 +412,8 @@ pub extern "C" fn do_syscall(trap_frame: *mut crate::process::context::TrapFrame
         210 => net::sys_shutdown(get_arg0(), get_arg1() as i32), // shutdown
         208 => net::sys_setsockopt(get_arg0(), get_arg1() as i32, get_arg2() as i32, get_arg3(), get_arg4()), // setsockopt
         209 => net::sys_getsockopt(get_arg0(), get_arg1() as i32, get_arg2() as i32, get_arg3(), get_arg4()), // getsockopt
-        200 => net::sys_getsockname(get_arg0(), get_arg1(), get_arg2()), // getsockname
-        201 => net::sys_getpeername(get_arg0(), get_arg1(), get_arg2()), // getpeername
+        18 => net::sys_getsockname(get_arg0(), get_arg1(), get_arg2()), // getsockname
+        19 => net::sys_getpeername(get_arg0(), get_arg1(), get_arg2()), // getpeername
         199 => net::sys_socketpair(get_arg0() as i32, get_arg1() as i32, get_arg2() as i32, get_arg3()), // socketpair
 
         // Epoll

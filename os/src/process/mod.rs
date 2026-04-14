@@ -693,8 +693,6 @@ fn start_scheduler() {
 
 /// Allocate a trap frame on the kernel stack
 fn allocate_kernel_trap_frame() -> *mut crate::process::context::TrapFrame {
-    use crate::process::context::TRAP_FRAME_SIZE;
-
     // Allocate a page for the trap frame
     let page = match crate::memory::allocator::alloc_page() {
         Some(p) => p,

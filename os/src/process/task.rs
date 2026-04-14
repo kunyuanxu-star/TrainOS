@@ -157,8 +157,9 @@ impl TaskControlBlock {
     }
 
     /// Map a user page directly into the kernel page table
+    #[allow(dead_code)]
     pub fn map_user_page(&mut self, va: usize, pa: usize, flags: crate::memory::Sv39::PTEFlags) -> bool {
-        use crate::memory::Sv39::{VirtAddr, PhysAddr, map_kernel, PTEFlags};
+        use crate::memory::Sv39::{VirtAddr, PhysAddr, map_kernel};
 
         let result = map_kernel(VirtAddr::new(va), PhysAddr::new(pa), flags);
         if result.is_ok() {

@@ -5,9 +5,35 @@ TrainOS is an educational operating system written in Rust for RISC-V 64-bit arc
 
 **Goal**: Surpass Linux in kernel architecture, security, performance, and developer experience.
 
-## Current Status (2026-04-10)
+## Current Status (2026-04-14)
 
 ### Completed Phases
+
+**Phase 1-8: Core Infrastructure Complete**
+
+- Microkernel architecture with minimal kernel (scheduling, memory, IPC, traps only)
+- User-space services: init, driver, fs, network, vfs, shell
+- VirtIO drivers in user space (block and network)
+- Sv39 virtual memory with COW fork support (MMU currently disabled)
+- Preemptive scheduling via timer interrupts
+- SMP multicore support
+- procfs and sysfs virtual filesystems
+- TCP/IP stack in user-space network service
+
+### Kernel Shell Features (BARE Mode)
+- Global system tick counter incremented by timer interrupts
+- MLFQ scheduler queue visualization (4 queues, pri 0-3)
+- Real-time memory usage statistics (used/total/free and percentage)
+- HART ID display
+- Current task ID and priority display
+- WFI power management
+
+### Recent Changes (2026-04-14)
+- Added SYSTEM_TICKS global counter for real-time tick tracking
+- Enhanced kernel shell with task queue distribution display
+- Added total_pages stat to allocator
+- Improved memory display to show used/total KB and percentage
+- Committed TB flush fix to machina upstream
 
 **Phase 1-8: Core Infrastructure Complete**
 
@@ -61,12 +87,18 @@ TrainOS is an educational operating system written in Rust for RISC-V 64-bit arc
 - Fix: Added `#[inline(never)]` to `sbi_console_putchar_raw` (console.rs) and `init_page_table_allocator_with_pool` (Sv39.rs)
 - Release build now boots successfully to Boot 6 like debug build
 
-**Kernel Builtin Shell** (2026-04-13):
+**Kernel Builtin Shell** (2026-04-14):
 - When MMU is disabled, system runs a kernel builtin shell in supervisor mode
-- Displays system banner and periodic status (timer ticks, scheduler info, memory info)
+- Displays enhanced periodic status with:
+  - System tick counter (real-time from global counter)
+  - HART ID
+  - Memory usage (used KB / total KB, % free)
+  - Scheduler task counts (total, ready)
+  - MLFQ queue distribution (Q0-Q3 with priorities)
+  - Current running task ID and priority
 - Uses WFI for power management when idle
 - Timer interrupts wake the system from WFI
-- Shows "--- System Status ---" every ~5 seconds with live tick counter
+- Shows "--- System Status ---" every ~5 seconds
 
 ## Architecture
 

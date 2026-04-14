@@ -718,26 +718,20 @@ pub fn spawn_driver_service() -> Option<TaskId> {
 
 /// Kernel shell statistics for periodic display
 struct KernelShellStats {
-    boot_time: usize,
-    timer_ticks: usize,
     schedule_count: usize,
 }
 
 /// Simple kernel builtin shell that runs in supervisor mode (no MMU required)
 /// This provides basic system information display without needing user-mode execution
 fn kernel_builtin_shell() {
-    // Note: can't use println! here as it uses Mutex which may have issues
-    // Use sbi_console_putchar_raw directly for reliability
     print_banner();
 
     // Initialize shell stats
     let mut stats = KernelShellStats {
-        boot_time: 0,
-        timer_ticks: 0,
         schedule_count: 0,
     };
 
-    // Main shell loop - just display status and wait
+    // Main shell loop - display status and wait
     // In BARE mode without keyboard input, we show periodic status
     let mut counter: usize = 0;
     loop {
@@ -762,15 +756,16 @@ fn print_banner() {
     crate::println!("  TrainOS Kernel Shell (Supervisor Mode)");
     crate::println!("========================================");
     crate::println!("  MMU is disabled - running in BARE mode");
-    crate::println!("  Limited functionality without MMU");
+    crate::println!("  Enhanced MLFQ scheduler");
     crate::println!("========================================");
     crate::println!("");
-    crate::println!("TrainOS v0.2.0 kernel shell");
-    crate::println!("System status display mode (no keyboard input)");
+    crate::println!("TrainOS v0.3.0 kernel shell");
+    crate::println!("Periodic status mode (no keyboard input)");
     crate::println!("");
     crate::println!("[kernel] System initialized successfully!");
-    crate::println!("[kernel] Timer interrupts are working");
-    crate::println!("[kernel] WFI will be used for power management");
+    crate::println!("[kernel] Timer interrupts: active");
+    crate::println!("[kernel] Scheduler: MLFQ (4 queues, pri 0-3)");
+    crate::println!("[kernel] WFI power management: enabled");
     crate::println!("");
 }
 

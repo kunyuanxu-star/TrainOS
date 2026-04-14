@@ -89,7 +89,7 @@ fn start_hart(hart_id: usize) {
     crate::println!("");
 
     // Register the HART
-    register_hart(hart_id, secondary_hart_entry as usize, stack_top);
+    register_hart(hart_id, secondary_hart_entry as *const () as usize, stack_top);
 
     // Use SBI to start the HART
     // SBI hart_start(hart_id, entry_addr, priv) - not available in RustSBI legacy

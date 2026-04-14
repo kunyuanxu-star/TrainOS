@@ -690,8 +690,33 @@ fn sys_waitid(_which: usize, _pid: usize, _info_addr: usize, _options: usize, _r
 // Scheduling
 // ============================================
 
-fn sys_nanosleep(_req: usize, _rem: usize) -> isize {
-    // Simple implementation - just return success
+fn sys_nanosleep(req: usize, _rem: usize) -> isize {
+    // struct timespec { long tv_sec; long tv_nsec; }
+    if req == 0 {
+        return -1;
+    }
+
+    // Read requested sleep time
+    let secs: u64;
+    let nsecs: u64;
+    unsafe {
+        secs = *(req as *const u64);
+        nsecs = *((req + 8) as *const u64);
+    }
+
+    // Convert to ticks (1 tick = 10ms)
+    let total_nsecs = secs * 1_000_000_000 + nsecs;
+    let ticks_to_sleep = (total_nsecs / 10_000_000) as usize;  // 10ms per tick
+
+    let start_ticks = crate::process::get_ticks();
+
+    // Simple busy-wait for now (WFI would be better but requires async)
+    while (crate::process::get_ticks() - start_ticks) < (ticks_to_sleep as u64) {
+        unsafe {
+            core::arch::asm!("wfi");
+        }
+    }
+
     0
 }
 

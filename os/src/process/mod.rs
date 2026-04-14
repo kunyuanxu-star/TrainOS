@@ -50,6 +50,11 @@ pub fn get_ticks() -> u64 {
     *SYSTEM_TICKS.lock()
 }
 
+/// Get total task count from scheduler
+pub fn get_task_count() -> usize {
+    GLOBAL_SCHEDULER.lock().task_count()
+}
+
 /// Request a schedule - called from sys_sched_yield
 pub fn request_schedule() {
     *SCHEDULE_REQUESTED.lock() = true;

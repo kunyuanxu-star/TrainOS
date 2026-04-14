@@ -351,7 +351,7 @@ pub extern "C" fn do_syscall(trap_frame: *mut crate::process::context::TrapFrame
         230 => sys_munlock(get_arg0(), get_arg1()),            // munlock
 
         // Info
-        179 => sys_sysinfo(),                                  // sysinfo
+        179 => sys_sysinfo(get_arg0()),                                  // sysinfo
 
         // Process creation
         220 => sys_clone(trap_frame, get_arg0(), get_arg1(), get_arg2(), get_arg3()), // clone
@@ -759,10 +759,84 @@ fn sys_munlock(_addr: usize, _len: usize) -> isize {
 // ============================================
 
 /// Get system information
-fn sys_sysinfo() -> isize {
-    // Return basic sysinfo structure
-    // struct sysinfo { long uptime; ... }
-    // For now, just return a dummy value
+/// struct sysinfo { long uptime; unsigned long loads[3];
+///   unsigned long totalram, freeram, sharedram, bufferram;
+///   unsigned long totalswap, freeswap; unsigned short procs, pad;
+///   unsigned long totalhigh, freehigh; unsigned int mem_unit; }
+fn sys_sysinfo(addr: usize) -> isize {
+    if addr == 0 {
+        return -1;
+    }
+
+    // Get uptime from system ticks (at 10ms interval)
+    let uptime = crate::process::get_ticks() * 10 / 1000;
+
+    // Get memory info
+    let allocator = crate::memory::allocator::PAGE_ALLOCATOR.lock();
+    let stats = allocator.get_stats();
+    let free_pages = allocator.free_pages();
+    let total_pages = stats.total_pages;
+    let used_pages = stats.pages_allocated;
+
+    // Linux sysinfo structure (64-bit)
+    // offset 0: uptime (long = 8 bytes)
+    // offset 8: loads[3] (3 * 8 = 24 bytes)
+    // offset 32: totalram (8 bytes)
+    // offset 40: freeram (8 bytes)
+    // offset 48: sharedram (8 bytes)
+    // offset 56: bufferram (8 bytes)
+    // offset 64: totalswap (8 bytes)
+    // offset 72: freeswap (8 bytes)
+    // offset 80: procs (2 bytes)
+    // offset 82: pad (2 bytes)
+    // offset 84: totalhigh (8 bytes)
+    // offset 92: freehigh (8 bytes)
+    // offset 100: mem_unit (4 bytes)
+    // Total: 104 bytes minimum
+
+    unsafe {
+        let ptr = addr as *mut u64;
+
+        // uptime (seconds)
+        ptr.write(uptime as u64);
+
+        // loads[3] - 1, 5, 15 min (set to 0 for now)
+        *((ptr as *mut u8).add(8) as *mut u64) = 0;
+        *((ptr as *mut u8).add(16) as *mut u64) = 0;
+        *((ptr as *mut u8).add(24) as *mut u64) = 0;
+
+        // totalram (in bytes)
+        *((ptr as *mut u8).add(32) as *mut u64) = (total_pages * 4096) as u64;
+
+        // freeram (in bytes)
+        *((ptr as *mut u8).add(40) as *mut u64) = (free_pages * 4096) as u64;
+
+        // sharedram (0 for now)
+        *((ptr as *mut u8).add(48) as *mut u64) = 0;
+
+        // bufferram (0 for now)
+        *((ptr as *mut u8).add(56) as *mut u64) = 0;
+
+        // totalswap (0 - no swap)
+        *((ptr as *mut u8).add(64) as *mut u64) = 0;
+
+        // freeswap (0 - no swap)
+        *((ptr as *mut u8).add(72) as *mut u64) = 0;
+
+        // procs (number of tasks)
+        let task_count = crate::process::get_task_count();
+        *((ptr as *mut u8).add(80) as *mut u16) = task_count as u16;
+
+        // totalhigh (0 - no highmem)
+        *((ptr as *mut u8).add(84) as *mut u64) = 0;
+
+        // freehigh (0 - no highmem)
+        *((ptr as *mut u8).add(92) as *mut u64) = 0;
+
+        // mem_unit (1 byte)
+        *((ptr as *mut u8).add(100) as *mut u32) = 1;
+    }
+
     0
 }
 
@@ -1121,32 +1195,44 @@ fn sys_ioctl(_fd: usize, _request: usize, _arg: usize) -> isize {
 // Time Operations
 // ============================================
 
-/// Get current time
+/// Get current time of day
+/// timeval: { long tv_sec; long tv_usec; }
 fn sys_gettimeofday(tv: usize, _tz: usize) -> isize {
-    crate::println!("[syscall] gettimeofday called");
-    // Return dummy values
-    if tv != 0 {
-        unsafe {
-            *(tv as *mut u64) = 0;      // seconds
-            *((tv + 8) as *mut u64) = 0; // microseconds
-        }
+    if tv == 0 {
+        return -1;
+    }
+
+    // Get uptime in seconds and microseconds
+    let ticks = crate::process::get_ticks();
+    let seconds = ticks * 10 / 1_000_000;  // 10ms per tick
+    let microseconds = (ticks * 10) % 1_000_000;  // remainder in microseconds
+
+    unsafe {
+        *(tv as *mut u64) = seconds as u64;           // seconds
+        *((tv + 8) as *mut u64) = microseconds as u64; // microseconds
     }
     0
 }
 
-/// Set the time
+/// Set the time (not implemented)
 fn sys_settimeofday(_tv: usize, _tz: usize) -> isize {
     -1
 }
 
-/// Clock_gettime
+/// Clock_gettime - CLOCK_REALTIME = 0, CLOCK_MONOTONIC = 1
 fn sys_clock_gettime(_clockid: usize, tp: usize) -> isize {
-    crate::println!("[syscall] clock_gettime called");
-    if tp != 0 {
-        unsafe {
-            *((tp) as *mut u64) = 0;      // seconds
-            *((tp + 8) as *mut u64) = 0; // nanoseconds
-        }
+    if tp == 0 {
+        return -1;
+    }
+
+    // Get ticks and convert to seconds/nanoseconds
+    let ticks = crate::process::get_ticks();
+    let seconds = (ticks * 10) / 1_000_000;  // 10ms per tick
+    let nanos = ((ticks * 10) % 1_000_000) * 1000;  // remainder in nanoseconds
+
+    unsafe {
+        *(tp as *mut u64) = seconds as u64;    // seconds
+        *((tp + 8) as *mut u64) = nanos as u64; // nanoseconds
     }
     0
 }
@@ -1179,9 +1265,10 @@ fn sys_getrusage(_who: usize, usage: usize) -> isize {
     0
 }
 
-/// Uptime - get system uptime
+/// Uptime - get system uptime in seconds
 fn sys_uptime() -> isize {
-    0
+    let ticks = crate::process::get_ticks();
+    (ticks * 10 / 1000) as isize  // 10ms per tick
 }
 
 // ============================================

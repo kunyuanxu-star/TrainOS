@@ -784,6 +784,11 @@ fn print_status(stats: &KernelShellStats) {
     let hart_id = crate::smp::cpu::get_hart_id();
     crate::print!("HART ID: ");
     crate::console::print_dec(hart_id);
+
+    // Get interrupt count
+    let irq_count = crate::smp::cpu::get_irq_count();
+    crate::print!(", IRQs: ");
+    crate::console::print_dec(irq_count);
     crate::println!("");
 
     // Get memory info from allocator

@@ -110,3 +110,8 @@ pub fn get_current_task() -> usize {
 pub fn set_current_task(task_id: usize) {
     get_current_cpu().lock().current_task = task_id;
 }
+
+/// Get interrupt count for current CPU
+pub fn get_irq_count() -> usize {
+    get_current_cpu().lock().irq_count
+}

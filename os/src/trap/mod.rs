@@ -63,6 +63,9 @@ pub fn init() {
 /// a0 = pointer to trap frame on stack
 #[no_mangle]
 extern "C" fn handle_trap(trap_frame: *mut crate::process::context::TrapFrame) {
+    // Increment interrupt count for this CPU
+    crate::smp::cpu::increment_irq_count();
+
     // Set the current trap frame pointer for the scheduler
     {
         let mut current_tf = crate::process::CURRENT_TRAP_FRAME.lock();

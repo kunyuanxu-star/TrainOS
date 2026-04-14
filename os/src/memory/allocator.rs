@@ -35,6 +35,7 @@ pub struct AllocatorStats {
     pub pages_freed: usize,
     pub allocation_failures: usize,
     pub cached_allocations: usize,
+    pub total_pages: usize,
 }
 
 impl Default for AllocatorStats {
@@ -44,6 +45,7 @@ impl Default for AllocatorStats {
             pages_freed: 0,
             allocation_failures: 0,
             cached_allocations: 0,
+            total_pages: MAX_PAGES - 0x80071,  // Subtract kernel reserved pages
         }
     }
 }
@@ -62,6 +64,7 @@ impl BitmapPageAllocator {
                 pages_freed: 0,
                 allocation_failures: 0,
                 cached_allocations: 0,
+                total_pages: MAX_PAGES - 0x80071,
             },
         }
     }

@@ -788,11 +788,13 @@ fn print_status(stats: &KernelShellStats) {
 
     // Get memory info from allocator
     let mem_info = get_memory_info();
-    crate::print!("Memory: used ");
+    crate::print!("Memory: ");
     crate::console::print_dec(mem_info.used * 4096 / 1024);
-    crate::print!(" KB, free ");
-    crate::console::print_dec(mem_info.free * 4096 / 1024);
-    crate::println!(" KB");
+    crate::print!("/");
+    crate::console::print_dec(mem_info.total * 4096 / 1024);
+    crate::print!(" KB used/free, ");
+    crate::console::print_dec(mem_info.free * 100 / mem_info.total.max(1));
+    crate::println!("% free");
 
     // Get scheduler info
     let sched_info = get_scheduler_info();
@@ -830,6 +832,7 @@ fn print_status(stats: &KernelShellStats) {
 struct MemInfo {
     used: usize,
     free: usize,
+    total: usize,
 }
 
 /// Get memory information from allocator
@@ -840,6 +843,7 @@ fn get_memory_info() -> MemInfo {
     MemInfo {
         used: stats.pages_allocated,
         free,
+        total: stats.total_pages,
     }
 }
 

@@ -397,11 +397,11 @@ pub fn schedule() {
 /// Perform actual task switch from within trap handler
 /// This is called after a syscall that requested a schedule (like sys_sched_yield)
 /// trap_frame: the current trap frame (on kernel stack)
-pub fn do_schedule(trap_frame: *mut context::TrapFrame) {
+pub fn do_schedule(_trap_frame: *mut context::TrapFrame) {
     let mut scheduler = GLOBAL_SCHEDULER.lock();
 
     // Take the current task
-    let mut current_tcb_opt = CURRENT_TASK.lock().take();
+    let current_tcb_opt = CURRENT_TASK.lock().take();
 
     if current_tcb_opt.is_none() {
         return;
@@ -704,7 +704,7 @@ fn allocate_kernel_trap_frame() -> *mut crate::process::context::TrapFrame {
         core::ptr::write_bytes(page as *mut u8, 0, 4096);
     }
 
-    (page as *mut crate::process::context::TrapFrame)
+    page as *mut crate::process::context::TrapFrame
 }
 
 /// Spawn the driver service (called from init in Phase 3)
@@ -730,7 +730,7 @@ fn kernel_builtin_shell() {
     print_banner();
 
     // Initialize shell stats
-    let mut stats = KernelShellStats {
+    let stats = KernelShellStats {
         schedule_count: 0,
     };
 
@@ -773,7 +773,7 @@ fn print_banner() {
 }
 
 /// Print periodic system status
-fn print_status(stats: &KernelShellStats) {
+fn print_status(_stats: &KernelShellStats) {
     crate::println!("");
     crate::println!("--- System Status ---");
 

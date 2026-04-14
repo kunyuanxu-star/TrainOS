@@ -234,7 +234,7 @@ pub fn load_elf(data: &[u8], user_space: &mut crate::memory::Sv39::UserAddressSp
     // We use the lower range: stack_top = 0x3FFFFE00 (gives us 512 bytes below 16GB boundary)
     let stack_size = 0x40000; // 256KB stack
     let stack_top = 0x3FFFFE00;
-    let stack_base = stack_top - stack_size;
+    let _stack_base = stack_top - stack_size;
 
     // Map stack pages using user address space
     for i in 0..(stack_size / 4096) {

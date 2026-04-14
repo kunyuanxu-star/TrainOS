@@ -295,7 +295,7 @@ pub extern "C" fn do_syscall(trap_frame: *mut crate::process::context::TrapFrame
 
     // Debug: print syscall number
     // Print '0' to '9' for single digit, 'D' for double digit
-    let mut tmp = syscall_id;
+    let tmp = syscall_id;
     if tmp >= 10 {
         for c in b"D" {
             crate::console::sbi_console_putchar_raw(*c as usize);
@@ -797,7 +797,7 @@ fn sys_sysinfo(addr: usize) -> isize {
     let stats = allocator.get_stats();
     let free_pages = allocator.free_pages();
     let total_pages = stats.total_pages;
-    let used_pages = stats.pages_allocated;
+    let _used_pages = stats.pages_allocated;
 
     // Linux sysinfo structure (64-bit)
     // offset 0: uptime (long = 8 bytes)
@@ -912,7 +912,7 @@ fn sys_clone(trap_frame: *mut crate::process::context::TrapFrame, flags: usize, 
             let parent_satp = parent.satp & 0x0FFF_FFFF_FFFF; // Mask out mode bits
 
             // Create COW copy of parent's address space
-            if let Some((pt_manager, new_satp)) = crate::memory::Sv39::copy_user_address_space_from_root(parent_satp) {
+            if let Some((_pt_manager, new_satp)) = crate::memory::Sv39::copy_user_address_space_from_root(parent_satp) {
                 child_tcb.satp = new_satp;
                 crate::print!("[syscall] clone: COW address space created\r\n");
             } else {
@@ -1011,7 +1011,7 @@ fn sys_execve(_filename: usize, _argv: usize, _envp: usize) -> isize {
     // Load ELF into user address space
     let (entry_point, user_sp) = match crate::elf::load_elf(HELLO_ELF, &mut user_space) {
         Ok(result) => result,
-        Err(e) => {
+        Err(_e) => {
             crate::println!("[syscall] execve: ELF loading failed");
             return -1;
         }

@@ -1086,7 +1086,7 @@ impl UserAddressSpace {
 /// Both parent and child share the same physical pages initially,
 /// but writes will trigger a page fault and page copy.
 /// Returns the new page table manager and SATP value
-pub fn copy_user_address_space(parent_pt: &PageTableManager) -> Option<(PageTableManager, usize)> {
+pub fn copy_user_address_space(_parent_pt: &PageTableManager) -> Option<(PageTableManager, usize)> {
     let mut new_pt = PageTableManager::new();
 
     // Walk the parent's page table and copy user mappings with COW semantics

@@ -95,7 +95,7 @@ pub fn sys_call(target_pid: usize, port: usize, data_ptr: usize, size: usize,
 /// a0 = target_pid, a1 = port, a2 = rights
 pub fn sys_cap_grant(target_pid: usize, port: PortId, rights: u32) -> isize {
     let cap = Cap::new(port, CapRights(rights));
-    let pid = get_current_pid();
+    let _pid = get_current_pid();
 
     // Add to target process's capability table
     if crate::process::add_capability(target_pid as Pid, cap) {

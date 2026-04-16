@@ -239,7 +239,9 @@ impl BitmapPageAllocator {
         for word in &self.bitmap {
             free += word.count_zeros() as usize;
         }
-        free - (self.base_page * 64)  // Subtract kernel pages
+        // Subtract kernel reserved pages (base_page pages)
+        // base_page is the starting page number, not a bit index
+        free.saturating_sub(self.base_page)
     }
 }
 

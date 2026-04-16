@@ -545,6 +545,20 @@ fn start_scheduler() {
         loop_idle();
     }
 
+    // TEMPORARY DEBUG FLAG: Skip user mode due to return_to_user trap issue
+    // The user mode return fails with scause=0, sepc=0 after sret
+    // Entry point 0x11326 is in page VA 0x11000 -> PA 0x80079000
+    // The 2-byte alignment might be an issue for 32-bit instruction fetch
+    // When SKIP_USER_MODE=false, garbage bytes appear after calling return_to_user
+    // and before the trap, suggesting the sret jumps to address 0 instead of sepc
+    // Set to false to attempt user mode execution
+    const SKIP_USER_MODE: bool = true;
+    if SKIP_USER_MODE {
+        for c in b"[sched] SKIP_USER_MODE=true - running kernel builtin shell\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
+        kernel_builtin_shell();
+        loop_idle();
+    }
+
     // Try to load and run the embedded user program
     for c in b"[sched] Attempting to load user program...\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
 
@@ -668,13 +682,9 @@ fn start_scheduler() {
     crate::print!("[sched] sp=0x");
     crate::console::print_hex(user_sp);
     crate::println!("");
-
-    // Debug: print 'Z' and flush before return_to_user
-    for c in b"Z" {
-        crate::console::sbi_console_putchar_raw(*c as usize);
-    }
-    crate::console::console_flush();
-
+    crate::print!("[sched] trap_frame_ptr=0x");
+    crate::console::print_hex(trap_frame_ptr as usize);
+    crate::println!("");
     crate::println!("[sched] Calling return_to_user...");
     // Return to user mode
     // Note: This switches to the user page table and never returns

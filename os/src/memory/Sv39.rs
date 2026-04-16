@@ -254,11 +254,32 @@ impl PageTableEntry {
         }
     }
 
-    pub fn bits(&self) -> usize {
+    /// Get PTE bits for non-leaf entries (PPN at bits [43:10])
+    pub fn bits_nonleaf(&self) -> usize {
         self.ppn.0 << 10 | self.flags.bits()
     }
 
+    /// Get PTE bits for leaf entries (PPN split across [63:54], [53:45], [44:36])
+    pub fn bits_leaf(&self) -> usize {
+        let ppn = self.ppn.0;
+        let ppn_2 = (ppn >> 18) & 0x3FF;  // top 10 bits
+        let ppn_1 = (ppn >> 9) & 0x1FF;    // middle 9 bits
+        let ppn_0 = ppn & 0x1FF;            // bottom 9 bits
+        ((ppn_2 as usize) << 54) | ((ppn_1 as usize) << 45) | ((ppn_0 as usize) << 36) | self.flags.bits()
+    }
+
+    pub fn bits(&self) -> usize {
+        // For non-leaf entries (V=1, R=0, W=0, X=0), use non-leaf encoding
+        // For leaf entries (R=1 or X=1), use leaf encoding
+        if self.flags.is_leaf() {
+            self.bits_leaf()
+        } else {
+            self.bits_nonleaf()
+        }
+    }
+
     pub fn from_bits(bits: usize) -> Self {
+        // Assume non-leaf format (PPN at bits [43:10])
         Self {
             ppn: PPN(bits >> 10),
             flags: PTEFlags::from_bits(bits & 0xFF),
@@ -724,59 +745,162 @@ pub enum MapError {
 /// Kernel page table instance
 static KERNEL_PAGE_TABLE: Mutex<Option<PageTableManager>> = Mutex::new(None);
 
-/// Initialize the kernel page table
-/// We create a new page table and add identity mappings for the kernel.
+/// Initialize the kernel page table with DIRECT VOLATILE WRITES
+/// This bypasses the map() function to ensure page table entries are actually written
 #[inline(never)]
 pub fn init_kernel_page_table() {
-    // Read the current SATP
-    let satp: usize;
+    for c in b"[vm] init_kernel_page_table()\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
+
+    // Allocate page tables using alloc_page()
+    let root_pa = match crate::memory::allocator::alloc_page() {
+        Some(p) => p,
+        None => {
+            for c in b"[vm] ERROR: Failed to alloc root PT\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
+            return;
+        }
+    };
+
+    let l1_pa = match crate::memory::allocator::alloc_page() {
+        Some(p) => p,
+        None => {
+            for c in b"[vm] ERROR: Failed to alloc L1 PT\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
+            return;
+        }
+    };
+
+    let l2_pa = match crate::memory::allocator::alloc_page() {
+        Some(p) => p,
+        None => {
+            for c in b"[vm] ERROR: Failed to alloc L2 PT\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
+            return;
+        }
+    };
+
+    // Clear all page tables
+    for pa in [root_pa, l1_pa, l2_pa] {
+        unsafe {
+            core::ptr::write_bytes(pa as *mut u8, 0, PAGE_SIZE);
+        }
+    }
+
+    for c in b"[vm] Root PT PA=" { crate::console::sbi_console_putchar_raw(*c as usize); }
+    print_hex(root_pa);
+    for c in b", L1 PA=" { crate::console::sbi_console_putchar_raw(*c as usize); }
+    print_hex(l1_pa);
+    for c in b", L2 PA=" { crate::console::sbi_console_putchar_raw(*c as usize); }
+    print_hex(l2_pa);
+    for c in b"\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
+
+    // Calculate PPNs
+    let root_ppn = root_pa >> 12;
+    let l1_ppn = l1_pa >> 12;
+    let l2_ppn = l2_pa >> 12;
+
+    for c in b"[vm] Root PPN=" { crate::console::sbi_console_putchar_raw(*c as usize); }
+    print_hex(root_ppn);
+    for c in b"\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
+
+    // Sv39 non-leaf PTE format:
+    // [43:10] = PPN (44 bits, contiguous - NOT the 3-field split used for leaf PTEs!)
+    // [7:0] = flags (only V bit used for non-leaf)
+    fn make_nonleaf_pte(ppn: usize) -> u64 {
+        ((ppn as u64) << 10) | 0x01  // V=1, PPN stored contiguously at bits [43:10]
+    }
+
+    // Root[0] = L1 PPN | non-leaf flags (V=1)
+    let root_entry0 = make_nonleaf_pte(l1_ppn);
     unsafe {
-        core::arch::asm!("csrr {0}, satp", out(reg) satp);
+        let root_ptr = root_pa as *mut u64;
+        core::ptr::write_volatile(root_ptr, root_entry0);
+        // Verify
+        let verify = core::ptr::read_volatile(root_ptr);
+        for c in b"[vm] Root[0]=0x" { crate::console::sbi_console_putchar_raw(*c as usize); }
+        print_hex(verify as usize);
+        for c in b"\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
     }
 
-    // Create a new page table
-    let root_pt = PageTable::new();
-    if root_pt.is_none() {
-        // Use sbi_console_putchar_raw directly to avoid buffered console
-        for c in b"[vm] ERROR: Failed to allocate root page table\n" {
-            crate::console::sbi_console_putchar_raw(*c as usize);
+    // L1[0] = L2 PPN | non-leaf flags (V=1)
+    let l1_entry0 = make_nonleaf_pte(l2_ppn);
+    unsafe {
+        let l1_ptr = l1_pa as *mut u64;
+        core::ptr::write_volatile(l1_ptr, l1_entry0);
+        // Verify
+        let verify = core::ptr::read_volatile(l1_ptr);
+        for c in b"[vm] L1[0]=0x" { crate::console::sbi_console_putchar_raw(*c as usize); }
+        print_hex(verify as usize);
+        for c in b"\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
+    }
+
+    // For VA = 0x80000000, VPN = 0x80000, indices = [0, 0, 0]
+    // Sv39 leaf PTE format:
+    // [63:54] = PPN[2] (10 bits)
+    // [53:45] = PPN[1] (9 bits)
+    // [44:36] = PPN[0] (9 bits)
+    // [7:0] = flags
+    // For PA = 0x80000000, PPN = 0x80000 = 0b1000_0000_0000_0000_0000
+    // PPN[2] = 0x2, PPN[1] = 0, PPN[0] = 0
+    // Correct PTE = (0x2 << 54) | (0 << 45) | (0 << 36) | 0x0F = 0x800000000000000F
+
+    // Helper function to create a leaf PTE from PA
+    // PA is 4KB-aligned physical address
+    fn make_leaf_pte(pa: usize, flags: u8) -> u64 {
+        let ppn = pa >> 12;  // Get PPN from PA
+        let ppn_2 = ((ppn >> 18) & 0x3FF) as u64;  // PPN[2] - top 10 bits
+        let ppn_1 = ((ppn >> 9) & 0x1FF) as u64;   // PPN[1] - middle 9 bits
+        let ppn_0 = (ppn & 0x1FF) as u64;            // PPN[0] - bottom 9 bits
+        (ppn_2 << 54) | (ppn_1 << 45) | (ppn_0 << 36) | (flags as u64)
+    }
+
+    // Create leaf PTE for identity mapping
+    let pa_80000000 = 0x80000000usize;
+    let l2_entry0 = make_leaf_pte(pa_80000000, 0x0F);  // kernel_rwx flags
+    for c in b"[vm] L2[0] PTE=0x" { crate::console::sbi_console_putchar_raw(*c as usize); }
+    print_hex(l2_entry0 as usize);
+    for c in b"\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
+
+    unsafe {
+        let l2_ptr = l2_pa as *mut u64;
+        core::ptr::write_volatile(l2_ptr, l2_entry0);
+        // Verify
+        let verify = core::ptr::read_volatile(l2_ptr);
+        for c in b"[vm] L2[0] read=0x" { crate::console::sbi_console_putchar_raw(*c as usize); }
+        print_hex(verify as usize);
+        for c in b"\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
+    }
+
+    // Now map 4MB region (1024 pages = indices 0-1023)
+    // This covers kernel at 0x80200000 and beyond
+    // Each L2 entry is 4KB for 4KB pages
+    for i in 0..1024 {
+        let pa = 0x80000000 + i * PAGE_SIZE;
+        let pte = make_leaf_pte(pa, 0x0F);  // kernel_rwx
+
+        unsafe {
+            let l2_ptr = l2_pa as *mut u64;
+            core::ptr::write_volatile(l2_ptr.add(i), pte);
         }
-        return;
     }
 
-    let root_pt = root_pt.unwrap();
-    let pa = root_pt as *const PageTable as usize;
-    let ppn = PhysAddr(pa).ppn();
-
-    let mut pt_manager = PageTableManager::from_existing_root(ppn.0);
-
-    // Map the entire low memory region including page tables and kernel
-    // PT pool is at 0x80080000-0x80090000 (256KB = 64 pages)
-    // Kernel is at 0x80200000-0x80400000
-    // We need to map from 0x80000000 to 0x80090000 (9MB) to cover everything
-    let region_base = 0x80000000usize;
-    let region_size = 0x00900000usize; // 9 MB - covers PT pool (0x80080000-0x80090000) and kernel
-
-    // Map each page - use kernel_rwx to allow code execution
-    // CRITICAL: Without execute permission, the CPU cannot fetch instructions
-    // from the mapped pages, causing hangs when trying to execute code.
-    let pages = region_size / PAGE_SIZE;
-    let mut mapped = 0;
-    for i in 0..pages {
-        let va = VirtAddr::new(region_base + i * PAGE_SIZE);
-        let pa = PhysAddr::new(region_base + i * PAGE_SIZE);
-        if pt_manager.map(va, pa, PTEFlags::kernel_rwx()).is_ok() {
-            mapped += 1;
+    // Verify entries including index 512 (kernel start at 0x80200000)
+    unsafe {
+        let l2_ptr = l2_pa as *mut u64;
+        for i in [0usize, 1, 511, 512, 1023] {
+            let val = core::ptr::read_volatile(l2_ptr.add(i));
+            let va = 0x80000000 + i * PAGE_SIZE;
+            for c in b"[vm] L2[" { crate::console::sbi_console_putchar_raw(*c as usize); }
+            print_hex(i);
+            for c in b"] VA=0x" { crate::console::sbi_console_putchar_raw(*c as usize); }
+            print_hex(va);
+            for c in b"=0x" { crate::console::sbi_console_putchar_raw(*c as usize); }
+            print_hex(val as usize);
+            for c in b"\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
         }
     }
 
-    // Print "[vm] Mapped X pages (of Y requested)" using sbi_console_putchar_raw only
-    // Note: print_dec/print_hex use buffered console which may cause issues
-    for c in b"[vm] Mapped\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
-
+    // Create page table manager with root
+    let pt_manager = PageTableManager::from_existing_root(root_ppn);
     *KERNEL_PAGE_TABLE.lock() = Some(pt_manager);
 
-    // Print "[vm] Kernel page table ready"
     for c in b"[vm] Kernel page table ready\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
 }
 
@@ -811,28 +935,34 @@ pub fn map_kernel(va: VirtAddr, pa: PhysAddr, flags: PTEFlags) -> Result<(), Map
 /// mappings for the kernel region, so execution continues seamlessly.
 ///
 /// NOTE: QEMU has a bug where csrw satp with non-zero value hangs.
-/// This affects QEMU 9.x, 10.x on all platforms.
-/// FOR MACHINA: MMU enable is temporarily disabled due to a hang in csrw satp
-/// when writing a non-zero PPN. This appears to be a machina-specific issue
-/// where writing SATP with PPN != 0 causes the CPU to hang when trying to
-/// access the page table at that physical address.
+/// This affects QEMU 9.x, 10.x on all platforms. Use machina for MMU testing.
 ///
-/// Symptoms:
-/// - csrwi satp, 8 (mode=Sv39, PPN=0) works fine
-/// - csrw satp, t0 where t0 contains PPN=0 works fine
-/// - csrw satp, t0 where t0 contains PPN=0x80080 hangs
-///
-/// The hang occurs even before any instruction after the csrw executes,
-/// suggesting the issue is in the csrw instruction itself or in how
-/// machina's MMU handles the new PPN value.
-///
-/// TODO: Investigate and fix machina MMU enable issue.
+/// MACHINA FIXED (2026-04-15): The machina JIT now correctly handles csrw satp
+/// with bit 63 set. The fix was in guest/riscv/src/riscv/trans/gen_priv.rs:
+/// - Added SATP to gen_csr_read to return the current value inline
+/// - Added SATP to gen_csr_write to write the value inline
+/// This avoids the exit_tb path that was causing the hang.
+/// Print a number in hex
+fn print_hex(value: usize) {
+    let hex_chars = b"0123456789abcdef";
+    let mut printed = false;
+    for i in (0..16).rev() {
+        let nibble = (value >> (i * 4)) & 0xf;
+        if nibble != 0 || printed || i == 0 {
+            printed = true;
+            crate::console::sbi_console_putchar_raw(hex_chars[nibble as usize] as usize);
+        }
+    }
+}
+
 #[inline(never)]
 pub fn enable_sv39() {
+    for c in b"[vm] enable_sv39 start\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
+
     // Get root PPN for SATP
     let satp_value;
+    let root_pa;
     {
-        // Get the kernel page table
         let pt_guard = KERNEL_PAGE_TABLE.lock();
         let pt_manager = match &*pt_guard {
             Some(pt) => pt,
@@ -844,42 +974,28 @@ pub fn enable_sv39() {
             }
         };
 
-        // Get root PPN for SATP
         let root_ppn = pt_manager.root_ppn();
-
-        // SATP format for Sv39: [63:60] = MODE (8), [59:44] = PPN[43:28], [43:0] = PPN[27:0]
-        // Mode 8 = Sv39
-        // PPN is up to 44 bits (27 + 17), use full 44 bits
-        satp_value = (8usize << 60) | (root_ppn.0 & 0xFFFFFFFFFF); // 44-bit mask for PPN
-    } // pt_guard dropped here - don't hold lock while enabling MMU
-
-    // Print the SATP value in hex using raw console
-    for c in b"[vm] Enabling MMU with satp=0x" {
-        crate::console::sbi_console_putchar_raw(*c as usize);
+        root_pa = root_ppn.0 << 12;
+        satp_value = (8usize << 60) | (root_ppn.0 & 0xFFFFFFFFFF);
     }
-    // Print hex digits manually to avoid buffered console
-    let hex_chars = b"0123456789abcdef";
-    let mut printed = false;
-    for i in (0..16).rev() {
-        let nibble = (satp_value >> (i * 4)) & 0xf;
-        if nibble != 0 || printed || i == 0 {
-            printed = true;
-            crate::console::sbi_console_putchar_raw(hex_chars[nibble as usize] as usize);
-        }
-    }
+
+    for c in b"[vm] root_pa=0x" { crate::console::sbi_console_putchar_raw(*c as usize); }
+    print_hex(root_pa);
+    for c in b", satp=0x" { crate::console::sbi_console_putchar_raw(*c as usize); }
+    print_hex(satp_value);
     for c in b"\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
 
-    // MMU ENABLE IS DISABLED - csrw satp hangs with non-zero PPN on machina
-    for c in b"[vm] MMU enable DISABLED - machina csrw satp hang issue\n" {
-        crate::console::sbi_console_putchar_raw(*c as usize);
-    }
+    // FIXED: machina now correctly handles csrw satp with bit 63 set.
+    // The fix was in guest/riscv/src/riscv/trans/gen_priv.rs:
+    // - Added SATP to gen_csr_read to return the current value inline
+    // - Added SATP to gen_csr_write to write the value inline
+    // This avoids the exit_tb path that was causing the hang.
 
-    // Update global state - pretend MMU is enabled so code compiles
+    // Write SATP and enable MMU
+    crate::boot::write_satp_and_flush(satp_value);
+
+    for c in b"[vm] MMU enabled via Sv39\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
     *crate::process::context::MMU_ENABLED.lock() = true;
-
-    for c in b"[vm] MMU not enabled (workaround)\n" {
-        crate::console::sbi_console_putchar_raw(*c as usize);
-    }
 }
 
 // ============================================

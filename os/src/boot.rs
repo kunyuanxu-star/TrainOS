@@ -17,8 +17,6 @@ core::arch::global_asm!(
 
 // Trap entry point - all traps/interrupts go through here
 // Assembly helper for SATP write - placed in .text.boot section
-// Note: sfence.vma removed - in M-mode with PMP, sfence.vma is not needed
-// for SATP changes (sfence.vma is for VS-stage guest page table changes)
 core::arch::global_asm!(
     ".section .text.boot,\"ax\",@progbits",
     ".globl _write_satp",
@@ -237,9 +235,8 @@ extern "C" fn rust_main() -> ! {
     for c in b"After trap::init\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
     for c in b"Boot 5.2\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
 
-    // MMU DISABLED - csrw satp with non-zero PPN hangs in machina JIT
-    for c in b"[BOOT] MMU disabled (machina JIT issue)\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
-    // crate::memory::Sv39::enable_sv39();
+    // Enable MMU via Sv39
+    crate::memory::Sv39::enable_sv39();
     for c in b"Boot 5.3\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
 
     // Initialize file system

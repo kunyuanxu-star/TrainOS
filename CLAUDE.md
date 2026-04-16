@@ -60,18 +60,36 @@ TrainOS is an educational operating system written in Rust for RISC-V 64-bit arc
 
 ### Known Issues
 
-**Machina MMU Enable Hang** (2026-04-10):
-- TrainOS hangs during `csrw satp` instruction when writing a non-zero PPN
-- Root cause identified:
-  - `csrwi satp, 8` (mode=Sv39, PPN=0) works
-  - `csrw satp, t0` where t0 contains 0x0 works
-  - `csrw satp, t0` where t0 contains non-zero PPN hangs
-- The hang occurs in the `csrw` instruction itself, not in subsequent code
-- This appears to be a machina JIT issue, not MMU setup - machina's own Sv39 unit tests pass (they call `mmu.set_satp()` directly, not through the CSR instruction)
-- MMU is currently DISABLED; system runs in BARE mode without virtual memory
-- Without MMU, user programs cannot run (VA != PA)
-- **Workaround**: Kernel builtin shell runs in supervisor mode (no MMU required)
-- **TODO**: Investigate machina's JIT compilation of `csrw satp` instruction
+**Non-Leaf PTE Encoding FIXED** (2026-04-15):
+- The `make_nonleaf_pte()` function was using 3-field split format (same as leaf PTEs)
+- Per Sv39 spec, non-leaf PTEs must store PPN contiguously at bits [43:10], not split
+- Fixed: `((ppn as u64) << 10) | 0x01` instead of `(ppn_2 << 54) | (ppn_1 << 45) | (ppn_0 << 36) | 0x01`
+- With correct PTE encoding, page table walks now work correctly
+
+**Machina MMU Enable Hang FIXED** (2026-04-16):
+- The hang was caused by machina's JIT taking an exit_tb path when handling `csrw satp` with bit 63 set
+- Fixed in machina by adding inline SATP handling in `gen_csr_read` and `gen_csr_write`
+- TrainOS can now enable MMU successfully
+- User mode execution still has issues (see User Mode Return Issue below)
+
+**User Mode Return Issue** (2026-04-16, INVESTIGATING):
+- When `return_to_user` executes `sret`, a trap occurs with scause=0, sepc=0
+- Entry point 0x11326 is 2-byte aligned (suitable for RVC compressed instructions)
+- ELF flags = 0x40 (unknown meaning), RVC bit not set in standard way
+- User page table appears correctly set up with entry page mapped at VA 0x11000 -> PA 0x80079000
+- The sepc=0 suggests the CPU is trying to execute at address 0, not at the entry point
+- Debug shows `[rtu]` print not appearing, suggesting the inline asm isn't being reached
+- When calling `return_to_user_asm` directly, garbage bytes appear before trap
+- **Workaround**: SKIP_USER_MODE=true in start_scheduler() bypasses user mode
+- **TODO**: Debug why sret jumps to address 0 instead of sepc=entry_point
+  - Possible cause: Entry point 0x11326 is not 4-byte aligned for standard 32-bit instructions
+  - The ELF has RVC code but entry point alignment might cause instruction fetch issues
+  - Need to verify actual page table contents and instruction bytes at entry
+
+**Memory Display Bug FIXED** (2026-04-16):
+- `free_pages()` was computing `free - base_page * 64` incorrectly
+- Fixed to `free.saturating_sub(self.base_page)` - base_page is a page number, not bit index
+- Memory now shows correct 99% free
 
 **QEMU SATP Bug** (2026-04-10):
 - QEMU 10.2.2 has a bug where `csrw satp` with non-zero value hangs
@@ -221,15 +239,22 @@ cargo objcopy -p user --bin <name> -- -O binary os/bin/<name>.bin
 
 ## Next Steps
 
-1. **Investigate machina SATP hang** (HIGH PRIORITY):
-   - `csrw satp` with non-zero PPN hangs in machina JIT
-   - `csrwi satp, 8` (mode=Sv39, PPN=0) works
-   - `csrw satp, t0` where t0=0 works, but t0=0x80080 hangs
-   - Likely issue in machina JIT code generation for csrw with non-zero immediate register
-   - Need to add debug logging in cpus.rs handle_priv_csr for SATP writes
+1. **Fix user mode return issue** (HIGH PRIORITY):
+   - `return_to_user` causes trap with scause=0, sepc=0 after sret
+   - Entry point 0x11326 is 2-byte aligned (RVC compressed code)
+   - User page table correctly maps entry page to PA 0x80079000
+   - Yet sepc=0 suggests sret jumps to address 0 instead
+   - SKIP_USER_MODE=true workaround allows system to run in kernel mode
+   - Debug: verify sret behavior, check if sepc write is working
+   - Alternative: try identity-mapping user VA to same PA as kernel
 
-2. **Network virtqueue DMA** - Implement actual DMA-based frame send/receive
-3. **Enhanced shell** - More commands, better usability
-4. **Error handling** - Improve robustness of services
-5. **Security hardening** - Full capability enforcement
-6. **Namespace isolation** - Process isolation improvements
+2. **Memory display percentage bug** (FIXED):
+   - `free_pages()` was computing `free - base_page * 64` incorrectly
+   - Fixed to `free.saturating_sub(self.base_page)`
+   - Memory now shows correct 99% free
+
+3. **Network virtqueue DMA** - Implement actual DMA-based frame send/receive
+4. **Enhanced shell** - More commands, better usability
+5. **Error handling** - Improve robustness of services
+6. **Security hardening** - Full capability enforcement
+7. **Namespace isolation** - Process isolation improvements

@@ -179,70 +179,31 @@ core::arch::global_asm!(
 
 /// Assembly for returning to user mode via sret
 /// This switches to the new page table and returns to user mode
+/// a0 = trap frame pointer (unused, for debug compatibility)
+/// a1 = new satp value
+/// a2 = new sp
+/// a3 = new pc (sepc)
 core::arch::global_asm!(
     ".globl return_to_user_asm",
     ".type return_to_user_asm, @function",
     "return_to_user_asm:",
-    // a0 = trap frame pointer
-    // a1 = new satp value
-    // a2 = new sp
-    // a3 = new pc (sepc)
-    // Debug: print 'B' at function entry
-    "   li a7, 1",
-    "   li a0, 66",
-    "   ecall",
-    // Save kernel sp to t0
-    "   mv t0, sp",
-    // Debug: print 'C' after saving sp
-    "   li a7, 1",
-    "   li a0, 67",
-    "   ecall",
-    // Set sscratch to trap frame pointer (kernel stack)
-    "   mv t1, a0",
-    // Debug: print 'D' after setting t1
-    "   li a7, 1",
-    "   li a0, 68",
-    "   ecall",
+    // Set sscratch to a0 (trap frame pointer)
+    "   csrw sscratch, a0",
     // Set new page table (satp)
     "   csrw satp, a1",
-    // Debug: print 'E' after satp switch
-    "   li a7, 1",
-    "   li a0, 69",
-    "   ecall",
     // Flush TLB
     "   sfence.vma zero, zero",
-    // Debug: print 'F' after sfence
-    "   li a7, 1",
-    "   li a0, 70",
-    "   ecall",
-    // Set sscratch to kernel trap frame pointer
-    "   csrw sscratch, t1",
-    // Debug: print 'G' after sscratch
-    "   li a7, 1",
-    "   li a0, 71",
-    "   ecall",
     // Set up sepc to the user program counter
     "   csrw sepc, a3",
-    // Debug: print 'H' after sepc
-    "   li a7, 1",
-    "   li a0, 72",
-    "   ecall",
-    // Set up sp to user stack
-    "   mv sp, a2",
-    // Debug: print 'I' after sp switch
-    "   li a7, 1",
-    "   li a0, 73",
-    "   ecall",
     // Set sstatus: SPP=0 (user mode), SPIE=1, SIE=0
-    // SPP is bit 8, SPIE is bit 5
     "   li t0, 0x00000020",
     "   csrw sstatus, t0",
-    // Debug: print 'J' after sstatus
-    "   li a7, 1",
-    "   li a0, 74",
-    "   ecall",
+    // Set up sp to user stack
+    "   mv sp, a2",
     // Return to user mode
     "   sret",
+    // If sret returns (shouldn't happen), loop
+    "1: j 1b"
 );
 
 /// Switch from one task to another
@@ -300,8 +261,8 @@ pub unsafe fn return_to_user_no_mmu(_tf: *mut TrapFrame, _satp: usize, _sp: usiz
 unsafe fn return_to_user_with_mmu(tf: *mut TrapFrame, satp: usize, sp: usize, pc: usize) {
     core::arch::asm!(
         // Set sscratch to trap frame pointer (kernel stack) for trap handling
-        "mv t0, a0",
-        "csrw sscratch, t0",
+        "mv t1, a0",
+        "csrw sscratch, t1",
         // Switch to user page table
         "csrw satp, a1",
         "sfence.vma zero, zero",
@@ -314,6 +275,8 @@ unsafe fn return_to_user_with_mmu(tf: *mut TrapFrame, satp: usize, sp: usize, pc
         "mv sp, a2",
         // Return to user mode
         "sret",
+        // If sret returns (shouldn't happen), loop
+        "1: j 1b",
         options(nostack),
         in("a0") tf,
         in("a1") satp,

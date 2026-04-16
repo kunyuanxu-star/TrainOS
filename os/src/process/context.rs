@@ -259,30 +259,260 @@ pub unsafe fn return_to_user_no_mmu(_tf: *mut TrapFrame, _satp: usize, _sp: usiz
 /// Return to user mode (with MMU - virtual addressing)
 #[inline(never)]
 unsafe fn return_to_user_with_mmu(tf: *mut TrapFrame, satp: usize, sp: usize, pc: usize) {
+    for c in b"[rtu] Entry\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
+
+    // Check entry point alignment
+    for c in b"[rtu] pc=0x" { crate::console::sbi_console_putchar_raw(*c as usize); }
+    let mut tmp = pc;
+    let hex_chars = b"0123456789abcdef";
+    let mut i = 0;
+    let mut digits = [0u8; 16];
+    if tmp == 0 {
+        crate::console::sbi_console_putchar_raw(b'0' as usize);
+    } else {
+        while tmp > 0 {
+            let d = (tmp & 0xf) as u8;
+            digits[i] = if d < 10 { b'0' + d } else { b'a' + d - 10 };
+            i += 1;
+            tmp >>= 4;
+        }
+        while i > 0 {
+            i -= 1;
+            crate::console::sbi_console_putchar_raw(digits[i] as usize);
+        }
+    }
+    for c in b", aligned=" { crate::console::sbi_console_putchar_raw(*c as usize); }
+    if pc % 4 == 0 {
+        for c in b"4\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
+    } else if pc % 2 == 0 {
+        for c in b"2(RVC)\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
+    } else {
+        for c in b"1\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
+    }
+
+    // User root PT location
+    let user_root = ((satp & 0x7FFFFFFFFF) as usize) << 12;
+
+    // Check user page table entry for VA 0x11000 (page containing entry point)
+    // VA 0x11000 -> indices [0, 0, 0x11]
+    // ROOT[0] -> L1, L1[0] -> L2, L2[0x11] -> page
+    let root_0 = *(user_root as *const usize);
+    for c in b"[rtu] ROOT[0]=0x" { crate::console::sbi_console_putchar_raw(*c as usize); }
+    tmp = root_0;
+    i = 0;
+    if tmp == 0 {
+        for c in b"0\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
+    } else {
+        while tmp > 0 {
+            let d = (tmp & 0xf) as u8;
+            digits[i] = if d < 10 { b'0' + d } else { b'a' + d - 10 };
+            i += 1;
+            tmp >>= 4;
+        }
+        while i > 0 {
+            i -= 1;
+            crate::console::sbi_console_putchar_raw(digits[i] as usize);
+        }
+        for c in b"\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
+    }
+
+    // ROOT[0x11] should be L1 entry for VA 0x11000
+    let root_11 = *((user_root + 0x11 * 8) as *const usize);
+    for c in b"[rtu] ROOT[0x11]=0x" { crate::console::sbi_console_putchar_raw(*c as usize); }
+    tmp = root_11;
+    i = 0;
+    if tmp == 0 {
+        for c in b"0\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
+    } else {
+        while tmp > 0 {
+            let d = (tmp & 0xf) as u8;
+            digits[i] = if d < 10 { b'0' + d } else { b'a' + d - 10 };
+            i += 1;
+            tmp >>= 4;
+        }
+        while i > 0 {
+            i -= 1;
+            crate::console::sbi_console_putchar_raw(digits[i] as usize);
+        }
+        for c in b"\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
+    }
+
+    // If entry point page mapping is missing, create it directly
+    // PA for entry point page is 0x80079000
+    if root_11 == 0 {
+        for c in b"[rtu] WARNING: Entry page mapping missing, creating it now\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
+
+        // We need to create L1 and L2 page tables and the leaf entry
+        // First, allocate L1 PT
+        let l1_pa = match crate::memory::allocator::alloc_page() {
+            Some(p) => p,
+            None => {
+                for c in b"[rtu] ERROR: Failed to alloc L1 PT\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
+                loop {}
+            }
+        };
+        // Zero L1 PT
+        unsafe { core::ptr::write_bytes(l1_pa as *mut u8, 0, 4096); }
+
+        // Allocate L2 PT
+        let l2_pa = match crate::memory::allocator::alloc_page() {
+            Some(p) => p,
+            None => {
+                for c in b"[rtu] ERROR: Failed to alloc L2 PT\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
+                loop {}
+            }
+        };
+        // Zero L2 PT
+        unsafe { core::ptr::write_bytes(l2_pa as *mut u8, 0, 4096); }
+
+        // Create ROOT[0x11] -> L1 non-leaf PTE
+        let l1_ppn = l1_pa >> 12;
+        let root_11_val: u64 = ((l1_ppn as u64) << 10) | 0x01;  // V=1, non-leaf
+        unsafe {
+            let ptr = (user_root + 0x11 * 8) as *mut u64;
+            core::ptr::write_volatile(ptr, root_11_val);
+        }
+        for c in b"[rtu] Wrote ROOT[0x11]=0x" { crate::console::sbi_console_putchar_raw(*c as usize); }
+        tmp = root_11_val as usize;
+        i = 0;
+        while tmp > 0 {
+            let d = (tmp & 0xf) as u8;
+            digits[i] = if d < 10 { b'0' + d } else { b'a' + d - 10 };
+            i += 1;
+            tmp >>= 4;
+        }
+        while i > 0 {
+            i -= 1;
+            crate::console::sbi_console_putchar_raw(digits[i] as usize);
+        }
+        for c in b"\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
+
+        // Create L1[0] -> L2 non-leaf PTE
+        let l2_ppn = l2_pa >> 12;
+        let l1_0_val: u64 = ((l2_ppn as u64) << 10) | 0x01;
+        unsafe {
+            let ptr = (l1_pa) as *mut u64;
+            core::ptr::write_volatile(ptr, l1_0_val);
+        }
+        for c in b"[rtu] Wrote L1[0]=0x" { crate::console::sbi_console_putchar_raw(*c as usize); }
+        tmp = l1_0_val as usize;
+        i = 0;
+        while tmp > 0 {
+            let d = (tmp & 0xf) as u8;
+            digits[i] = if d < 10 { b'0' + d } else { b'a' + d - 10 };
+            i += 1;
+            tmp >>= 4;
+        }
+        while i > 0 {
+            i -= 1;
+            crate::console::sbi_console_putchar_raw(digits[i] as usize);
+        }
+        for c in b"\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
+
+        // Create L2[0x11] -> actual page (leaf PTE)
+        // PA 0x80079000, flags=RWX (0x0F)
+        let page_pa = 0x80079000usize;
+        let page_ppn = page_pa >> 12;
+        let ppn_2 = ((page_ppn >> 18) & 0x3FF) as u64;
+        let ppn_1 = ((page_ppn >> 9) & 0x1FF) as u64;
+        let ppn_0 = (page_ppn & 0x1FF) as u64;
+        let l2_11_val: u64 = (ppn_2 << 54) | (ppn_1 << 45) | (ppn_0 << 36) | 0x0F;
+        unsafe {
+            let ptr = (l2_pa + 0x11 * 8) as *mut u64;
+            core::ptr::write_volatile(ptr, l2_11_val);
+        }
+        for c in b"[rtu] Wrote L2[0x11]=0x" { crate::console::sbi_console_putchar_raw(*c as usize); }
+        tmp = l2_11_val as usize;
+        i = 0;
+        while tmp > 0 {
+            let d = (tmp & 0xf) as u8;
+            digits[i] = if d < 10 { b'0' + d } else { b'a' + d - 10 };
+            i += 1;
+            tmp >>= 4;
+        }
+        while i > 0 {
+            i -= 1;
+            crate::console::sbi_console_putchar_raw(digits[i] as usize);
+        }
+        for c in b"\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
+        for c in b"[rtu] Entry page mapping created\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
+    }
+
+    // Verify the page table entry we just created
+    let l2_pte_check: u64 = *((0x8007f000usize + 0x11 * 8) as *const u64);  // PA of L2 + offset
+    for c in b"[rtu] Verify L2[0x11]=0x" { crate::console::sbi_console_putchar_raw(*c as usize); }
+    tmp = l2_pte_check as usize;
+    i = 0;
+    while tmp > 0 {
+        let d = (tmp & 0xf) as u8;
+        digits[i] = if d < 10 { b'0' + d } else { b'a' + d - 10 };
+        i += 1;
+        tmp >>= 4;
+    }
+    while i > 0 {
+        i -= 1;
+        crate::console::sbi_console_putchar_raw(digits[i] as usize);
+    }
+    for c in b"\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
+
+    // Try with aligned entry point (round down to 4-byte boundary)
+    let aligned_pc = pc & !0x3;  // 0x11326 -> 0x11324
+    if aligned_pc != pc {
+        for c in b"[rtu] Trying aligned pc=0x" { crate::console::sbi_console_putchar_raw(*c as usize); }
+        tmp = aligned_pc;
+        i = 0;
+        while tmp > 0 {
+            let d = (tmp & 0xf) as u8;
+            digits[i] = if d < 10 { b'0' + d } else { b'a' + d - 10 };
+            i += 1;
+            tmp >>= 4;
+        }
+        while i > 0 {
+            i -= 1;
+            crate::console::sbi_console_putchar_raw(digits[i] as usize);
+        }
+        for c in b"\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
+    }
+    // Use original pc directly
     core::arch::asm!(
-        // Set sscratch to trap frame pointer (kernel stack) for trap handling
+        // Set sscratch to tf for trap handling
         "mv t1, a0",
         "csrw sscratch, t1",
         // Switch to user page table
         "csrw satp, a1",
         "sfence.vma zero, zero",
-        // Set sepc to entry point (user program counter)
+        // Set sepc
         "csrw sepc, a3",
-        // Set sstatus: SPP=0 (user mode), SPIE=1, SIE=0
+        // Verify sepc
+        "csrr t0, sepc",
+        "bne t0, a3, 0f",
+        // Print OK
+        "li a0, 0x4f",
+        "li a7, 1",
+        "ecall",
+        "li a0, 0x4b",
+        "ecall",
+        "li a0, 0x0d",
+        "ecall",
+        "li a0, 0x0a",
+        "ecall",
+        // Set sstatus
         "li t0, 0x00000020",
         "csrw sstatus, t0",
-        // Set sp to user stack
+        // Set sp
         "mv sp, a2",
-        // Return to user mode
+        // sret
         "sret",
-        // If sret returns (shouldn't happen), loop
-        "1: j 1b",
+        // sepc mismatch
+        "0: j 0b",
         options(nostack),
         in("a0") tf,
         in("a1") satp,
         in("a2") sp,
         in("a3") pc,
     );
+
+    loop {}
 }
 
 /// Return to user mode

@@ -552,7 +552,7 @@ fn start_scheduler() {
     // When SKIP_USER_MODE=false, garbage bytes appear after calling return_to_user
     // and before the trap, suggesting the sret jumps to address 0 instead of sepc
     // Set to false to attempt user mode execution
-    const SKIP_USER_MODE: bool = true;
+    const SKIP_USER_MODE: bool = false;
     if SKIP_USER_MODE {
         for c in b"[sched] SKIP_USER_MODE=true - running kernel builtin shell\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
         kernel_builtin_shell();
@@ -625,6 +625,16 @@ fn start_scheduler() {
     // Create a trap frame for user mode
     crate::print!("[sched] Creating trap frame...\r\n");
     let satp = user_space.get_satp();
+
+    // Debug: print satp
+    for c in b"[sched] user satp=0x" { crate::console::sbi_console_putchar_raw(*c as usize); }
+    crate::console::print_hex(satp);
+    for c in b"\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
+
+    // Debug: verify the page table entry for entry point VA 0x11326
+    // VA 0x11326 -> indices [0, 0, 0x11]
+    // L2 base should be at user pt root
+    for c in b"[sched] Verifying user page table for entry...\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
 
     // Allocate a page for the trap frame on the kernel stack
     let trap_frame_ptr = allocate_kernel_trap_frame();

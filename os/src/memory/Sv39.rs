@@ -240,65 +240,72 @@ impl PTEFlags {
 }
 
 /// Page Table Entry
+/// Sv39 PTE is 64 bits total: PPN (44 bits) + flags (8 bits) = 52 bits, but stored as raw u64
 #[derive(Debug, Clone, Copy)]
+#[repr(packed)]
 pub struct PageTableEntry {
-    pub ppn: PPN,
-    pub flags: PTEFlags,
+    bits: u64,
 }
 
 impl PageTableEntry {
     pub fn new() -> Self {
-        Self {
-            ppn: PPN(0),
-            flags: PTEFlags::new(),
-        }
+        Self { bits: 0 }
     }
 
-    /// Get PTE bits for non-leaf entries (PPN at bits [43:10])
-    pub fn bits_nonleaf(&self) -> usize {
-        self.ppn.0 << 10 | self.flags.bits()
+    /// Get the raw bits
+    pub fn bits(&self) -> u64 {
+        self.bits
     }
 
-    /// Get PTE bits for leaf entries (PPN split across [63:54], [53:45], [44:36])
-    pub fn bits_leaf(&self) -> usize {
-        let ppn = self.ppn.0;
-        let ppn_2 = (ppn >> 18) & 0x3FF;  // top 10 bits
-        let ppn_1 = (ppn >> 9) & 0x1FF;    // middle 9 bits
-        let ppn_0 = ppn & 0x1FF;            // bottom 9 bits
-        ((ppn_2 as usize) << 54) | ((ppn_1 as usize) << 45) | ((ppn_0 as usize) << 36) | self.flags.bits()
+    /// Get PPN from the PTE
+    pub fn ppn(&self) -> PPN {
+        // For non-leaf entries, PPN is at bits [43:10]
+        // For leaf entries, PPN is split but we still extract the full 44-bit PPN
+        PPN((self.bits >> 10) as usize)
     }
 
-    pub fn bits(&self) -> usize {
-        // For non-leaf entries (V=1, R=0, W=0, X=0), use non-leaf encoding
-        // For leaf entries (R=1 or X=1), use leaf encoding
-        if self.flags.is_leaf() {
-            self.bits_leaf()
-        } else {
-            self.bits_nonleaf()
-        }
+    /// Set PPN
+    pub fn set_ppn(&mut self, ppn: PPN) {
+        self.bits = (self.bits & 0xFF) | ((ppn.0 as u64) << 10);
     }
 
-    pub fn from_bits(bits: usize) -> Self {
-        // Assume non-leaf format (PPN at bits [43:10])
-        Self {
-            ppn: PPN(bits >> 10),
-            flags: PTEFlags::from_bits(bits & 0xFF),
-        }
+    /// Get flags
+    pub fn flags(&self) -> PTEFlags {
+        PTEFlags::from_bits((self.bits & 0xFF) as usize)
     }
 
-    /// Create a PTE pointing to a physical page
-    pub fn new_page(ppn: PPN, flags: PTEFlags) -> Self {
-        Self { ppn, flags }
+    /// Set flags
+    pub fn set_flags(&mut self, flags: &PTEFlags) {
+        self.bits = (self.bits & !0xFFu64) | (flags.bits() as u64);
     }
 
     /// Check if this PTE is valid
     pub fn is_valid(&self) -> bool {
-        self.flags.valid
+        (self.bits & 0x01) != 0
     }
 
     /// Check if this is a leaf PTE (points to a page)
     pub fn is_leaf(&self) -> bool {
-        self.flags.is_leaf()
+        self.flags().is_leaf()
+    }
+
+    /// Create a non-leaf PTE pointing to the next level page table
+    pub fn new_nonleaf(next_ppn: PPN) -> Self {
+        Self {
+            bits: ((next_ppn.0 as u64) << 10) | 0x01,
+        }
+    }
+
+    /// Create a leaf PTE pointing to a physical page
+    pub fn new_leaf(ppn: PPN, flags: PTEFlags) -> Self {
+        let ppn_bits = ppn.0;
+        let ppn_2 = ((ppn_bits >> 18) & 0x3FF) as u64;
+        let ppn_1 = ((ppn_bits >> 9) & 0x1FF) as u64;
+        let ppn_0 = (ppn_bits & 0x1FF) as u64;
+        let flags_bits = flags.bits() as u64;
+        Self {
+            bits: (ppn_2 << 54) | (ppn_1 << 45) | (ppn_0 << 36) | flags_bits,
+        }
     }
 }
 
@@ -511,15 +518,11 @@ impl PageTableManager {
                 let next_pt = PageTable::new().ok_or(MapError::NoMemory)?;
                 let next_pa = next_pt as *const PageTable as usize;
                 let next_ppn = PhysAddr(next_pa).ppn();
-                pte.ppn = next_ppn;
-                // Non-leaf entry: only valid bit is set
-                pte.flags.valid = true;
-                pte.flags.read = false;
-                pte.flags.write = false;
-                pte.flags.execute = false;
+                // Use new_nonleaf to create a valid non-leaf PTE
+                *pte = PageTableEntry::new_nonleaf(next_ppn);
             }
 
-            let level1_pa = pte.ppn.to_pa();
+            let level1_pa = pte.ppn().to_pa();
             let level1_ptr = level1_pa as *mut PageTable;
             let level1 = &mut *level1_ptr;
             let pte1 = level1.get_entry_mut(indices[1])
@@ -530,15 +533,11 @@ impl PageTableManager {
                 let next_pt = PageTable::new().ok_or(MapError::NoMemory)?;
                 let next_pa = next_pt as *const PageTable as usize;
                 let next_ppn = PhysAddr(next_pa).ppn();
-                pte1.ppn = next_ppn;
-                // Non-leaf entry: only valid bit is set
-                pte1.flags.valid = true;
-                pte1.flags.read = false;
-                pte1.flags.write = false;
-                pte1.flags.execute = false;
+                // Use new_nonleaf to create a valid non-leaf PTE
+                *pte1 = PageTableEntry::new_nonleaf(next_ppn);
             }
 
-            let level2_pa = pte1.ppn.to_pa();
+            let level2_pa = pte1.ppn().to_pa();
             let level2_ptr = level2_pa as *mut PageTable;
             let level2 = &mut *level2_ptr;
             let pte2 = level2.get_entry_mut(indices[2])
@@ -548,8 +547,8 @@ impl PageTableManager {
                 return Err(MapError::AlreadyMapped);
             }
 
-            pte2.ppn = ppn;
-            pte2.flags = flags;
+            // Use new_leaf to create a leaf PTE with proper flags encoding
+            *pte2 = PageTableEntry::new_leaf(ppn, flags);
         }
 
         Ok(())
@@ -568,14 +567,14 @@ impl PageTableManager {
                 return Err(MapError::NotMapped);
             }
 
-            let level1_ptr = pte0.ppn.to_pa() as *mut PageTable;
+            let level1_ptr = pte0.ppn().to_pa() as *mut PageTable;
             let level1 = &mut *level1_ptr;
             let pte1 = level1.get_entry(indices[1]).ok_or(MapError::NotMapped)?;
             if !pte1.is_valid() {
                 return Err(MapError::NotMapped);
             }
 
-            let level2_ptr = pte1.ppn.to_pa() as *mut PageTable;
+            let level2_ptr = pte1.ppn().to_pa() as *mut PageTable;
             let level2 = &mut *level2_ptr;
             let pte2 = level2.get_entry_mut(indices[2]).ok_or(MapError::NotMapped)?;
 
@@ -583,9 +582,8 @@ impl PageTableManager {
                 return Err(MapError::NotMapped);
             }
 
-            // Clear the PTE
-            pte2.flags.valid = false;
-            pte2.ppn = PPN(0);
+            // Clear the PTE by setting to zero (invalid entry)
+            *pte2 = PageTableEntry::new();
         }
 
         Ok(())
@@ -610,14 +608,14 @@ impl PageTableManager {
                 pte = next_pt.get_entry(indices[level + 1])?;
             } else {
                 // Leaf PTE
-                if !pte.flags.is_leaf() {
+                if !pte.is_leaf() {
                     return None;
                 }
                 let offset = va.page_offset();
-                let pa = PhysAddr(pte.ppn.to_pa() | offset);
+                let pa = PhysAddr(pte.ppn().to_pa() | offset);
                 return Some(TranslateResult {
                     pa,
-                    flags: pte.flags,
+                    flags: pte.flags(),
                 });
             }
         }
@@ -648,7 +646,9 @@ impl PageTableManager {
         }
 
         // Break COW - set writable
-        pte.flags.write = true;
+        let mut flags = pte.flags();
+        flags.write = true;
+        pte.set_flags(&flags);
 
         Ok(())
     }
@@ -668,7 +668,7 @@ impl PageTableManager {
     /// Walk to a PTE at the given level (read-only)
     fn walk_pte_readonly<'a>(&self, parent: &'a PageTableEntry, _level: usize) -> Option<&'a PageTable> {
         if parent.is_valid() && !parent.is_leaf() {
-            let ptr = parent.ppn.to_pa() as *const PageTable;
+            let ptr = parent.ppn().to_pa() as *const PageTable;
             Some(unsafe { &*ptr })
         } else {
             None
@@ -678,7 +678,7 @@ impl PageTableManager {
     /// Walk to a PTE at the given level
     fn walk_pte<'a>(&self, parent: &'a PageTableEntry, _level: usize) -> Option<&'a mut PageTable> {
         if parent.is_valid() && !parent.is_leaf() {
-            let ptr = parent.ppn.to_pa() as *mut PageTable;
+            let ptr = parent.ppn().to_pa() as *mut PageTable;
             Some(unsafe { &mut *ptr })
         } else {
             None
@@ -716,7 +716,7 @@ impl PageTableManager {
                 return None;
             }
             if level < 2 {
-                ptr_ref = pte.ppn.to_pa();
+                ptr_ref = pte.ppn().to_pa();
             }
         }
 
@@ -1089,6 +1089,7 @@ impl UserAddressSpace {
         // Use RWX because we need to execute kernel code (like trap handlers)
         const KERNEL_BASE: usize = 0x80000000;
         const KERNEL_SIZE: usize = 0x08000000; // 128MB
+
         for va in (KERNEL_BASE..KERNEL_BASE + KERNEL_SIZE).step_by(PAGE_SIZE) {
             let pa = PhysAddr::new(va); // Identity mapping
             if pt_manager.map(VirtAddr::new(va), pa, PTEFlags::kernel_rwx()).is_err() {
@@ -1251,7 +1252,7 @@ pub fn copy_user_address_space_from_root(parent_root_ppn: usize) -> Option<(Page
         }
 
         // Level 1
-        let level1 = unsafe { &*((pte.ppn.to_pa()) as *const PageTable) };
+        let level1 = unsafe { &*((pte.ppn().to_pa()) as *const PageTable) };
         for j in 0..PTE_COUNT {
             let pte1 = level1.get_entry(j)?;
             if !pte1.is_valid() || pte1.is_leaf() {
@@ -1259,7 +1260,7 @@ pub fn copy_user_address_space_from_root(parent_root_ppn: usize) -> Option<(Page
             }
 
             // Level 2 (leaf)
-            let level2 = unsafe { &*((pte1.ppn.to_pa()) as *const PageTable) };
+            let level2 = unsafe { &*((pte1.ppn().to_pa()) as *const PageTable) };
             for k in 0..PTE_COUNT {
                 let pte2 = level2.get_entry(k)?;
                 if !pte2.is_valid() || !pte2.is_leaf() {
@@ -1270,10 +1271,10 @@ pub fn copy_user_address_space_from_root(parent_root_ppn: usize) -> Option<(Page
                 // VPN = (i << 18) | (j << 9) | k, VA = VPN << 12
                 let vpn = (i << 18) | (j << 9) | k;
                 let va = VirtAddr::new(vpn << 12);
-                let pa = PhysAddr::new(pte2.ppn.to_pa());
+                let pa = PhysAddr::new(pte2.ppn().to_pa());
 
                 // Only copy user pages (U bit set)
-                if pte2.flags.user {
+                if pte2.flags().user {
                     // Map as COW (read-only) in the new page table
                     if new_pt.map(va, pa, PTEFlags::user_cow()).is_err() {
                         crate::print!("[sv39] COW fork: failed to copy page\r\n");

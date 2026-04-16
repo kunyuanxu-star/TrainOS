@@ -74,17 +74,16 @@ TrainOS is an educational operating system written in Rust for RISC-V 64-bit arc
 
 **User Mode Return Issue** (2026-04-16, INVESTIGATING):
 - When `return_to_user` executes `sret`, a trap occurs with scause=0, sepc=0
-- Entry point 0x11326 is 2-byte aligned (suitable for RVC compressed instructions)
-- ELF flags = 0x40 (unknown meaning), RVC bit not set in standard way
-- User page table appears correctly set up with entry page mapped at VA 0x11000 -> PA 0x80079000
-- The sepc=0 suggests the CPU is trying to execute at address 0, not at the entry point
-- Debug shows `[rtu]` print not appearing, suggesting the inline asm isn't being reached
-- When calling `return_to_user_asm` directly, garbage bytes appear before trap
-- **Workaround**: SKIP_USER_MODE=true in start_scheduler() bypasses user mode
-- **TODO**: Debug why sret jumps to address 0 instead of sepc=entry_point
-  - Possible cause: Entry point 0x11326 is not 4-byte aligned for standard 32-bit instructions
-  - The ELF has RVC code but entry point alignment might cause instruction fetch issues
-  - Need to verify actual page table contents and instruction bytes at entry
+- Entry point 0x11326 is 2-byte aligned (RVC compressed instructions)
+- **PageTableEntry Size Bug FIXED**: `PageTableEntry` was 16 bytes due to alignment
+  (8-byte PPN + 8-byte PTEFlags), but Sv39 PTEs must be exactly 8 bytes
+- Fixed by storing raw `u64` bits with helper methods for ppn/flags access
+- Added `new_nonleaf()` and `new_leaf()` constructors for proper PTE encoding
+- Debug code in `return_to_user_with_mmu` creates entry page mapping on-the-fly if missing
+- Despite correct page table entries, sret still causes trap with sepc=0
+- sepc is verified before sret ("OK" prints), so the issue is in sret itself
+- Possible causes: 2-byte RVC alignment issue, or sret/mmu interaction problem
+- **TODO**: Continue investigation into why sret doesn't jump to sepc
 
 **Memory Display Bug FIXED** (2026-04-16):
 - `free_pages()` was computing `free - base_page * 64` incorrectly

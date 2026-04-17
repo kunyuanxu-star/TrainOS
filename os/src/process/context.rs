@@ -541,15 +541,15 @@ unsafe fn return_to_user_with_mmu(tf: *mut TrapFrame, satp: usize, sp: usize, pc
             // Set sstatus to user mode (SPP=0, SPIE=1)
             "li t0, 0x00000020",
             "csrw sstatus, t0",
-            // For user mode, we need to set sscratch to user_sp (NOT kernel_sp!)
-            // When a trap occurs from user mode with sscratch!=0, CPU swaps sp and sscratch:
-            //   - sp becomes kernel_sp (where trap handler runs)
+            // Set sscratch to kernel_sp (trap frame pointer) so trap handler can use it
+            // When a trap occurs with sscratch!=0, CPU swaps sp and sscratch:
+            //   - sp becomes kernel_sp (trap handler runs on kernel stack)
             //   - sscratch becomes user_sp (saved for sret)
-            // So we want sscratch = user stack = a2
-            "mv t0, a2",  // a2 = user_sp
+            // So we set sscratch = kernel_sp, NOT user_sp
+            "mv t0, a0",  // a0 = kernel sp = trap frame pointer
             "csrw sscratch, t0",
-            // Set sp to kernel stack for the trap handler to use
-            "mv sp, a0",  // a0 = kernel sp = trap frame pointer
+            // Set sp to user stack before sret
+            "mv sp, a2",
             // Print "READY" via ecall
             "li a0, 0x52",  // R
             "li a7, 1",

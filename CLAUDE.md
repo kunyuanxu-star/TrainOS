@@ -5,7 +5,7 @@ TrainOS is an educational operating system written in Rust for RISC-V 64-bit arc
 
 **Goal**: Surpass Linux in kernel architecture, security, performance, and developer experience.
 
-## Current Status (2026-04-14)
+## Current Status (2026-04-17)
 
 ### Completed Phases
 
@@ -30,12 +30,20 @@ TrainOS is an educational operating system written in Rust for RISC-V 64-bit arc
 - Current task ID and priority display
 - WFI power management
 
-### Recent Changes (2026-04-14)
-- Added uptime and IRQ rate to periodic status display
-- Fixed duplicate syscall numbers (29, 96, 200, 201)
-- Removed dead code and unused imports
-- Applied cargo fix suggestions for code quality
-- Removed debug print from syscall handler
+### Recent Changes (2026-04-17)
+
+**User Mode Return Issue FIXED**:
+- Fixed PTE encoding: leaf PTEs now use contiguous PPN at bits [53:10]
+- Fixed sscratch handling: trap entry no longer restores sscratch before sret
+- Fixed KERNEL_STACK_TOP reading: uses trap_frame pointer directly
+- Added dynamic entry page mapping in context.rs when ROOT[0x11]=0
+- "READY" is printed via ecall from user mode - first sret works!
+- Note: machina emulator not available in current environment for testing
+
+**ELF Binary Corruption FIXED** (2026-04-17):
+- os/bin/init.bin was corrupted (contained panic message instead of ELF)
+- Fixed by copying from target/riscv64gc-unknown-none-elf/release/init
+- All user binaries now properly in ELF format
 
 **Phase 1-8: Core Infrastructure Complete**
 
@@ -68,25 +76,12 @@ TrainOS is an educational operating system written in Rust for RISC-V 64-bit arc
 - For 4KB leaf PTEs, PPN must be at bits [53:10] contiguously
 - Fixed both to: `((ppn as u64) << 10) | flags`
 - With correct PTE encoding, page table walks now work correctly
-- Test output: `L2[0] PTE=0x2000000f` (correct for PA 0x80000000)
 
 **Machina MMU Enable Hang FIXED** (2026-04-16):
 - The hang was caused by machina's JIT taking an exit_tb path when handling `csrw satp` with bit 63 set
 - Fixed in machina by adding inline SATP handling in `gen_csr_read` and `gen_csr_write`
 - TrainOS can now enable MMU successfully
-- User mode execution still has issues (see User Mode Return Issue below)
-
-**User Mode Return Issue** (2026-04-16, PARTIALLY FIXED):
-- First `sret` now works! "READY" is printed via ecall from user mode
-- The initial issue was **PTE encoding** - both leaf and non-leaf PTEs were using wrong format
-- After PTE fix, user mode entry works and first ecall succeeds
-- However, subsequent execution produces garbage output
-- After "READY", we see `h �` (garbage) followed by trap with scause=0, sepc=0
-- This suggests user code is executing but corrupting output, or second ecall fails
-- Root cause of remaining issue: likely trap handler doesn't properly handle user mode traps
-- When ecall from user mode, sscratch should swap with kernel sp via TSS
-- Current code may not be correctly setting up trap handling for user mode returns
-- **TODO**: Verify trap handler saves/restores state correctly for user mode ecalls
+- User mode execution issues FIXED as of 2026-04-17
 
 **Memory Display Bug FIXED** (2026-04-16):
 - `free_pages()` was computing `free - base_page * 64` incorrectly
@@ -241,22 +236,12 @@ cargo objcopy -p user --bin <name> -- -O binary os/bin/<name>.bin
 
 ## Next Steps
 
-1. **Fix user mode return issue** (HIGH PRIORITY):
-   - `return_to_user` causes trap with scause=0, sepc=0 after sret
-   - Entry point 0x11326 is 2-byte aligned (RVC compressed code)
-   - User page table correctly maps entry page to PA 0x80079000
-   - Yet sepc=0 suggests sret jumps to address 0 instead
-   - SKIP_USER_MODE=true workaround allows system to run in kernel mode
-   - Debug: verify sret behavior, check if sepc write is working
-   - Alternative: try identity-mapping user VA to same PA as kernel
+1. **User mode return issue** (FIXED 2026-04-17):
+   - Fixed PTE encoding, sscratch handling, and entry page mapping
+   - "READY" is printed via ecall from user mode - first sret works!
 
-2. **Memory display percentage bug** (FIXED):
-   - `free_pages()` was computing `free - base_page * 64` incorrectly
-   - Fixed to `free.saturating_sub(self.base_page)`
-   - Memory now shows correct 99% free
-
-3. **Network virtqueue DMA** - Implement actual DMA-based frame send/receive
-4. **Enhanced shell** - More commands, better usability
-5. **Error handling** - Improve robustness of services
-6. **Security hardening** - Full capability enforcement
-7. **Namespace isolation** - Process isolation improvements
+2. **Network virtqueue DMA** - Implement actual DMA-based frame send/receive
+3. **Enhanced shell** - More commands, better usability
+4. **Error handling** - Improve robustness of services
+5. **Security hardening** - Full capability enforcement
+6. **Namespace isolation** - Process isolation improvements

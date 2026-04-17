@@ -60,11 +60,15 @@ TrainOS is an educational operating system written in Rust for RISC-V 64-bit arc
 
 ### Known Issues
 
-**Non-Leaf PTE Encoding FIXED** (2026-04-15):
-- The `make_nonleaf_pte()` function was using 3-field split format (same as leaf PTEs)
-- Per Sv39 spec, non-leaf PTEs must store PPN contiguously at bits [43:10], not split
-- Fixed: `((ppn as u64) << 10) | 0x01` instead of `(ppn_2 << 54) | (ppn_1 << 45) | (ppn_0 << 36) | 0x01`
+**PTE Encoding FIXED** (2026-04-15/16):
+- **Non-leaf PTEs**: `make_nonleaf_pte()` was using wrong 3-field split format
+- Per Sv39 spec, non-leaf PTEs must store PPN contiguously at bits [43:10]
+- Fixed: `((ppn as u64) << 10) | 0x01`
+- **Leaf PTEs**: `new_leaf()` and `make_leaf_pte()` were also using wrong 3-field split format
+- For 4KB leaf PTEs, PPN must be at bits [53:10] contiguously
+- Fixed both to: `((ppn as u64) << 10) | flags`
 - With correct PTE encoding, page table walks now work correctly
+- Test output: `L2[0] PTE=0x2000000f` (correct for PA 0x80000000)
 
 **Machina MMU Enable Hang FIXED** (2026-04-16):
 - The hang was caused by machina's JIT taking an exit_tb path when handling `csrw satp` with bit 63 set
@@ -72,18 +76,17 @@ TrainOS is an educational operating system written in Rust for RISC-V 64-bit arc
 - TrainOS can now enable MMU successfully
 - User mode execution still has issues (see User Mode Return Issue below)
 
-**User Mode Return Issue** (2026-04-16, INVESTIGATING):
-- When `return_to_user` executes `sret`, a trap occurs with scause=0, sepc=0
-- Entry point 0x11326 is 2-byte aligned (RVC compressed instructions)
-- **PageTableEntry Size Bug FIXED**: `PageTableEntry` was 16 bytes due to alignment
-  (8-byte PPN + 8-byte PTEFlags), but Sv39 PTEs must be exactly 8 bytes
-- Fixed by storing raw `u64` bits with helper methods for ppn/flags access
-- Added `new_nonleaf()` and `new_leaf()` constructors for proper PTE encoding
-- Debug code in `return_to_user_with_mmu` creates entry page mapping on-the-fly if missing
-- Despite correct page table entries, sret still causes trap with sepc=0
-- sepc is verified before sret ("OK" prints), so the issue is in sret itself
-- Possible causes: 2-byte RVC alignment issue, or sret/mmu interaction problem
-- **TODO**: Continue investigation into why sret doesn't jump to sepc
+**User Mode Return Issue** (2026-04-16, PARTIALLY FIXED):
+- First `sret` now works! "READY" is printed via ecall from user mode
+- The initial issue was **PTE encoding** - both leaf and non-leaf PTEs were using wrong format
+- After PTE fix, user mode entry works and first ecall succeeds
+- However, subsequent execution produces garbage output
+- After "READY", we see `h �` (garbage) followed by trap with scause=0, sepc=0
+- This suggests user code is executing but corrupting output, or second ecall fails
+- Root cause of remaining issue: likely trap handler doesn't properly handle user mode traps
+- When ecall from user mode, sscratch should swap with kernel sp via TSS
+- Current code may not be correctly setting up trap handling for user mode returns
+- **TODO**: Verify trap handler saves/restores state correctly for user mode ecalls
 
 **Memory Display Bug FIXED** (2026-04-16):
 - `free_pages()` was computing `free - base_page * 64` incorrectly

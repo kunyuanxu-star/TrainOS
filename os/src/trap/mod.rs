@@ -73,11 +73,13 @@ extern "C" fn handle_trap(trap_frame: *mut crate::process::context::TrapFrame) {
     }
 
     // Also set the kernel stack top
+    // NOTE: trap_frame IS the kernel_sp (sp after -256 allocation)
+    // The saved sp (user_sp) is at offset 8 of TrapFrame, but that's not what we need here
     {
         let mut kstack = crate::process::KERNEL_STACK_TOP.lock();
         unsafe {
-            let sp = (*trap_frame).sp;
-            *kstack = Some(sp);
+            let kernel_sp = trap_frame as usize;
+            *kstack = Some(kernel_sp);
         }
     }
 

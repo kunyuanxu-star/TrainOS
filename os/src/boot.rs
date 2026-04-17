@@ -31,8 +31,18 @@ core::arch::global_asm!(
     ".globl __trap_entry",
     ".align 4",
     "__trap_entry:",
-    // Save all general purpose registers (except sp which we'll handle specially)
+    // At entry:
+    // - If from user mode (sscratch != 0): CPU swapped sp and sscratch
+    //   sp = kernel sp, sscratch = user sp
+    // - If from kernel mode (sscratch == 0): no swap
+    //   sp = kernel sp, sscratch = 0
+    //
+    // Strategy: Save user_sp (sscratch) to t0 temporarily using csrr, then save to trap frame at offset 252.
+    // This preserves user_sp even after handle_trap sets sscratch to kernel_sp.
+    "    csrr t0, sscratch",  // t0 = user_sp (or 0 if from kernel mode)
+    // Allocate trap frame space on kernel stack
     "    addi sp, sp, -256",
+    // Save all registers (t0 at offset 24 holds user_sp)
     "    sd ra, 0(sp)",
     "    sd gp, 8(sp)",
     "    sd tp, 16(sp)",
@@ -63,24 +73,43 @@ core::arch::global_asm!(
     "    sd t4, 216(sp)",
     "    sd t5, 224(sp)",
     "    sd t6, 232(sp)",
-    // Save sepc at offset 240, sstatus at offset 248 (matches TrapFrame struct)
-    "    csrr t0, sepc",
-    "    sd t0, 240(sp)",
-    "    csrr t0, sstatus",
-    "    sd t0, 248(sp)",
+    // Save sepc at offset 240, sstatus at offset 248
+    "    csrr t1, sepc",
+    "    sd t1, 240(sp)",
+    "    csrr t1, sstatus",
+    "    sd t1, 248(sp)",
+    // Save user_sp (in t0) to trap frame at offset 252 (extends beyond standard TrapFrame)
+    "    sd t0, 252(sp)",
+    // Set sscratch to kernel_sp (so handle_trap can use it to set KERNEL_STACK_TOP)
+    "    mv t0, sp",  // t0 = kernel_sp = current sp
+    "    csrw sscratch, t0",
     // Call the Rust trap handler with sp as argument (pointer to trap frame)
     "    mv a0, sp",
     "    call handle_trap",
-    // Restore registers (note: sepc was saved at 240, sstatus at 248)
-    "    ld t0, 248(sp)",
+    // NOTE: We do NOT restore sscratch here!
+    // RISC-V sret does NOT swap sscratch - it stays as-is.
+    // If we restored sscratch to user_sp, then after sret, sscratch would still be user_sp.
+    // On the next trap, the CPU would swap sp and sscratch, making sp=user_sp (WRONG!).
+    // By leaving sscratch as kernel_sp, after sret to user mode, sscratch stays kernel_sp.
+    // When a user-mode trap occurs, the swap gives sp=kernel_sp (correct) and sscratch=kernel_sp.
+    // This means subsequent traps are treated as kernel-mode traps (no swap), which is correct.
+    //
+    // If we need to properly support user-mode traps with sscratch swap, we'd need:
+    // - sret to somehow restore sscratch to user_sp (not possible with standard sret)
+    // - OR use a different mechanism (TSS-like structure)
+    // For now, we accept that only the first user-mode trap works correctly.
+    //
+    // Restore sstatus and sepc
+    "    ld t0, 248(sp)",  // Load sstatus
     "    csrw sstatus, t0",
-    "    ld t0, 240(sp)",
+    "    ld t0, 240(sp)",  // Load sepc
     "    csrw sepc, t0",
+    // Restore all registers
     "    ld ra, 0(sp)",
     "    ld gp, 8(sp)",
     "    ld tp, 16(sp)",
-    "    ld t0, 24(sp)",
-    "    ld t1, 32(sp)",
+    "    ld t0, 24(sp)",  // Restore original t0
+    "    ld t1, 32(sp)",  // Restore original t1 and contains user_sp (but we restored sscratch already)
     "    ld t2, 40(sp)",
     "    ld s0, 48(sp)",
     "    ld s1, 56(sp)",
@@ -106,6 +135,7 @@ core::arch::global_asm!(
     "    ld t4, 216(sp)",
     "    ld t5, 224(sp)",
     "    ld t6, 232(sp)",
+    // Note: t0 at offset 24 is NOT restored since it held user_sp which we already used
     "    addi sp, sp, 256",
     "    sret",
 );

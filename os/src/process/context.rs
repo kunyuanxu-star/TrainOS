@@ -410,13 +410,12 @@ unsafe fn return_to_user_with_mmu(tf: *mut TrapFrame, satp: usize, sp: usize, pc
         for c in b"\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
 
         // Create L2[0x11] -> actual page (leaf PTE)
-        // PA 0x80079000, flags=RWX (0x0F)
+        // PA 0x80079000, flags=RWX+U (0x1F) for user-mode access
+        // For Sv39 leaf PTEs, PPN is stored contiguously at bits [53:10]
         let page_pa = 0x80079000usize;
         let page_ppn = page_pa >> 12;
-        let ppn_2 = ((page_ppn >> 18) & 0x3FF) as u64;
-        let ppn_1 = ((page_ppn >> 9) & 0x1FF) as u64;
-        let ppn_0 = (page_ppn & 0x1FF) as u64;
-        let l2_11_val: u64 = (ppn_2 << 54) | (ppn_1 << 45) | (ppn_0 << 36) | 0x0F;
+        // Flags: 0x1F = V|R|W|X|U (user accessible RWX)
+        let l2_11_val: u64 = ((page_ppn as u64) << 10) | 0x1F;
         unsafe {
             let ptr = (l2_pa + 0x11 * 8) as *mut u64;
             core::ptr::write_volatile(ptr, l2_11_val);
@@ -473,45 +472,95 @@ unsafe fn return_to_user_with_mmu(tf: *mut TrapFrame, satp: usize, sp: usize, pc
         }
         for c in b"\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
     }
-    // Use original pc directly
-    core::arch::asm!(
-        // Set sscratch to tf for trap handling
-        "mv t1, a0",
-        "csrw sscratch, t1",
-        // Switch to user page table
-        "csrw satp, a1",
-        "sfence.vma zero, zero",
-        // Set sepc
-        "csrw sepc, a3",
-        // Verify sepc
-        "csrr t0, sepc",
-        "bne t0, a3, 0f",
-        // Print OK
-        "li a0, 0x4f",
-        "li a7, 1",
-        "ecall",
-        "li a0, 0x4b",
-        "ecall",
-        "li a0, 0x0d",
-        "ecall",
-        "li a0, 0x0a",
-        "ecall",
-        // Set sstatus
-        "li t0, 0x00000020",
-        "csrw sstatus, t0",
-        // Set sp
-        "mv sp, a2",
-        // sret
-        "sret",
-        // sepc mismatch
-        "0: j 0b",
-        options(nostack),
-        in("a0") tf,
-        in("a1") satp,
-        in("a2") sp,
-        in("a3") pc,
-    );
+    // Print sstatus and sscratch before sret
+    for c in b"[rtu] Before sret - sstatus=0x" { crate::console::sbi_console_putchar_raw(*c as usize); }
+    let mut sstatus_val: usize;
+    unsafe {
+        core::arch::asm!("csrr {0}, sstatus", out(reg) sstatus_val);
+    }
+    tmp = sstatus_val;
+    i = 0;
+    while tmp > 0 {
+        let d = (tmp & 0xf) as u8;
+        digits[i] = if d < 10 { b'0' + d } else { b'a' + d - 10 };
+        i += 1;
+        tmp >>= 4;
+    }
+    while i > 0 {
+        i -= 1;
+        crate::console::sbi_console_putchar_raw(digits[i] as usize);
+    }
+    for c in b", sscratch=0x" { crate::console::sbi_console_putchar_raw(*c as usize); }
+    let mut sscratch_val: usize;
+    unsafe {
+        core::arch::asm!("csrr {0}, sscratch", out(reg) sscratch_val);
+    }
+    tmp = sscratch_val;
+    i = 0;
+    while tmp > 0 {
+        let d = (tmp & 0xf) as u8;
+        digits[i] = if d < 10 { b'0' + d } else { b'a' + d - 10 };
+        i += 1;
+        tmp >>= 4;
+    }
+    while i > 0 {
+        i -= 1;
+        crate::console::sbi_console_putchar_raw(digits[i] as usize);
+    }
+    for c in b"\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
 
+    // Try a simpler approach: just test if we can read memory through user page table
+    for c in b"[rtu] Testing user memory read at va=0x11326...\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
+
+    // Just before sret, switch satp
+    unsafe {
+        core::arch::asm!(
+            // Switch to user page table
+            "csrw satp, a1",
+            "sfence.vma zero, zero",
+            // Set sepc
+            "csrw sepc, a3",
+            // Set sstatus to user mode (SPP=0, SPIE=1)
+            "li t0, 0x00000020",
+            "csrw sstatus, t0",
+            // Set sscratch to point to kernel trap frame (non-zero to enable stack swap on trap)
+            // This is critical: when a trap occurs from user mode, CPU will swap sp and sscratch
+            // so that the trap handler uses the kernel stack, not the user stack
+            "mv t0, a0",  // a0 = trap frame pointer = kernel sp
+            "csrw sscratch, t0",
+            // Print "READY" via ecall
+            "li a0, 0x52",  // R
+            "li a7, 1",
+            "ecall",
+            "li a0, 0x45",  // E
+            "ecall",
+            "li a0, 0x41",  // A
+            "ecall",
+            "li a0, 0x44",  // D
+            "ecall",
+            "li a0, 0x59",  // Y
+            "ecall",
+            "li a0, 0x0d",  // CR
+            "ecall",
+            "li a0, 0x0a",  // LF
+            "ecall",
+            // Set sp to user stack
+            "mv sp, a2",
+            // sret - returns to user mode
+            // IMPORTANT: sscratch now has kernel sp, so when a trap occurs:
+            // 1. CPU swaps sp and sscratch: sp = kernel sp, sscratch = user sp
+            // 2. Trap handler uses kernel stack
+            // 3. On sret, swap back: sp = user sp, sscratch = kernel sp
+            "sret",
+            options(nostack),
+            in("a0") tf,  // trap frame pointer = kernel stack pointer
+            in("a1") satp,
+            in("a2") sp,
+            in("a3") pc,
+        );
+    }
+
+    for c in b"[rtu] sret returned - THIS SHOULD NOT HAPPEN\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
     loop {}
 }
 

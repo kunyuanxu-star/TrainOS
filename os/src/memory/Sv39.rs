@@ -297,14 +297,14 @@ impl PageTableEntry {
     }
 
     /// Create a leaf PTE pointing to a physical page
+    /// For Sv39 leaf PTEs with 4KB pages:
+    /// - PPN is stored at bits [53:10] (44 bits contiguous)
+    /// - This is different from non-leaf PPN at bits [43:0]
     pub fn new_leaf(ppn: PPN, flags: PTEFlags) -> Self {
-        let ppn_bits = ppn.0;
-        let ppn_2 = ((ppn_bits >> 18) & 0x3FF) as u64;
-        let ppn_1 = ((ppn_bits >> 9) & 0x1FF) as u64;
-        let ppn_0 = (ppn_bits & 0x1FF) as u64;
-        let flags_bits = flags.bits() as u64;
+        // For 4KB pages, PPN occupies bits [53:10] = 44 bits
+        // Store contiguously: (ppn << 10) | flags
         Self {
-            bits: (ppn_2 << 54) | (ppn_1 << 45) | (ppn_0 << 36) | flags_bits,
+            bits: ((ppn.0 as u64) << 10) | (flags.bits() as u64),
         }
     }
 }
@@ -832,23 +832,17 @@ pub fn init_kernel_page_table() {
     }
 
     // For VA = 0x80000000, VPN = 0x80000, indices = [0, 0, 0]
-    // Sv39 leaf PTE format:
-    // [63:54] = PPN[2] (10 bits)
-    // [53:45] = PPN[1] (9 bits)
-    // [44:36] = PPN[0] (9 bits)
-    // [7:0] = flags
-    // For PA = 0x80000000, PPN = 0x80000 = 0b1000_0000_0000_0000_0000
-    // PPN[2] = 0x2, PPN[1] = 0, PPN[0] = 0
-    // Correct PTE = (0x2 << 54) | (0 << 45) | (0 << 36) | 0x0F = 0x800000000000000F
+    // Sv39 leaf PTE format for 4KB pages:
+    // PPN occupies bits [53:10] (44 bits), stored contiguously
+    // Flags at bits [7:0]
+    // For PA = 0x80000000, PPN = 0x80000
+    // Correct PTE = (0x80000 << 10) | 0x0F = 0x800000000000000F
 
     // Helper function to create a leaf PTE from PA
     // PA is 4KB-aligned physical address
     fn make_leaf_pte(pa: usize, flags: u8) -> u64 {
         let ppn = pa >> 12;  // Get PPN from PA
-        let ppn_2 = ((ppn >> 18) & 0x3FF) as u64;  // PPN[2] - top 10 bits
-        let ppn_1 = ((ppn >> 9) & 0x1FF) as u64;   // PPN[1] - middle 9 bits
-        let ppn_0 = (ppn & 0x1FF) as u64;            // PPN[0] - bottom 9 bits
-        (ppn_2 << 54) | (ppn_1 << 45) | (ppn_0 << 36) | (flags as u64)
+        ((ppn as u64) << 10) | (flags as u64)
     }
 
     // Create leaf PTE for identity mapping

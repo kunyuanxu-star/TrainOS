@@ -411,6 +411,23 @@ unsafe fn return_to_user_with_mmu(tf: *mut TrapFrame, satp: usize, sp: usize, pc
         }
         for c in b"\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
 
+        // Debug: also print L1[0] by reading from L1 PA
+        let l1_0_check: u64 = *(l1_pa as *const u64);
+        for c in b"[rtu] Read L1[0]=0x" { crate::console::sbi_console_putchar_raw(*c as usize); }
+        tmp = l1_0_check as usize;
+        i = 0;
+        while tmp > 0 {
+            let d = (tmp & 0xf) as u8;
+            digits[i] = if d < 10 { b'0' + d } else { b'a' + d - 10 };
+            i += 1;
+            tmp >>= 4;
+        }
+        while i > 0 {
+            i -= 1;
+            crate::console::sbi_console_putchar_raw(digits[i] as usize);
+        }
+        for c in b"\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
+
         // Create L2[0x11] -> actual page (leaf PTE)
         // PA 0x80079000, flags=RWX+U (0x1F) for user-mode access
         // For Sv39 leaf PTEs, PPN is stored contiguously at bits [53:10]
@@ -437,6 +454,23 @@ unsafe fn return_to_user_with_mmu(tf: *mut TrapFrame, satp: usize, sp: usize, pc
         }
         for c in b"\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
         for c in b"[rtu] Entry page mapping created\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
+
+        // Debug: read back L2[0x11] to verify
+        let l2_11_check: u64 = *((l2_pa + 0x11 * 8) as *const u64);
+        for c in b"[rtu] Read L2[0x11]=0x" { crate::console::sbi_console_putchar_raw(*c as usize); }
+        tmp = l2_11_check as usize;
+        i = 0;
+        while tmp > 0 {
+            let d = (tmp & 0xf) as u8;
+            digits[i] = if d < 10 { b'0' + d } else { b'a' + d - 10 };
+            i += 1;
+            tmp >>= 4;
+        }
+        while i > 0 {
+            i -= 1;
+            crate::console::sbi_console_putchar_raw(digits[i] as usize);
+        }
+        for c in b"\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
 
         // Print actual L2 PA for debugging
         for c in b"[rtu] L2 PA=0x" { crate::console::sbi_console_putchar_raw(*c as usize); }

@@ -339,6 +339,7 @@ unsafe fn return_to_user_with_mmu(tf: *mut TrapFrame, satp: usize, sp: usize, pc
 
     // If entry point page mapping is missing, create it directly
     // PA for entry point page is 0x80079000
+    let mut l2_pa: usize = 0;
     if root_11 == 0 {
         for c in b"[rtu] WARNING: Entry page mapping missing, creating it now\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
 
@@ -355,7 +356,7 @@ unsafe fn return_to_user_with_mmu(tf: *mut TrapFrame, satp: usize, sp: usize, pc
         unsafe { core::ptr::write_bytes(l1_pa as *mut u8, 0, 4096); }
 
         // Allocate L2 PT
-        let l2_pa = match crate::memory::allocator::alloc_page() {
+        let new_l2_pa = match crate::memory::allocator::alloc_page() {
             Some(p) => p,
             None => {
                 for c in b"[rtu] ERROR: Failed to alloc L2 PT\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
@@ -363,7 +364,8 @@ unsafe fn return_to_user_with_mmu(tf: *mut TrapFrame, satp: usize, sp: usize, pc
             }
         };
         // Zero L2 PT
-        unsafe { core::ptr::write_bytes(l2_pa as *mut u8, 0, 4096); }
+        unsafe { core::ptr::write_bytes(new_l2_pa as *mut u8, 0, 4096); }
+        l2_pa = new_l2_pa;
 
         // Create ROOT[0x11] -> L1 non-leaf PTE
         let l1_ppn = l1_pa >> 12;
@@ -435,10 +437,26 @@ unsafe fn return_to_user_with_mmu(tf: *mut TrapFrame, satp: usize, sp: usize, pc
         }
         for c in b"\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
         for c in b"[rtu] Entry page mapping created\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
+
+        // Print actual L2 PA for debugging
+        for c in b"[rtu] L2 PA=0x" { crate::console::sbi_console_putchar_raw(*c as usize); }
+        tmp = l2_pa;
+        i = 0;
+        while tmp > 0 {
+            let d = (tmp & 0xf) as u8;
+            digits[i] = if d < 10 { b'0' + d } else { b'a' + d - 10 };
+            i += 1;
+            tmp >>= 4;
+        }
+        while i > 0 {
+            i -= 1;
+            crate::console::sbi_console_putchar_raw(digits[i] as usize);
+        }
+        for c in b"\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
     }
 
-    // Verify the page table entry we just created
-    let l2_pte_check: u64 = *((0x8007f000usize + 0x11 * 8) as *const u64);  // PA of L2 + offset
+    // Verify the page table entry we just created using ACTUAL l2_pa
+    let l2_pte_check: u64 = *((l2_pa + 0x11 * 8) as *const u64);
     for c in b"[rtu] Verify L2[0x11]=0x" { crate::console::sbi_console_putchar_raw(*c as usize); }
     tmp = l2_pte_check as usize;
     i = 0;
@@ -518,16 +536,20 @@ unsafe fn return_to_user_with_mmu(tf: *mut TrapFrame, satp: usize, sp: usize, pc
             // Switch to user page table
             "csrw satp, a1",
             "sfence.vma zero, zero",
-            // Set sepc
+            // Set sepc to entry point
             "csrw sepc, a3",
             // Set sstatus to user mode (SPP=0, SPIE=1)
             "li t0, 0x00000020",
             "csrw sstatus, t0",
-            // Set sscratch to point to kernel trap frame (non-zero to enable stack swap on trap)
-            // This is critical: when a trap occurs from user mode, CPU will swap sp and sscratch
-            // so that the trap handler uses the kernel stack, not the user stack
-            "mv t0, a0",  // a0 = trap frame pointer = kernel sp
+            // For user mode, we need to set sscratch to user_sp (NOT kernel_sp!)
+            // When a trap occurs from user mode with sscratch!=0, CPU swaps sp and sscratch:
+            //   - sp becomes kernel_sp (where trap handler runs)
+            //   - sscratch becomes user_sp (saved for sret)
+            // So we want sscratch = user stack = a2
+            "mv t0, a2",  // a2 = user_sp
             "csrw sscratch, t0",
+            // Set sp to kernel stack for the trap handler to use
+            "mv sp, a0",  // a0 = kernel sp = trap frame pointer
             // Print "READY" via ecall
             "li a0, 0x52",  // R
             "li a7, 1",
@@ -544,10 +566,10 @@ unsafe fn return_to_user_with_mmu(tf: *mut TrapFrame, satp: usize, sp: usize, pc
             "ecall",
             "li a0, 0x0a",  // LF
             "ecall",
-            // Set sp to user stack
+            // Set sp to user stack (needed before sret)
             "mv sp, a2",
             // sret - returns to user mode
-            // IMPORTANT: sscratch now has kernel sp, so when a trap occurs:
+            // IMPORTANT: sscratch now has user_sp, so when a trap occurs:
             // 1. CPU swaps sp and sscratch: sp = kernel sp, sscratch = user sp
             // 2. Trap handler uses kernel stack
             // 3. On sret, swap back: sp = user sp, sscratch = kernel sp

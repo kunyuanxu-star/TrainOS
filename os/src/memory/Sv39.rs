@@ -896,7 +896,7 @@ pub fn enable_sv39() {
 
     // Check if we should skip MMU for QEMU
     // QEMU_SKIP_MMU: Set to true to run in bare mode on QEMU
-    const QEMU_SKIP_MMU: bool = true;
+    const QEMU_SKIP_MMU: bool = false;
     if QEMU_SKIP_MMU {
         for c in b"[vm] QEMU_SKIP_MMU=true - running in BARE mode (no MMU)\n" {
             crate::console::sbi_console_putchar_raw(*c as usize);

@@ -552,7 +552,7 @@ fn start_scheduler() {
     // When SKIP_USER_MODE=false, garbage bytes appear after calling return_to_user
     // and before the trap, suggesting the sret jumps to address 0 instead of sepc
     // Set to false to attempt user mode execution (requires MMU enabled)
-    const SKIP_USER_MODE: bool = true;
+    const SKIP_USER_MODE: bool = false;
     if SKIP_USER_MODE {
         for c in b"[sched] SKIP_USER_MODE=true - running kernel builtin shell\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
         kernel_builtin_shell();

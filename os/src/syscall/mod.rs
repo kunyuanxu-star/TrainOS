@@ -223,64 +223,37 @@ pub fn alloc_pid() -> usize {
     id
 }
 
-/// Read register a0
-fn get_arg0() -> usize {
-    let mut val: usize;
-    unsafe {
-        core::arch::asm!("mv {}, a0", out(reg) val);
+/// Store current trap frame for syscall argument access (stored as usize for Send safety)
+static SYSCALL_TRAP_FRAME: Mutex<usize> = Mutex::new(0);
+
+/// Helper to read a field from the trap frame
+fn read_tf_field(offset: usize) -> usize {
+    let tf_addr = *SYSCALL_TRAP_FRAME.lock();
+    if tf_addr == 0 {
+        0
+    } else {
+        unsafe { *((tf_addr + offset) as *const usize) }
     }
-    val
 }
 
-/// Read register a1
-fn get_arg1() -> usize {
-    let mut val: usize;
-    unsafe {
-        core::arch::asm!("mv {}, a1", out(reg) val);
-    }
-    val
-}
+/// Read user's a0 from trap frame (offset 64 = 8*8)
+fn get_arg0() -> usize { read_tf_field(64) }
+/// Read user's a1 from trap frame (offset 72 = 9*8)
+fn get_arg1() -> usize { read_tf_field(72) }
+/// Read user's a2 from trap frame (offset 80 = 10*8)
+fn get_arg2() -> usize { read_tf_field(80) }
+/// Read user's a3 from trap frame (offset 88 = 11*8)
+fn get_arg3() -> usize { read_tf_field(88) }
+/// Read user's a4 from trap frame (offset 96 = 12*8)
+fn get_arg4() -> usize { read_tf_field(96) }
+/// Read user's a5 from trap frame (offset 104 = 13*8)
+fn get_arg5() -> usize { read_tf_field(104) }
 
-/// Read register a2
-fn get_arg2() -> usize {
-    let mut val: usize;
-    unsafe {
-        core::arch::asm!("mv {}, a2", out(reg) val);
-    }
-    val
-}
-
-/// Read register a3
-fn get_arg3() -> usize {
-    let mut val: usize;
-    unsafe {
-        core::arch::asm!("mv {}, a3", out(reg) val);
-    }
-    val
-}
-
-/// Read register a4
-fn get_arg4() -> usize {
-    let mut val: usize;
-    unsafe {
-        core::arch::asm!("mv {}, a4", out(reg) val);
-    }
-    val
-}
-
-/// Read register a5
-fn get_arg5() -> usize {
-    let mut val: usize;
-    unsafe {
-        core::arch::asm!("mv {}, a5", out(reg) val);
-    }
-    val
-}
-
-/// Set return value in a0
+/// Set return value in user's a0 (via trap frame)
 fn set_ret(val: usize) {
-    unsafe {
-        core::arch::asm!("mv a0, {}", in(reg) val);
+    let tf_addr = *SYSCALL_TRAP_FRAME.lock();
+    if tf_addr != 0 {
+        unsafe { *((tf_addr + 64) as *mut usize) = val; }
     }
 }
 
@@ -288,12 +261,22 @@ fn set_ret(val: usize) {
 /// a0 = pointer to trap frame
 #[no_mangle]
 pub extern "C" fn do_syscall(trap_frame: *mut crate::process::context::TrapFrame) {
+    // Store trap frame for get_arg functions (reads user registers from trap frame)
+    *SYSCALL_TRAP_FRAME.lock() = trap_frame as usize;
+
     let syscall_id: usize;
     unsafe {
         core::arch::asm!("mv {}, a7", out(reg) syscall_id);
     }
 
     let result = match syscall_id {
+        // SBI-compatible console putchar (syscall 1) for legacy user programs
+        1 => {
+            let c = get_arg0() as u8;
+            crate::console::sbi_console_putchar_raw(c as usize);
+            0
+        }
+
         // File operations (Linux numbers)
         63 => sys_read(get_arg0(), get_arg1(), get_arg2()),     // read
         64 => sys_write(get_arg0(), get_arg1(), get_arg2()),    // write

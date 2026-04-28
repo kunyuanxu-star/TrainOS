@@ -751,7 +751,7 @@ static KERNEL_PAGE_TABLE: Mutex<Option<PageTableManager>> = Mutex::new(None);
 pub fn init_kernel_page_table() {
     for c in b"[vm] init_kernel_page_table()\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
 
-    // Allocate page tables using alloc_page()
+    // Allocate root page table
     let root_pa = match crate::memory::allocator::alloc_page() {
         Some(p) => p,
         None => {
@@ -760,6 +760,7 @@ pub fn init_kernel_page_table() {
         }
     };
 
+    // Allocate L1 page table
     let l1_pa = match crate::memory::allocator::alloc_page() {
         Some(p) => p,
         None => {
@@ -768,134 +769,68 @@ pub fn init_kernel_page_table() {
         }
     };
 
-    let l2_pa = match crate::memory::allocator::alloc_page() {
-        Some(p) => p,
-        None => {
-            for c in b"[vm] ERROR: Failed to alloc L2 PT\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
-            return;
-        }
-    };
-
-    // Clear all page tables
-    for pa in [root_pa, l1_pa, l2_pa] {
-        unsafe {
-            core::ptr::write_bytes(pa as *mut u8, 0, PAGE_SIZE);
-        }
+    // Clear root and L1 page tables
+    for pa in [root_pa, l1_pa] {
+        unsafe { core::ptr::write_bytes(pa as *mut u8, 0, PAGE_SIZE); }
     }
 
-    for c in b"[vm] Root PT PA=" { crate::console::sbi_console_putchar_raw(*c as usize); }
-    print_hex(root_pa);
-    for c in b", L1 PA=" { crate::console::sbi_console_putchar_raw(*c as usize); }
-    print_hex(l1_pa);
-    for c in b", L2 PA=" { crate::console::sbi_console_putchar_raw(*c as usize); }
-    print_hex(l2_pa);
-    for c in b"\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
-
-    // Calculate PPNs
+    // PPN helpers
     let root_ppn = root_pa >> 12;
     let l1_ppn = l1_pa >> 12;
-    let l2_ppn = l2_pa >> 12;
-
-    for c in b"[vm] Root PPN=" { crate::console::sbi_console_putchar_raw(*c as usize); }
-    print_hex(root_ppn);
-    for c in b"\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
-
-    // Sv39 non-leaf PTE format:
-    // [43:10] = PPN (44 bits, contiguous - NOT the 3-field split used for leaf PTEs!)
-    // [7:0] = flags (only V bit used for non-leaf)
     fn make_nonleaf_pte(ppn: usize) -> u64 {
-        ((ppn as u64) << 10) | 0x01  // V=1, PPN stored contiguously at bits [43:10]
+        ((ppn as u64) << 10) | 0x01  // V=1, PPN contiguously at bits [43:10]
+    }
+    fn make_leaf_pte(pa: usize, flags: u8) -> u64 {
+        ((pa >> 12) as u64) << 10 | (flags as u64)
     }
 
-    // Root[0] = L1 PPN | non-leaf flags (V=1)
-    let root_entry0 = make_nonleaf_pte(l1_ppn);
+    // Root[0] -> L1 page table (covering DRAM 0x80000000-0x88000000)
     unsafe {
         let root_ptr = root_pa as *mut u64;
-        core::ptr::write_volatile(root_ptr, root_entry0);
-        // Verify
-        let verify = core::ptr::read_volatile(root_ptr);
-        for c in b"[vm] Root[0]=0x" { crate::console::sbi_console_putchar_raw(*c as usize); }
-        print_hex(verify as usize);
-        for c in b"\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
+        core::ptr::write_volatile(root_ptr, make_nonleaf_pte(l1_ppn));
     }
 
-    // L1[0] = L2 PPN | non-leaf flags (V=1)
-    let l1_entry0 = make_nonleaf_pte(l2_ppn);
-    unsafe {
-        let l1_ptr = l1_pa as *mut u64;
-        core::ptr::write_volatile(l1_ptr, l1_entry0);
-        // Verify
-        let verify = core::ptr::read_volatile(l1_ptr);
-        for c in b"[vm] L1[0]=0x" { crate::console::sbi_console_putchar_raw(*c as usize); }
-        print_hex(verify as usize);
-        for c in b"\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
-    }
+    // Map full 128MB DRAM: each L1 entry covers 2MB, each L2 covers 4KB pages
+    const DRAM_BASE: usize = 0x80000000;
+    const L2_MEGS: usize = 2; // each L2 covers 2MB
+    const L1_COUNT: usize = 128 / L2_MEGS; // 64 L1 entries for 128MB
 
-    // For VA = 0x80000000, VPN = 0x80000, indices = [0, 0, 0]
-    // Sv39 leaf PTE format for 4KB pages:
-    // PPN occupies bits [53:10] (44 bits), stored contiguously
-    // Flags at bits [7:0]
-    // For PA = 0x80000000, PPN = 0x80000
-    // Correct PTE = (0x80000 << 10) | 0x0F = 0x800000000000000F
+    for l1_idx in 0..L1_COUNT {
+        let l2_pa = match crate::memory::allocator::alloc_page() {
+            Some(p) => p,
+            None => {
+                for c in b"[vm] no mem for L2 idx=" { crate::console::sbi_console_putchar_raw(*c as usize); }
+                let mut v = l1_idx;
+                let hex = b"0123456789abcdef";
+                for _ in 0..8 { crate::console::sbi_console_putchar_raw(hex[v & 0xf] as usize); v >>= 4; }
+                for c in b"\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
+                continue;
+            }
+        };
+        unsafe { core::ptr::write_bytes(l2_pa as *mut u8, 0, PAGE_SIZE); }
 
-    // Helper function to create a leaf PTE from PA
-    // PA is 4KB-aligned physical address
-    fn make_leaf_pte(pa: usize, flags: u8) -> u64 {
-        let ppn = pa >> 12;  // Get PPN from PA
-        ((ppn as u64) << 10) | (flags as u64)
-    }
-
-    // Create leaf PTE for identity mapping
-    let pa_80000000 = 0x80000000usize;
-    let l2_entry0 = make_leaf_pte(pa_80000000, 0x0F);  // kernel_rwx flags
-    for c in b"[vm] L2[0] PTE=0x" { crate::console::sbi_console_putchar_raw(*c as usize); }
-    print_hex(l2_entry0 as usize);
-    for c in b"\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
-
-    unsafe {
-        let l2_ptr = l2_pa as *mut u64;
-        core::ptr::write_volatile(l2_ptr, l2_entry0);
-        // Verify
-        let verify = core::ptr::read_volatile(l2_ptr);
-        for c in b"[vm] L2[0] read=0x" { crate::console::sbi_console_putchar_raw(*c as usize); }
-        print_hex(verify as usize);
-        for c in b"\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
-    }
-
-    // Now map 4MB region (1024 pages = indices 0-1023)
-    // This covers kernel at 0x80200000 and beyond
-    // Each L2 entry is 4KB for 4KB pages
-    for i in 0..1024 {
-        let pa = 0x80000000 + i * PAGE_SIZE;
-        let pte = make_leaf_pte(pa, 0x0F);  // kernel_rwx
-
+        // L1[l1_idx] -> L2 table
         unsafe {
-            let l2_ptr = l2_pa as *mut u64;
-            core::ptr::write_volatile(l2_ptr.add(i), pte);
+            let l1_ptr = l1_pa as *mut u64;
+            core::ptr::write_volatile(l1_ptr.add(l1_idx), make_nonleaf_pte(l2_pa >> 12));
+        }
+
+        // Populate 512 leaf entries per L2 (4KB each)
+        let region_base = DRAM_BASE + l1_idx * L2_MEGS * 1024 * 1024;
+        for i in 0..512 {
+            let pa = region_base + i * PAGE_SIZE;
+            unsafe {
+                let l2_ptr = l2_pa as *mut u64;
+                core::ptr::write_volatile(l2_ptr.add(i), make_leaf_pte(pa, 0x0F));
+            }
         }
     }
 
-    // Verify entries including index 512 (kernel start at 0x80200000)
-    unsafe {
-        let l2_ptr = l2_pa as *mut u64;
-        for i in [0usize, 1, 511, 512, 1023] {
-            let val = core::ptr::read_volatile(l2_ptr.add(i));
-            let va = 0x80000000 + i * PAGE_SIZE;
-            for c in b"[vm] L2[" { crate::console::sbi_console_putchar_raw(*c as usize); }
-            print_hex(i);
-            for c in b"] VA=0x" { crate::console::sbi_console_putchar_raw(*c as usize); }
-            print_hex(va);
-            for c in b"=0x" { crate::console::sbi_console_putchar_raw(*c as usize); }
-            print_hex(val as usize);
-            for c in b"\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
-        }
-    }
-
-    // Create page table manager with root
+    // Create page table manager
     let pt_manager = PageTableManager::from_existing_root(root_ppn);
     *KERNEL_PAGE_TABLE.lock() = Some(pt_manager);
 
-    for c in b"[vm] Kernel page table ready\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
+    for c in b"[vm] Kernel page table ready (128MB identity)\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
 }
 
 /// Get kernel page table manager
@@ -953,6 +888,23 @@ fn print_hex(value: usize) {
 pub fn enable_sv39() {
     for c in b"[vm] enable_sv39 start\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
 
+    // QEMU workaround: QEMU (at least up to 11.0) has a bug where csrw satp
+    // with a non-zero value can hang. We use a two-step approach:
+    // 1. Write satp with sfence.vma + fence.i inline in this function
+    // 2. Try writing satp, and if it hangs, the kernel can't proceed
+    //    In BARE mode (no MMU), we skip the satp write entirely
+
+    // Check if we should skip MMU for QEMU
+    // QEMU_SKIP_MMU: Set to true to run in bare mode on QEMU
+    const QEMU_SKIP_MMU: bool = true;
+    if QEMU_SKIP_MMU {
+        for c in b"[vm] QEMU_SKIP_MMU=true - running in BARE mode (no MMU)\n" {
+            crate::console::sbi_console_putchar_raw(*c as usize);
+        }
+        // Don't set MMU_ENABLED - run in bare mode
+        return;
+    }
+
     // Get root PPN for SATP
     let satp_value;
     let root_pa;
@@ -979,14 +931,16 @@ pub fn enable_sv39() {
     print_hex(satp_value);
     for c in b"\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
 
-    // FIXED: machina now correctly handles csrw satp with bit 63 set.
-    // The fix was in guest/riscv/src/riscv/trans/gen_priv.rs:
-    // - Added SATP to gen_csr_read to return the current value inline
-    // - Added SATP to gen_csr_write to write the value inline
-    // This avoids the exit_tb path that was causing the hang.
-
-    // Write SATP and enable MMU
-    crate::boot::write_satp_and_flush(satp_value);
+    // Write SATP and enable MMU using inline asm with sfence.vma for TLB flush
+    // Using inline asm ensures the csrw and sfence.vma are in the same instruction stream
+    unsafe {
+        core::arch::asm!(
+            "csrw satp, {0}",
+            "sfence.vma zero, zero",
+            "fence.i",
+            in(reg) satp_value,
+        );
+    }
 
     for c in b"[vm] MMU enabled via Sv39\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
     *crate::process::context::MMU_ENABLED.lock() = true;

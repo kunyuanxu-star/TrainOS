@@ -551,7 +551,7 @@ fn start_scheduler() {
     // The 2-byte alignment might be an issue for 32-bit instruction fetch
     // When SKIP_USER_MODE=false, garbage bytes appear after calling return_to_user
     // and before the trap, suggesting the sret jumps to address 0 instead of sepc
-    // Set to true to skip user mode and run kernel shell instead
+    // Set to false to attempt user mode execution (requires MMU enabled)
     const SKIP_USER_MODE: bool = true;
     if SKIP_USER_MODE {
         for c in b"[sched] SKIP_USER_MODE=true - running kernel builtin shell\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }

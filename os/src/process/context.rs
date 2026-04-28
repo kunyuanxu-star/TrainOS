@@ -257,367 +257,61 @@ pub unsafe fn return_to_user_no_mmu(_tf: *mut TrapFrame, _satp: usize, _sp: usiz
 }
 
 /// Return to user mode (with MMU - virtual addressing)
+/// Sets up sscratch and switches to user page table, then sret to user mode.
+/// a0 = trap frame pointer (kernel_sp - 256, or just kernel_sp)
+/// a1 = satp value
+/// a2 = user sp
+/// a3 = user pc (sepc)
 #[inline(never)]
-unsafe fn return_to_user_with_mmu(tf: *mut TrapFrame, satp: usize, sp: usize, pc: usize) {
-    for c in b"[rtu] Entry\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
-
-    // Check entry point alignment
-    for c in b"[rtu] pc=0x" { crate::console::sbi_console_putchar_raw(*c as usize); }
-    let mut tmp = pc;
-    let hex_chars = b"0123456789abcdef";
-    let mut i = 0;
-    let mut digits = [0u8; 16];
-    if tmp == 0 {
-        crate::console::sbi_console_putchar_raw(b'0' as usize);
-    } else {
-        while tmp > 0 {
-            let d = (tmp & 0xf) as u8;
-            digits[i] = if d < 10 { b'0' + d } else { b'a' + d - 10 };
-            i += 1;
-            tmp >>= 4;
-        }
-        while i > 0 {
-            i -= 1;
-            crate::console::sbi_console_putchar_raw(digits[i] as usize);
-        }
-    }
-    for c in b", aligned=" { crate::console::sbi_console_putchar_raw(*c as usize); }
-    if pc % 4 == 0 {
-        for c in b"4\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
-    } else if pc % 2 == 0 {
-        for c in b"2(RVC)\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
-    } else {
-        for c in b"1\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
-    }
-
-    // User root PT location
-    let user_root = ((satp & 0x7FFFFFFFFF) as usize) << 12;
-
-    // Check user page table entry for VA 0x11000 (page containing entry point)
-    // VA 0x11000 -> indices [0, 0, 0x11]
-    // ROOT[0] -> L1, L1[0] -> L2, L2[0x11] -> page
-    let root_0 = *(user_root as *const usize);
-    for c in b"[rtu] ROOT[0]=0x" { crate::console::sbi_console_putchar_raw(*c as usize); }
-    tmp = root_0;
-    i = 0;
-    if tmp == 0 {
-        for c in b"0\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
-    } else {
-        while tmp > 0 {
-            let d = (tmp & 0xf) as u8;
-            digits[i] = if d < 10 { b'0' + d } else { b'a' + d - 10 };
-            i += 1;
-            tmp >>= 4;
-        }
-        while i > 0 {
-            i -= 1;
-            crate::console::sbi_console_putchar_raw(digits[i] as usize);
-        }
-        for c in b"\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
-    }
-
-    // ROOT[0x11] should be L1 entry for VA 0x11000
-    let root_11 = *((user_root + 0x11 * 8) as *const usize);
-    for c in b"[rtu] ROOT[0x11]=0x" { crate::console::sbi_console_putchar_raw(*c as usize); }
-    tmp = root_11;
-    i = 0;
-    if tmp == 0 {
-        for c in b"0\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
-    } else {
-        while tmp > 0 {
-            let d = (tmp & 0xf) as u8;
-            digits[i] = if d < 10 { b'0' + d } else { b'a' + d - 10 };
-            i += 1;
-            tmp >>= 4;
-        }
-        while i > 0 {
-            i -= 1;
-            crate::console::sbi_console_putchar_raw(digits[i] as usize);
-        }
-        for c in b"\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
-    }
-
-    // If entry point page mapping is missing, create it directly
-    // PA for entry point page is 0x80079000
-    let mut l2_pa: usize = 0;
-    if root_11 == 0 {
-        for c in b"[rtu] WARNING: Entry page mapping missing, creating it now\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
-
-        // We need to create L1 and L2 page tables and the leaf entry
-        // First, allocate L1 PT
-        let l1_pa = match crate::memory::allocator::alloc_page() {
-            Some(p) => p,
-            None => {
-                for c in b"[rtu] ERROR: Failed to alloc L1 PT\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
-                loop {}
-            }
-        };
-        // Zero L1 PT
-        unsafe { core::ptr::write_bytes(l1_pa as *mut u8, 0, 4096); }
-
-        // Allocate L2 PT
-        let new_l2_pa = match crate::memory::allocator::alloc_page() {
-            Some(p) => p,
-            None => {
-                for c in b"[rtu] ERROR: Failed to alloc L2 PT\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
-                loop {}
-            }
-        };
-        // Zero L2 PT
-        unsafe { core::ptr::write_bytes(new_l2_pa as *mut u8, 0, 4096); }
-        l2_pa = new_l2_pa;
-
-        // Create ROOT[0x11] -> L1 non-leaf PTE
-        let l1_ppn = l1_pa >> 12;
-        let root_11_val: u64 = ((l1_ppn as u64) << 10) | 0x01;  // V=1, non-leaf
-        unsafe {
-            let ptr = (user_root + 0x11 * 8) as *mut u64;
-            core::ptr::write_volatile(ptr, root_11_val);
-        }
-        for c in b"[rtu] Wrote ROOT[0x11]=0x" { crate::console::sbi_console_putchar_raw(*c as usize); }
-        tmp = root_11_val as usize;
-        i = 0;
-        while tmp > 0 {
-            let d = (tmp & 0xf) as u8;
-            digits[i] = if d < 10 { b'0' + d } else { b'a' + d - 10 };
-            i += 1;
-            tmp >>= 4;
-        }
-        while i > 0 {
-            i -= 1;
-            crate::console::sbi_console_putchar_raw(digits[i] as usize);
-        }
-        for c in b"\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
-
-        // Create L1[0] -> L2 non-leaf PTE
-        let l2_ppn = l2_pa >> 12;
-        let l1_0_val: u64 = ((l2_ppn as u64) << 10) | 0x01;
-        unsafe {
-            let ptr = (l1_pa) as *mut u64;
-            core::ptr::write_volatile(ptr, l1_0_val);
-        }
-        for c in b"[rtu] Wrote L1[0]=0x" { crate::console::sbi_console_putchar_raw(*c as usize); }
-        tmp = l1_0_val as usize;
-        i = 0;
-        while tmp > 0 {
-            let d = (tmp & 0xf) as u8;
-            digits[i] = if d < 10 { b'0' + d } else { b'a' + d - 10 };
-            i += 1;
-            tmp >>= 4;
-        }
-        while i > 0 {
-            i -= 1;
-            crate::console::sbi_console_putchar_raw(digits[i] as usize);
-        }
-        for c in b"\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
-
-        // Debug: also print L1[0] by reading from L1 PA
-        let l1_0_check: u64 = *(l1_pa as *const u64);
-        for c in b"[rtu] Read L1[0]=0x" { crate::console::sbi_console_putchar_raw(*c as usize); }
-        tmp = l1_0_check as usize;
-        i = 0;
-        while tmp > 0 {
-            let d = (tmp & 0xf) as u8;
-            digits[i] = if d < 10 { b'0' + d } else { b'a' + d - 10 };
-            i += 1;
-            tmp >>= 4;
-        }
-        while i > 0 {
-            i -= 1;
-            crate::console::sbi_console_putchar_raw(digits[i] as usize);
-        }
-        for c in b"\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
-
-        // Create L2[0x11] -> actual page (leaf PTE)
-        // PA 0x80079000, flags=RWX+U (0x1F) for user-mode access
-        // For Sv39 leaf PTEs, PPN is stored contiguously at bits [53:10]
-        let page_pa = 0x80079000usize;
-        let page_ppn = page_pa >> 12;
-        // Flags: 0x1F = V|R|W|X|U (user accessible RWX)
-        let l2_11_val: u64 = ((page_ppn as u64) << 10) | 0x1F;
-        unsafe {
-            let ptr = (l2_pa + 0x11 * 8) as *mut u64;
-            core::ptr::write_volatile(ptr, l2_11_val);
-        }
-        for c in b"[rtu] Wrote L2[0x11]=0x" { crate::console::sbi_console_putchar_raw(*c as usize); }
-        tmp = l2_11_val as usize;
-        i = 0;
-        while tmp > 0 {
-            let d = (tmp & 0xf) as u8;
-            digits[i] = if d < 10 { b'0' + d } else { b'a' + d - 10 };
-            i += 1;
-            tmp >>= 4;
-        }
-        while i > 0 {
-            i -= 1;
-            crate::console::sbi_console_putchar_raw(digits[i] as usize);
-        }
-        for c in b"\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
-        for c in b"[rtu] Entry page mapping created\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
-
-        // Debug: read back L2[0x11] to verify
-        let l2_11_check: u64 = *((l2_pa + 0x11 * 8) as *const u64);
-        for c in b"[rtu] Read L2[0x11]=0x" { crate::console::sbi_console_putchar_raw(*c as usize); }
-        tmp = l2_11_check as usize;
-        i = 0;
-        while tmp > 0 {
-            let d = (tmp & 0xf) as u8;
-            digits[i] = if d < 10 { b'0' + d } else { b'a' + d - 10 };
-            i += 1;
-            tmp >>= 4;
-        }
-        while i > 0 {
-            i -= 1;
-            crate::console::sbi_console_putchar_raw(digits[i] as usize);
-        }
-        for c in b"\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
-
-        // Print actual L2 PA for debugging
-        for c in b"[rtu] L2 PA=0x" { crate::console::sbi_console_putchar_raw(*c as usize); }
-        tmp = l2_pa;
-        i = 0;
-        while tmp > 0 {
-            let d = (tmp & 0xf) as u8;
-            digits[i] = if d < 10 { b'0' + d } else { b'a' + d - 10 };
-            i += 1;
-            tmp >>= 4;
-        }
-        while i > 0 {
-            i -= 1;
-            crate::console::sbi_console_putchar_raw(digits[i] as usize);
-        }
-        for c in b"\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
-    }
-
-    // Verify the page table entry we just created using ACTUAL l2_pa
-    let l2_pte_check: u64 = *((l2_pa + 0x11 * 8) as *const u64);
-    for c in b"[rtu] Verify L2[0x11]=0x" { crate::console::sbi_console_putchar_raw(*c as usize); }
-    tmp = l2_pte_check as usize;
-    i = 0;
-    while tmp > 0 {
-        let d = (tmp & 0xf) as u8;
-        digits[i] = if d < 10 { b'0' + d } else { b'a' + d - 10 };
-        i += 1;
-        tmp >>= 4;
-    }
-    while i > 0 {
-        i -= 1;
-        crate::console::sbi_console_putchar_raw(digits[i] as usize);
-    }
+unsafe fn return_to_user_with_mmu(_tf: *mut TrapFrame, satp: usize, sp: usize, pc: usize) {
+    // Print entry debug
+    for c in b"[rtu] Starting user mode at pc=0x" { crate::console::sbi_console_putchar_raw(*c as usize); }
+    print_hex(pc);
+    for c in b", sp=0x" { crate::console::sbi_console_putchar_raw(*c as usize); }
+    print_hex(sp);
     for c in b"\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
 
-    // Try with aligned entry point (round down to 4-byte boundary)
-    let aligned_pc = pc & !0x3;  // 0x11326 -> 0x11324
-    if aligned_pc != pc {
-        for c in b"[rtu] Trying aligned pc=0x" { crate::console::sbi_console_putchar_raw(*c as usize); }
-        tmp = aligned_pc;
-        i = 0;
-        while tmp > 0 {
-            let d = (tmp & 0xf) as u8;
-            digits[i] = if d < 10 { b'0' + d } else { b'a' + d - 10 };
-            i += 1;
-            tmp >>= 4;
-        }
-        while i > 0 {
-            i -= 1;
-            crate::console::sbi_console_putchar_raw(digits[i] as usize);
-        }
-        for c in b"\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
-    }
-    // Print sstatus and sscratch before sret
-    for c in b"[rtu] Before sret - sstatus=0x" { crate::console::sbi_console_putchar_raw(*c as usize); }
-    let mut sstatus_val: usize;
-    unsafe {
-        core::arch::asm!("csrr {0}, sstatus", out(reg) sstatus_val);
-    }
-    tmp = sstatus_val;
-    i = 0;
-    while tmp > 0 {
-        let d = (tmp & 0xf) as u8;
-        digits[i] = if d < 10 { b'0' + d } else { b'a' + d - 10 };
-        i += 1;
-        tmp >>= 4;
-    }
-    while i > 0 {
-        i -= 1;
-        crate::console::sbi_console_putchar_raw(digits[i] as usize);
-    }
-    for c in b", sscratch=0x" { crate::console::sbi_console_putchar_raw(*c as usize); }
-    let mut sscratch_val: usize;
-    unsafe {
-        core::arch::asm!("csrr {0}, sscratch", out(reg) sscratch_val);
-    }
-    tmp = sscratch_val;
-    i = 0;
-    while tmp > 0 {
-        let d = (tmp & 0xf) as u8;
-        digits[i] = if d < 10 { b'0' + d } else { b'a' + d - 10 };
-        i += 1;
-        tmp >>= 4;
-    }
-    while i > 0 {
-        i -= 1;
-        crate::console::sbi_console_putchar_raw(digits[i] as usize);
-    }
-    for c in b"\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
-
-    // Try a simpler approach: just test if we can read memory through user page table
-    for c in b"[rtu] Testing user memory read at va=0x11326...\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
-
-    // Just before sret, switch satp
     unsafe {
         core::arch::asm!(
             // Switch to user page table
-            "csrw satp, a1",
+            "csrw satp, {satp}",
             "sfence.vma zero, zero",
-            // Set sepc to entry point
-            "csrw sepc, a3",
-            // Set sstatus to user mode (SPP=0, SPIE=1)
-            "li t0, 0x00000020",
+            "fence.i",
+            // Set sepc to user entry point
+            "csrw sepc, {pc}",
+            // Set sstatus for user mode: SPP=0 (user), SPIE=1 (interrupts enabled after sret), SIE=0
+            "li t0, 0x20",
             "csrw sstatus, t0",
-            // Set sscratch to kernel_sp (trap frame pointer) so trap handler can use it
-            // When a trap occurs with sscratch!=0, CPU swaps sp and sscratch:
-            //   - sp becomes kernel_sp (trap handler runs on kernel stack)
-            //   - sscratch becomes user_sp (saved for sret)
-            // So we set sscratch = kernel_sp, NOT user_sp
-            "mv t0, a0",  // a0 = kernel sp = trap frame pointer
-            "csrw sscratch, t0",
-            // Set sp to user stack before sret
-            "mv sp, a2",
-            // Print "READY" via ecall
-            "li a0, 0x52",  // R
-            "li a7, 1",
-            "ecall",
-            "li a0, 0x45",  // E
-            "ecall",
-            "li a0, 0x41",  // A
-            "ecall",
-            "li a0, 0x44",  // D
-            "ecall",
-            "li a0, 0x59",  // Y
-            "ecall",
-            "li a0, 0x0d",  // CR
-            "ecall",
-            "li a0, 0x0a",  // LF
-            "ecall",
-            // Set sp to user stack (needed before sret)
-            "mv sp, a2",
-            // sret - returns to user mode
-            // IMPORTANT: sscratch now has user_sp, so when a trap occurs:
-            // 1. CPU swaps sp and sscratch: sp = kernel sp, sscratch = user sp
-            // 2. Trap handler uses kernel stack
-            // 3. On sret, swap back: sp = user sp, sscratch = kernel sp
+            // Set sscratch = kernel_sp (trap frame pointer) for csrrw at next trap entry
+            "csrw sscratch, {ksp}",
+            // Set sp to user stack
+            "mv sp, {usp}",
+            // Return to user mode
             "sret",
+            satp = in(reg) satp,
+            pc = in(reg) pc,
+            usp = in(reg) sp,
+            ksp = in(reg) _tf,
+            out("t0") _,
             options(nostack),
-            in("a0") tf,  // trap frame pointer = kernel stack pointer
-            in("a1") satp,
-            in("a2") sp,
-            in("a3") pc,
         );
     }
 
-    for c in b"[rtu] sret returned - THIS SHOULD NOT HAPPEN\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
+    // Should never reach here
+    for c in b"[rtu] ERROR: sret returned!\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
     loop {}
+}
+
+fn print_hex(value: usize) {
+    let hex = b"0123456789abcdef";
+    let mut started = false;
+    for i in (0..16).rev() {
+        let nibble = (value >> (i * 4)) & 0xf;
+        if nibble != 0 || started || i == 0 {
+            started = true;
+            crate::console::sbi_console_putchar_raw(hex[nibble as usize] as usize);
+        }
+    }
 }
 
 /// Return to user mode

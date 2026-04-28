@@ -23,6 +23,8 @@ core::arch::global_asm!(
     ".align 2",
     "_write_satp:",
     "    csrw satp, a0",
+    "    sfence.vma zero, zero",
+    "    fence.i",
     "    ret",
 );
 
@@ -31,22 +33,30 @@ core::arch::global_asm!(
     ".globl __trap_entry",
     ".align 4",
     "__trap_entry:",
-    // At entry:
-    // - If from user mode (sscratch != 0): CPU swapped sp and sscratch
-    //   sp = kernel sp, sscratch = user sp
-    // - If from kernel mode (sscratch == 0): no swap
-    //   sp = kernel sp, sscratch = 0
-    //
-    // Strategy: Save user_sp (sscratch) to t0 temporarily using csrr, then save to trap frame at offset 252.
-    // This preserves user_sp even after handle_trap sets sscratch to kernel_sp.
-    "    csrr t0, sscratch",  // t0 = user_sp (or 0 if from kernel mode)
-    // Allocate trap frame space on kernel stack
+    // Swap sp and sscratch atomically
+    // Before: sp = user_sp, sscratch = kernel_sp (for user traps)
+    //         sp = kernel_sp, sscratch = 0 (for kernel traps)
+    // After:  sp = kernel_sp, sscratch = user_sp (for user traps)
+    //         sp = 0, sscratch = kernel_sp (for kernel traps - need fixup)
+    "    csrrw sp, sscratch, sp",
+    // Check if from kernel mode (sp == 0 means sscratch was 0)
+    "    bnez sp, 1f",
+    // From kernel mode: sscratch has old kernel_sp, sp is 0
+    "    csrrw sp, sscratch, sp",  // sp = kernel_sp, sscratch = 0
+    "    j 2f",
+    // From user mode: sp = kernel_sp, sscratch = user_sp (already correct)
+    "1:",
+    // Save user_sp from sscratch to t0 before we clear sscratch
+    "    csrr t0, sscratch",       // t0 = user_sp
+    "    csrw sscratch, zero",     // mark kernel mode
+    "2:",
+    // Allocate trap frame on kernel stack
     "    addi sp, sp, -256",
-    // Save all registers (t0 at offset 24 holds user_sp)
+    // Save all registers (t0 at offset 24 holds user_sp or 0)
     "    sd ra, 0(sp)",
     "    sd gp, 8(sp)",
     "    sd tp, 16(sp)",
-    "    sd t0, 24(sp)",
+    "    sd t0, 24(sp)",  // user_sp (or 0 for kernel traps)
     "    sd t1, 32(sp)",
     "    sd t2, 40(sp)",
     "    sd s0, 48(sp)",
@@ -78,38 +88,39 @@ core::arch::global_asm!(
     "    sd t1, 240(sp)",
     "    csrr t1, sstatus",
     "    sd t1, 248(sp)",
-    // Save user_sp (in t0) to trap frame at offset 252 (extends beyond standard TrapFrame)
-    "    sd t0, 252(sp)",
-    // Set sscratch to kernel_sp (so handle_trap can use it to set KERNEL_STACK_TOP)
-    "    mv t0, sp",  // t0 = kernel_sp = current sp
-    "    csrw sscratch, t0",
+    // Save user_sp at offset 252 (from t0 saved at offset 24)
+    "    ld t1, 24(sp)",
+    "    sd t1, 252(sp)",
     // Call the Rust trap handler with sp as argument (pointer to trap frame)
     "    mv a0, sp",
     "    call handle_trap",
-    // NOTE: We do NOT restore sscratch here!
-    // RISC-V sret does NOT swap sscratch - it stays as-is.
-    // If we restored sscratch to user_sp, then after sret, sscratch would still be user_sp.
-    // On the next trap, the CPU would swap sp and sscratch, making sp=user_sp (WRONG!).
-    // By leaving sscratch as kernel_sp, after sret to user mode, sscratch stays kernel_sp.
-    // When a user-mode trap occurs, the swap gives sp=kernel_sp (correct) and sscratch=kernel_sp.
-    // This means subsequent traps are treated as kernel-mode traps (no swap), which is correct.
-    //
-    // If we need to properly support user-mode traps with sscratch swap, we'd need:
-    // - sret to somehow restore sscratch to user_sp (not possible with standard sret)
-    // - OR use a different mechanism (TSS-like structure)
-    // For now, we accept that only the first user-mode trap works correctly.
-    //
-    // Restore sstatus and sepc
-    "    ld t0, 248(sp)",  // Load sstatus
-    "    csrw sstatus, t0",
-    "    ld t0, 240(sp)",  // Load sepc
-    "    csrw sepc, t0",
-    // Restore all registers
+    // Prepare for trap return
+    // At this point sp = trap frame base (kernel_sp - 256)
+    // We need to set up sscratch properly for the next trap
+    // sstatus SPP bit (bit 8): 0 = returning to user, 1 = returning to supervisor
+    "    ld t1, 248(sp)",        // t1 = saved sstatus
+    "    andi t2, t1, 0x100",    // t2 = SPP bit (0x100 if supervisor, 0 if user)
+    "    addi t3, sp, 256",      // t3 = original kernel_sp
+    "    beqz t2, 3f",           // SPP == 0 => returning to user mode
+    // Returning to supervisor mode: sscratch = 0
+    "    csrw sscratch, zero",
+    "    j 4f",
+    // Returning to user mode: sscratch = kernel_sp (for csrrw at next trap entry)
+    "3:  csrw sscratch, t3",
+    "4:",
+    // Load user_sp from trap frame at offset 252
+    "    ld t0, 252(sp)",
+    // Restore sepc
+    "    ld t1, 240(sp)",
+    "    csrw sepc, t1",
+    // Restore sstatus (must be last CSR before sret)
+    "    ld t1, 248(sp)",
+    "    csrw sstatus, t1",
+    // Restore all GP registers (except t0 which holds user_sp)
     "    ld ra, 0(sp)",
     "    ld gp, 8(sp)",
     "    ld tp, 16(sp)",
-    "    ld t0, 24(sp)",  // Restore original t0
-    "    ld t1, 32(sp)",  // Restore original t1 and contains user_sp (but we restored sscratch already)
+    "    ld t1, 32(sp)",
     "    ld t2, 40(sp)",
     "    ld s0, 48(sp)",
     "    ld s1, 56(sp)",
@@ -135,8 +146,15 @@ core::arch::global_asm!(
     "    ld t4, 216(sp)",
     "    ld t5, 224(sp)",
     "    ld t6, 232(sp)",
-    // Note: t0 at offset 24 is NOT restored since it held user_sp which we already used
-    "    addi sp, sp, 256",
+    // Deallocate trap frame and set correct sp for return
+    // For user mode: sp = user_sp, sscratch = kernel_sp (set above)
+    // For kernel mode: sp = kernel_sp, sscratch = 0 (set above)
+    "    addi sp, sp, 256",      // sp = original kernel_sp
+    // Check again if returning to user: if t0 != 0, set sp = user_sp
+    // t0 holds user_sp (0 for kernel traps, non-zero for user traps)
+    "    bnez t0, 5f",
+    "    sret",                   // kernel return: sp = kernel_sp
+    "5:  mv sp, t0",             // user return: sp = user_sp
     "    sret",
 );
 

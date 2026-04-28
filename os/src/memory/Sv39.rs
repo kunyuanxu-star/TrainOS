@@ -88,6 +88,13 @@ pub fn init_page_table_allocator_with_pool(base_pa: usize, count: usize) {
         new_pool.init(base_pa, count);
         *pool = Some(new_pool);
     }
+
+    // Mark pool pages as allocated in the general allocator to prevent double allocation.
+    // Without this, alloc_page() could return a page that's also in the page table pool,
+    // causing page table corruption when both users write to the same physical page.
+    for i in 0..count {
+        crate::memory::allocator::mark_page_allocated(base_pa + i * PAGE_SIZE);
+    }
 }
 
 /// Page size (4KB)
@@ -836,6 +843,16 @@ pub fn init_kernel_page_table() {
 /// Get kernel page table manager
 pub fn get_kernel_pt() -> &'static Mutex<Option<PageTableManager>> {
     &KERNEL_PAGE_TABLE
+}
+
+/// Get the kernel SATP value (for debugging)
+pub fn get_kernel_satp() -> usize {
+    let pt = KERNEL_PAGE_TABLE.lock();
+    if let Some(ref pt_manager) = *pt {
+        8usize << 60 | pt_manager.root_ppn().0
+    } else {
+        0
+    }
 }
 
 /// Translate a kernel virtual address to physical

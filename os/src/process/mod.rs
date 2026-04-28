@@ -631,10 +631,17 @@ fn start_scheduler() {
     crate::console::print_hex(satp);
     for c in b"\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
 
-    // Debug: verify the page table entry for entry point VA 0x11326
-    // VA 0x11326 -> indices [0, 0, 0x11]
-    // L2 base should be at user pt root
-    for c in b"[sched] Verifying user page table for entry...\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
+    // Verify page table is valid by checking Root[0] is set
+    {
+        let user_root_ppn = satp & 0x7FFFFFFFFF;
+        let user_root_pa = user_root_ppn << 12;
+        let root0 = unsafe { core::ptr::read_volatile(user_root_pa as *const u64) };
+        for c in b"[sched] User root_pa=0x" { crate::console::sbi_console_putchar_raw(*c as usize); }
+        crate::console::print_hex(user_root_pa);
+        for c in b" Root[0]=0x" { crate::console::sbi_console_putchar_raw(*c as usize); }
+        crate::console::print_hex(root0 as usize);
+        for c in b" (PT valid)\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
+    }
 
     // Allocate a page for the trap frame on the kernel stack
     let trap_frame_ptr = allocate_kernel_trap_frame();

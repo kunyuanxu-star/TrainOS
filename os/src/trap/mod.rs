@@ -63,65 +63,13 @@ pub fn init() {
 /// a0 = pointer to trap frame on stack
 #[no_mangle]
 extern "C" fn handle_trap(trap_frame: *mut crate::process::context::TrapFrame) {
-    // Debug: print first few traps with scause for diagnostics
-    static TRAP_COUNT: spin::Mutex<usize> = spin::Mutex::new(0);
-    let mut trap_n = *TRAP_COUNT.lock();
-    if trap_n < 5 {
-        *TRAP_COUNT.lock() = trap_n + 1;
-        let sc: usize;
-        unsafe { core::arch::asm!("csrr {0}, scause", out(reg) sc); }
-        for c in b"[trap] #" { crate::console::sbi_console_putchar_raw(*c as usize); }
-        crate::console::sbi_console_putchar_raw(b'0' as usize + trap_n as u8 as usize);
-        for c in b" scause=" { crate::console::sbi_console_putchar_raw(*c as usize); }
-        // Print hex manually to avoid any console::print_hex issues
-        let hex = b"0123456789abcdef";
-        let val = sc;
-        if val == 0 {
-            crate::console::sbi_console_putchar_raw(b'0' as usize);
-        } else {
-            let mut buf = [0u8; 16];
-            let mut i = 0;
-            let mut v = val;
-            while v > 0 && i < 16 {
-                buf[i] = hex[(v & 0xf) as usize];
-                i += 1;
-                v >>= 4;
-            }
-            while i > 0 {
-                i -= 1;
-                crate::console::sbi_console_putchar_raw(buf[i] as usize);
-            }
+    // Debug: confirm traps are received after user mode entry
+    static FIRST_TRAP_DONE: spin::Mutex<bool> = spin::Mutex::new(false);
+    if !*FIRST_TRAP_DONE.lock() {
+        *FIRST_TRAP_DONE.lock() = true;
+        for c in b"[trap] First user-mode trap received (trap mechanism OK)\r\n" {
+            crate::console::sbi_console_putchar_raw(*c as usize);
         }
-        for c in b"\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
-    }
-    // Print ALL traps after the first 5 for diagnostics (uncomment to debug)
-    // (We already printed the first 5 above)
-    static TRAP_COUNT2: spin::Mutex<usize> = spin::Mutex::new(0);
-    let mut tn = *TRAP_COUNT2.lock();
-    *TRAP_COUNT2.lock() = tn + 1;
-    // Print traps 6-10 with sepc to see where CPU is executing
-    if tn >= 5 && tn < 10 {
-        let sc: usize;
-        let epc: usize;
-        unsafe { core::arch::asm!("csrr {0}, scause", "csrr {1}, sepc", out(reg) sc, out(reg) epc); }
-        for c in b"[trap] #" { crate::console::sbi_console_putchar_raw(*c as usize); }
-        let hex = b"0123456789abcdef";
-        let mut n2 = tn;
-        if n2 == 0 { crate::console::sbi_console_putchar_raw(b'0' as usize); }
-        else {
-            let mut buf = [0u8; 4]; let mut i = 0;
-            while n2 > 0 && i < 4 { buf[i] = hex[n2 % 10]; i += 1; n2 /= 10; }
-            while i > 0 { i -= 1; crate::console::sbi_console_putchar_raw(buf[i] as usize); }
-        }
-        for c in b" sepc=" { crate::console::sbi_console_putchar_raw(*c as usize); }
-        let mut v = epc;
-        if v == 0 { crate::console::sbi_console_putchar_raw(b'0' as usize); }
-        else {
-            let mut buf = [0u8; 16]; let mut i = 0;
-            while v > 0 && i < 16 { buf[i] = hex[v & 0xf]; i += 1; v >>= 4; }
-            while i > 0 { i -= 1; crate::console::sbi_console_putchar_raw(buf[i] as usize); }
-        }
-        for c in b"\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
     }
 
     // Increment interrupt count for this CPU

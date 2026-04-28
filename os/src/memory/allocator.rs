@@ -281,6 +281,23 @@ pub fn alloc_pages(count: usize) -> Option<usize> {
     allocator.alloc_pages(count)
 }
 
+/// Mark a specific physical page as allocated in the bitmap.
+/// Used to reserve pages (e.g., page table pool) that are managed externally.
+pub fn mark_page_allocated(pa: usize) {
+    let mut allocator = PAGE_ALLOCATOR.lock();
+    let page_num = pa / PAGE_SIZE;
+    if page_num < allocator.base_page {
+        return;
+    }
+    let idx = page_num - allocator.base_page;
+    let word = idx / 64;
+    let bit = idx % 64;
+    if word < allocator.bitmap.len() {
+        allocator.bitmap[word] |= 1 << bit;
+        allocator.stats.pages_allocated += 1;
+    }
+}
+
 /// Check if a page is allocated
 #[inline(always)]
 pub fn is_allocated(addr: usize) -> bool {

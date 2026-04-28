@@ -5,131 +5,79 @@ TrainOS is an educational operating system written in Rust for RISC-V 64-bit arc
 
 **Goal**: Surpass Linux in kernel architecture, security, performance, and developer experience.
 
-## Current Status (2026-04-17)
+## Current Status (2026-04-28)
 
-### Completed Phases
+### Build & Run Mode
+- **BARE mode** (MMU disabled): Kernel runs in supervisor mode with builtin shell
+- **User mode** (MMU enabled): Requires machina (QEMU 11.0.0 has SATP hang bug)
+- **SMP**: Disabled for debugging (causes watchdog timeout)
+- `QEMU_SKIP_MMU=true` in `Sv39.rs`, `SKIP_USER_MODE=true` in `process/mod.rs`
 
-**Phase 1-8: Core Infrastructure Complete**
-
-- Microkernel architecture with minimal kernel (scheduling, memory, IPC, traps only)
+### Completed Phases 1-8: Core Infrastructure
+- Microkernel architecture: scheduling, memory, IPC, traps in kernel space
 - User-space services: init, driver, fs, network, vfs, shell
 - VirtIO drivers in user space (block and network)
 - Sv39 virtual memory with COW fork support (MMU currently disabled)
 - Preemptive scheduling via timer interrupts
-- SMP multicore support
+- SMP multicore support (disabled for debugging)
 - procfs and sysfs virtual filesystems
 - TCP/IP stack in user-space network service
 
 ### Kernel Shell Features (BARE Mode)
-- Global system tick counter incremented by timer interrupts
-- Uptime display (seconds and total ticks)
-- IRQ count and rate (interrupts per second)
+- Global system tick counter, uptime, IRQ count/rate
 - MLFQ scheduler queue visualization (4 queues, pri 0-3)
-- Real-time memory usage statistics (used/total/free and percentage)
-- HART ID display
-- Current task ID and priority display
+- Real-time memory usage statistics
+- HART ID, current task ID/priority display
 - WFI power management
 
-### Recent Changes (2026-04-17)
+### Recent Changes (2026-04-28)
 
-**User Mode Return Issue FIXED**:
-- Fixed PTE encoding: leaf PTEs now use contiguous PPN at bits [53:10]
-- Fixed sscratch handling: trap entry no longer restores sscratch before sret
-- Fixed KERNEL_STACK_TOP reading: uses trap_frame pointer directly
-- Added dynamic entry page mapping in context.rs when ROOT[0x11]=0
-- "READY" is printed via ecall from user mode - first sret works!
-- Note: machina emulator not available in current environment for testing
+**Trap Entry/Exit Rewrite** (commit `1df658a`):
+- Rewrote `__trap_entry` to use `csrrw sp, sscratch, sp` for atomic sp/sscratch swap
+- Properly handles both kernel-mode and user-mode trap entry/return
+- Trap return checks SPP bit to set sscratch correctly:
+  - SPP=0 (return to user): sscratch = kernel_sp (for csrrw at next trap)
+  - SPP=1 (return to supervisor): sscratch = 0
+- `return_to_user_with_mmu` simplified with named register inline asm
+- Removed ~500 lines of verbose debug prints from context.rs
 
-**ELF Binary Corruption FIXED** (2026-04-17):
-- os/bin/init.bin was corrupted (contained panic message instead of ELF)
-- Fixed by copying from target/riscv64gc-unknown-none-elf/release/init
-- All user binaries now properly in ELF format
+**Full 128MB DRAM Identity Mapping**:
+- `init_kernel_page_table()` now maps entire DRAM (0x80000000-0x88000000)
+- Uses 64 L1 entries, each pointing to a 512-entry L2 table (2MB per L1 entry)
+- Allocates L2 page tables on demand, skips if allocation fails
+- Added `sfence.vma` + `fence.i` after `csrw satp` for TLB coherence
 
-**Phase 1-8: Core Infrastructure Complete**
+**Build Fix**:
+- Removed corrupted dead code from `enable_sv39()` (merge/edit artifact)
+- Aligned `SKIP_USER_MODE=true` with `QEMU_SKIP_MMU=true` for consistent fallback
 
-- Microkernel architecture with minimal kernel (scheduling, memory, IPC, traps only)
-- User-space services: init, driver, fs, network, vfs, shell
-- VirtIO drivers in user space (block and network)
-- Sv39 virtual memory with COW fork support
-- Preemptive scheduling via timer interrupts
-- SMP multicore support
-- procfs and sysfs virtual filesystems
-- TCP/IP stack in user-space network service
+### Previous Fixes (2026-04-10 to 2026-04-17)
+- PTE Encoding: Non-leaf and leaf PTEs use contiguous PPN at bits [43:10] / [53:10]
+- Machina MMU: Fixed JIT handling of `csrw satp` with bit 63 set
+- Memory Display: Fixed free_pages subtraction overflow
+- Timer Interrupt: Fixed instruction order in `enable_timer_interrupt()`
+- Release Build: Added `#[inline(never)]` for functions with inline asm + Mutex
+- ELF Corruption: Rebuilt os/bin/init.bin from correct ELF binary
 
-### Runtime Environment
+## Runtime Environment
 
 **Primary**: machina (RISC-V full-system emulator with JIT)
 - Build: `cargo build --release -p os`
 - Run: `./machina/target/debug/machina -M riscv64-ref -bios machina/pc-bios/rustsbi-riscv64-machina-fw_dynamic.bin -kernel TrainOS/target/riscv64gc-unknown-none-elf/release/os -nographic`
+- Status: Not built in current environment
 
-**Secondary**: QEMU (has SATP bug, not recommended)
+**Secondary**: QEMU 11.0.0 (has SATP bug, MMU cannot be enabled)
 - Build: `cargo build --release -p os`
 - Run: `qemu-system-riscv64 -machine virt -nographic -bios rustsbi-qemu-new.bin -kernel target/riscv64gc-unknown-none-elf/release/os`
-
-### Known Issues
-
-**PTE Encoding FIXED** (2026-04-15/16):
-- **Non-leaf PTEs**: `make_nonleaf_pte()` was using wrong 3-field split format
-- Per Sv39 spec, non-leaf PTEs must store PPN contiguously at bits [43:10]
-- Fixed: `((ppn as u64) << 10) | 0x01`
-- **Leaf PTEs**: `new_leaf()` and `make_leaf_pte()` were also using wrong 3-field split format
-- For 4KB leaf PTEs, PPN must be at bits [53:10] contiguously
-- Fixed both to: `((ppn as u64) << 10) | flags`
-- With correct PTE encoding, page table walks now work correctly
-
-**Machina MMU Enable Hang FIXED** (2026-04-16):
-- The hang was caused by machina's JIT taking an exit_tb path when handling `csrw satp` with bit 63 set
-- Fixed in machina by adding inline SATP handling in `gen_csr_read` and `gen_csr_write`
-- TrainOS can now enable MMU successfully
-- User mode execution issues FIXED as of 2026-04-17
-
-**Memory Display Bug FIXED** (2026-04-16):
-- `free_pages()` was computing `free - base_page * 64` incorrectly
-- Fixed to `free.saturating_sub(self.base_page)` - base_page is a page number, not bit index
-- Memory now shows correct 99% free
-
-**QEMU SATP Bug** (2026-04-10):
-- QEMU 10.2.2 has a bug where `csrw satp` with non-zero value hangs
-- This prevents MMU (Sv39) from being enabled on QEMU
-- **Use machina instead** for MMU testing
-
-**Timer Interrupt Issue FIXED** (2026-04-10):
-- Root cause: Instruction order bug in `enable_timer_interrupt()` - `li t0` came AFTER `csrs sie, t0`
-- Fix: Corrected instruction order to load immediate before using it
-- Timer interrupts now fire correctly (WFI returns on timer tick)
-- Preemptive scheduling requires MMU to switch to user mode
-
-**Release Build Hang FIXED** (2026-04-10):
-- Root cause: LLVM optimizer issue with functions using inline asm + spin::Mutex in release mode
-- Fix: Added `#[inline(never)]` to `sbi_console_putchar_raw` (console.rs) and `init_page_table_allocator_with_pool` (Sv39.rs)
-- Release build now boots successfully to Boot 6 like debug build
-
-**Kernel Builtin Shell** (2026-04-14):
-- When MMU is disabled, system runs a kernel builtin shell in supervisor mode
-- Displays enhanced periodic status with:
-  - System tick counter (real-time from global counter)
-  - HART ID
-  - Memory usage (used KB / total KB, % free)
-  - Scheduler task counts (total, ready)
-  - MLFQ queue distribution (Q0-Q3 with priorities)
-  - Current running task ID and priority
-- Uses WFI for power management when idle
-- Timer interrupts wake the system from WFI
-- Shows "--- System Status ---" every ~5 seconds
+- Runs in BARE mode with kernel builtin shell only
 
 ## Architecture
 
 **Memory Layout**:
-- 0x80000000: DRAM base (physical)
+- 0x80000000: DRAM base (physical, 128MB)
 - 0x80080000-0x88000000: Page table pool (128 pages = 512KB)
 - 0x80200000: Kernel text start
 - Sv39 user space: 0x0 - 0x3FFFFFFFFFFF (128GB)
-
-**Page Table Pool**:
-- Located at PA 0x80080000 (128 pages, 512KB total)
-- Pool base address was previously 0x88000000 but that address is at the RAM boundary (0x80000000 + 128MB) and is not valid RAM
-- The debug print showing "root_ppn=880" was a print bug (printing truncated value), not actual truncation
-- Both debug and release builds correctly allocate page tables from the pool at 0x80080000
 
 **Key Constants**: PAGE_SIZE=4096, MAX_TASKS=256
 
@@ -138,7 +86,7 @@ TrainOS is an educational operating system written in Rust for RISC-V 64-bit arc
 ### Kernel Services (in kernel space)
 - **Scheduling**: MLFQ scheduler manages task execution and preemption
 - **Memory Management**: Sv39 page table, COW semantics, page fault handling
-- **IPC (Inter-Process Communication)**: Message passing between processes via mailbox
+- **IPC**: Message passing between processes via mailbox
 - **Trap Handling**: Exception and interrupt dispatch, syscalls
 
 ### User-Space Services
@@ -174,21 +122,18 @@ TrainOS is an educational operating system written in Rust for RISC-V 64-bit arc
 ### Kernel (`os/src/`)
 | File | Purpose |
 |------|---------|
-| `boot.rs` | Entry point, boot stages, trap entry asm |
+| `boot.rs` | Entry point, boot stages, trap entry/exit asm (rewritten 2026-04-28) |
 | `main.rs` | Kernel initialization |
-| `process/mod.rs` | Task manager, scheduler, do_schedule, start_scheduler |
+| `process/mod.rs` | Task manager, scheduler, start_scheduler, kernel shell |
 | `process/task.rs` | TaskControlBlock, kernel stack allocation, user address space |
-| `process/context.rs` | TrapFrame, TaskContext, context_switch, return_to_user asm |
+| `process/context.rs` | TrapFrame, TaskContext, context_switch, return_to_user (simplified) |
 | `process/scheduler.rs` | MLFQ scheduler implementation |
 | `trap/mod.rs` | Trap handling, timer interrupts, handle_trap |
 | `syscall/mod.rs` | Syscall dispatcher, all syscalls |
-| `memory/Sv39.rs` | Sv39 page table, COW support, handle_cow_page |
+| `memory/Sv39.rs` | Sv39 page table (full 128MB identity map), COW, enable_sv39 |
 | `memory/mod.rs` | Memory subsystem init, page table allocator |
 | `drivers/interrupt.rs` | CLINT timer, PLIC interrupts |
 | `elf.rs` | ELF binary loader, embedded service binaries |
-| `vfs/mod.rs` | Virtual File System |
-| `fs/ramfs.rs` | RAM filesystem |
-| `smp/boot.rs` | SMP multicore boot |
 
 ### User Space (`user/src/`)
 | File | Purpose |
@@ -202,8 +147,6 @@ TrainOS is an educational operating system written in Rust for RISC-V 64-bit arc
 | `network.rs` | Network service - TCP/IP stack |
 | `net/*.rs` | Protocol implementations (eth, ipv4, tcp, udp, arp, dns) |
 | `vfs_service.rs` | VFS service - procfs/sysfs handlers |
-| `procfs.rs` | Procfs data structures and readers |
-| `sysfs.rs` | Sysfs data structures and readers |
 | `shell.rs` | Shell service |
 
 ## Build & Run
@@ -212,36 +155,33 @@ TrainOS is an educational operating system written in Rust for RISC-V 64-bit arc
 # Build kernel
 cargo build -p os
 
-# Run in QEMU
-cargo run -p os
+# Build release
+cargo build --release -p os
 
-# Build specific user binary
-cargo build -p user --bin <name>
+# Build all user binaries
+cargo build --release -p user
 
 # Copy binary to os/bin/
 cargo objcopy -p user --bin <name> -- -O binary os/bin/<name>.bin
+
+# Run in QEMU (BARE mode only - no MMU)
+cargo run -p os
 ```
 
-## Service Startup Sequence
+## Current Config Flags
 
-1. Kernel loads `init.bin` as PID 1
-2. init creates IPC endpoint
-3. init spawns driver (PID 2)
-4. init spawns fs (PID 3)
-5. init spawns network (PID 4)
-6. init spawns vfs (PID 5)
-7. init spawns shell (PID 6)
-8. init exits
-9. Shell provides user interface
+| Flag | File | Value | Effect |
+|------|------|-------|--------|
+| `QEMU_SKIP_MMU` | `memory/Sv39.rs` | `true` | Skip MMU enable (safe for QEMU) |
+| `SKIP_USER_MODE` | `process/mod.rs` | `true` | Run kernel builtin shell instead of user mode |
 
-## Next Steps
+To enable user mode (requires machina): set `QEMU_SKIP_MMU=false` and `SKIP_USER_MODE=false`.
 
-1. **User mode return issue** (FIXED 2026-04-17):
-   - Fixed PTE encoding, sscratch handling, and entry page mapping
-   - "READY" is printed via ecall from user mode - first sret works!
+## Next Steps (Priority Order)
 
-2. **Network virtqueue DMA** - Implement actual DMA-based frame send/receive
-3. **Enhanced shell** - More commands, better usability
-4. **Error handling** - Improve robustness of services
-5. **Security hardening** - Full capability enforcement
-6. **Namespace isolation** - Process isolation improvements
+1. **Build/obtain machina** — Required for MMU testing; QEMU 11.0.0 SATP bug blocks user mode
+2. **Test user mode entry** — Verify sscratch trap mechanism with actual user→kernel→user transitions
+3. **Enable SMP** — Debug watchdog timeout, bring up multi-core support
+4. **Network virtqueue DMA** — Implement actual DMA-based frame send/receive
+5. **Service startup chain** — Test init → driver → fs → network → vfs → shell in user mode
+6. **Security hardening** — Full capability enforcement, namespace isolation

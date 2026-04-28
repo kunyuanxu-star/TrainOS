@@ -8,10 +8,11 @@ TrainOS is an educational operating system written in Rust for RISC-V 64-bit arc
 ## Current Status (2026-04-28)
 
 ### Build & Run Mode
-- **BARE mode** (MMU disabled): Kernel runs in supervisor mode with builtin shell
-- **User mode** (MMU enabled): Requires machina (QEMU 11.0.0 has SATP hang bug)
+- **MMU enabled** on machina: Sv39 page table active, kernel identity-mapped 128MB DRAM
+- **User mode attempted**: sret works, trap mechanism works (timer interrupts fire)
+- **CRITICAL BUG**: User program stuck at entry point — sepc never advances from entry PC
 - **SMP**: Disabled for debugging (causes watchdog timeout)
-- `QEMU_SKIP_MMU=true` in `Sv39.rs`, `SKIP_USER_MODE=true` in `process/mod.rs`
+- `QEMU_SKIP_MMU=false` in `Sv39.rs`, `SKIP_USER_MODE=false` in `process/mod.rs`
 
 ### Completed Phases 1-8: Core Infrastructure
 - Microkernel architecture: scheduling, memory, IPC, traps in kernel space
@@ -32,24 +33,18 @@ TrainOS is an educational operating system written in Rust for RISC-V 64-bit arc
 
 ### Recent Changes (2026-04-28)
 
-**Trap Entry/Exit Rewrite** (commit `1df658a`):
+**Trap Entry/Exit Rewrite + MMU Enable** (commits `1df658a`, `0b021bf`):
 - Rewrote `__trap_entry` to use `csrrw sp, sscratch, sp` for atomic sp/sscratch swap
 - Properly handles both kernel-mode and user-mode trap entry/return
-- Trap return checks SPP bit to set sscratch correctly:
-  - SPP=0 (return to user): sscratch = kernel_sp (for csrrw at next trap)
-  - SPP=1 (return to supervisor): sscratch = 0
 - `return_to_user_with_mmu` simplified with named register inline asm
-- Removed ~500 lines of verbose debug prints from context.rs
-
-**Full 128MB DRAM Identity Mapping**:
-- `init_kernel_page_table()` now maps entire DRAM (0x80000000-0x88000000)
-- Uses 64 L1 entries, each pointing to a 512-entry L2 table (2MB per L1 entry)
-- Allocates L2 page tables on demand, skips if allocation fails
+- Full 128MB DRAM identity mapped via 64 L1 entries × 512 L2 entries
 - Added `sfence.vma` + `fence.i` after `csrw satp` for TLB coherence
-
-**Build Fix**:
-- Removed corrupted dead code from `enable_sv39()` (merge/edit artifact)
-- Aligned `SKIP_USER_MODE=true` with `QEMU_SKIP_MMU=true` for consistent fallback
+- Fixed syscall argument reading: get_arg functions now read from trap frame offsets
+- Added syscall 1 (SBI-compatible console putchar) for legacy user programs
+- Built machina emulator for MMU testing
+- **MMU enabled and sret to user mode works**
+- **Trap mechanism verified**: timer interrupts fire, trap handler runs, returns correctly
+- **CRITICAL**: User program stuck at entry point — sepc=0x11158 on every trap
 
 ### Previous Fixes (2026-04-10 to 2026-04-17)
 - PTE Encoding: Non-leaf and leaf PTEs use contiguous PPN at bits [43:10] / [53:10]
@@ -179,9 +174,13 @@ To enable user mode (requires machina): set `QEMU_SKIP_MMU=false` and `SKIP_USER
 
 ## Next Steps (Priority Order)
 
-1. **Build/obtain machina** — Required for MMU testing; QEMU 11.0.0 SATP bug blocks user mode
-2. **Test user mode entry** — Verify sscratch trap mechanism with actual user→kernel→user transitions
-3. **Enable SMP** — Debug watchdog timeout, bring up multi-core support
-4. **Network virtqueue DMA** — Implement actual DMA-based frame send/receive
-5. **Service startup chain** — Test init → driver → fs → network → vfs → shell in user mode
+1. **Fix user mode instruction execution** — CPU stuck at entry point (sepc=0x11158 never advances)
+   - Debug why instruction fetch doesn't complete from user page table
+   - Verify page table entries are correct for user-mode execute (U=1, X=1)
+   - Check TLB coherence after satp switch
+   - Verify physical pages aren't conflicting with page table structures
+2. **Once user mode runs** — Verify ecalls work, user output appears via syscall 1
+3. **Service startup chain** — Test init → driver → fs → network → vfs → shell in user mode
+4. **Enable SMP** — Debug watchdog timeout, bring up multi-core support
+5. **Network virtqueue DMA** — Implement actual DMA-based frame send/receive
 6. **Security hardening** — Full capability enforcement, namespace isolation

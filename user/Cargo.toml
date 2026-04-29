@@ -16,6 +16,10 @@ name = "vi"
 path = "src/vi.rs"
 
 [[bin]]
+name = "test_ebreak"
+path = "src/test_ebreak.rs"
+
+[[bin]]
 name = "test_minimal"
 path = "src/test_minimal.rs"
 

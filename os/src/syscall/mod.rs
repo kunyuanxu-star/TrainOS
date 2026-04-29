@@ -560,16 +560,17 @@ fn sys_fchdir(_fd: usize) -> isize {
 // ============================================
 
 /// Exit the current process
-pub fn sys_exit(_code: usize) -> ! {
-    let _pid = *CURRENT_PID.lock();
-    // Debug: print 'E' for exit using SBI console
-    for c in b"E" {
-        crate::console::sbi_console_putchar_raw(*c as usize);
-    }
+pub fn sys_exit(code: usize) -> ! {
+    // TODO: properly terminate the task and schedule another
+    // For now, print exit code and enter idle loop
+    for c in b"[sys_exit] code=" { crate::console::sbi_console_putchar_raw(*c as usize); }
+    let hex = b"0123456789abcdef";
+    let mut v = code;
+    if v == 0 { crate::console::sbi_console_putchar_raw(b'0' as usize); }
+    else { let mut b = [0u8;8]; let mut i=0; while v>0&&i<8{b[i]=hex[v&0xf];i+=1;v>>=4;} while i>0{i-=1;crate::console::sbi_console_putchar_raw(b[i] as usize);} }
+    for c in b"\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
     loop {
-        unsafe {
-            core::arch::asm!("wfi");
-        }
+        unsafe { core::arch::asm!("wfi"); }
     }
 }
 

@@ -63,15 +63,6 @@ pub fn init() {
 /// a0 = pointer to trap frame on stack
 #[no_mangle]
 extern "C" fn handle_trap(trap_frame: *mut crate::process::context::TrapFrame) {
-    // Debug: confirm traps are received after user mode entry
-    static FIRST_TRAP_DONE: spin::Mutex<bool> = spin::Mutex::new(false);
-    if !*FIRST_TRAP_DONE.lock() {
-        *FIRST_TRAP_DONE.lock() = true;
-        for c in b"[trap] First user-mode trap received (trap mechanism OK)\r\n" {
-            crate::console::sbi_console_putchar_raw(*c as usize);
-        }
-    }
-
     // Increment interrupt count for this CPU
     crate::smp::cpu::increment_irq_count();
 
@@ -145,6 +136,24 @@ extern "C" fn handle_trap(trap_frame: *mut crate::process::context::TrapFrame) {
                         // Perform the actual task switch
                         crate::process::do_schedule(trap_frame);
                         // Don't return normally - do_schedule has switched context
+                        return;
+                    }
+                }
+                ExceptionCause::Breakpoint => {
+                    // ebreak used as syscall for user programs running in S-mode
+                    // (workaround for machina U-mode instruction fetch bug)
+                    for c in b"[trap] ebreak syscall\r\n" {
+                        crate::console::sbi_console_putchar_raw(*c as usize);
+                    }
+                    crate::syscall::do_syscall(trap_frame);
+                    unsafe {
+                        (*trap_frame).sepc += 4; // skip ebreak instruction
+                    }
+                    let mut schedule_guard = crate::process::SCHEDULE_REQUESTED.lock();
+                    if *schedule_guard {
+                        *schedule_guard = false;
+                        drop(schedule_guard);
+                        crate::process::do_schedule(trap_frame);
                         return;
                     }
                 }

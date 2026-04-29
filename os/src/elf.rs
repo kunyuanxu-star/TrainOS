@@ -107,8 +107,18 @@ unsafe fn read_u64(data: &[u8], offset: usize) -> u64 {
 /// Load an ELF file into user address space using kernel page table directly
 /// This maps user pages into the kernel page table instead of creating a separate user page table.
 /// Returns (entry_point, user_sp) on success
+///
+/// WORKAROUND: All user VAs are relocated to kernel VA range (0x80100000+)
+/// because machina has a bug where 32-bit instructions don't execute at
+/// low virtual addresses (0x0-0x3FFFFFFFFF). The kernel VA range uses
+/// identity-mapped pages where instruction fetch works correctly.
 pub fn load_elf(data: &[u8], user_space: &mut crate::memory::Sv39::UserAddressSpace) -> Result<(usize, usize), ElfResult> {
     use crate::memory::Sv39::{VirtAddr, PhysAddr};
+
+    // Address relocation: move user VAs above the 128MB kernel identity map
+    // The kernel identity region is 0x80000000-0x88000000.
+    // Use 0x90000000+ for user programs to avoid conflicts.
+    const USER_VA_BASE: usize = 0x90000000;
 
     // Validate ELF header
     match validate_elf(data) {
@@ -122,7 +132,7 @@ pub fn load_elf(data: &[u8], user_space: &mut crate::memory::Sv39::UserAddressSp
     let e_phentsize = unsafe { read_u16(data, 54) } as usize;
     let e_phnum = unsafe { read_u16(data, 56) } as usize;
 
-    crate::print!("[elf] entry=0x");
+    crate::print!("[elf] orig_entry=0x");
     crate::console::print_hex(e_entry);
     crate::println!("");
 
@@ -133,10 +143,13 @@ pub fn load_elf(data: &[u8], user_space: &mut crate::memory::Sv39::UserAddressSp
 
         if p_type == PT_LOAD {
             let p_offset = unsafe { read_u64(data, phdr_offset + 8) } as usize;
-            let p_vaddr = unsafe { read_u64(data, phdr_offset + 16) } as usize;
+            let p_vaddr_orig = unsafe { read_u64(data, phdr_offset + 16) } as usize;
             let p_filesz = unsafe { read_u64(data, phdr_offset + 32) } as usize;
             let p_memsz = unsafe { read_u64(data, phdr_offset + 40) } as usize;
             let p_flags = unsafe { read_u32(data, phdr_offset + 4) };
+
+            // Relocate to kernel VA for machina 32-bit instruction bug workaround
+            let p_vaddr = p_vaddr_orig + USER_VA_BASE;
 
             // Align vaddr to page boundary
             let page_start = p_vaddr & !0xFFF;
@@ -173,7 +186,8 @@ pub fn load_elf(data: &[u8], user_space: &mut crate::memory::Sv39::UserAddressSp
                 }
 
                 // Debug: verify entry point is in this page and check flags
-                if curr_vaddr <= e_entry && e_entry < curr_vaddr + 4096 {
+                let relocated_entry = e_entry + USER_VA_BASE;
+                if curr_vaddr <= relocated_entry && relocated_entry < curr_vaddr + 4096 {
                     crate::print!("[elf] Entry at va=");
                     crate::console::print_hex(curr_vaddr);
                     crate::print!(" -> pa=");
@@ -227,13 +241,10 @@ pub fn load_elf(data: &[u8], user_space: &mut crate::memory::Sv39::UserAddressSp
         }
     }
 
-    // Set up user stack at a high VA (must have valid Sv39 sign extension)
-    // Use 256KB stack (64 pages) for reliability
-    // For Sv39 user space: VA must have bits 63-38 = bit 37 (sign extension)
-    // Valid user VAs: 0x0 - 0x3FFFFFFFFF (bit 37=0) or 0xFFFFFFC000000000 - 0xFFFFFFFFFFFFFFFF (bit 37=1)
-    // We use the lower range: stack_top = 0x3FFFFE00 (gives us 512 bytes below 16GB boundary)
+    // Set up user stack in kernel VA region (machina workaround)
+    // Use 256KB stack at a kernel VA above the user code
     let stack_size = 0x40000; // 256KB stack
-    let stack_top = 0x3FFFFE00;
+    let stack_top = USER_VA_BASE + 0x10000000; // high in kernel region
     let _stack_base = stack_top - stack_size;
 
     // Map stack pages using user address space
@@ -254,6 +265,6 @@ pub fn load_elf(data: &[u8], user_space: &mut crate::memory::Sv39::UserAddressSp
         }
     }
 
-    Ok((e_entry, stack_top - 16))
+    Ok((e_entry + USER_VA_BASE, stack_top - 16))
 }
 

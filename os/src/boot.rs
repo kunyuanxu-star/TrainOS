@@ -96,18 +96,10 @@ core::arch::global_asm!(
     "    call handle_trap",
     // Prepare for trap return
     // At this point sp = trap frame base (kernel_sp - 256)
-    // We need to set up sscratch properly for the next trap
-    // sstatus SPP bit (bit 8): 0 = returning to user, 1 = returning to supervisor
-    "    ld t1, 248(sp)",        // t1 = saved sstatus
-    "    andi t2, t1, 0x100",    // t2 = SPP bit (0x100 if supervisor, 0 if user)
-    "    addi t3, sp, 256",      // t3 = original kernel_sp
-    "    beqz t2, 3f",           // SPP == 0 => returning to user mode
-    // Returning to supervisor mode: sscratch = 0
-    "    csrw sscratch, zero",
-    "    j 4f",
-    // Returning to user mode: sscratch = kernel_sp (for csrrw at next trap entry)
-    "3:  csrw sscratch, t3",
-    "4:",
+    // Always set sscratch = kernel_sp so that csrrw at next trap entry gives sp=kernel_sp
+    // This works for both user-mode and supervisor-mode returns.
+    "    addi t3, sp, 256",      // t3 = kernel_sp
+    "    csrw sscratch, t3",     // sscratch = kernel_sp (for csrrw at next trap entry)
     // Load user_sp from trap frame at offset 252
     "    ld t0, 252(sp)",
     // Restore sepc

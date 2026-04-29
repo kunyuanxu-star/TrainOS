@@ -271,23 +271,23 @@ unsafe fn return_to_user_with_mmu(_tf: *mut TrapFrame, satp: usize, sp: usize, p
     print_hex(sp);
     for c in b"\r\n" { crate::console::sbi_console_putchar_raw(*c as usize); }
 
-    // Reverting debug: use the original user page table and sret to user mode
     unsafe {
         core::arch::asm!(
             // Switch to user page table
             "csrw satp, {satp}",
             "sfence.vma zero, zero",
             "fence.i",
-            // Set sepc to user entry point
+            // Set sepc to entry point
             "csrw sepc, {pc}",
-            // Set sstatus for user mode: SPP=0 (user), SPIE=1
-            "li t0, 0x20",
+            // SPP=1 (supervisor mode), SPIE=1
+            // User programs run in S-mode as workaround for machina U-mode bug.
+            "li t0, 0x120",
             "csrw sstatus, t0",
-            // Set sscratch = kernel_sp (trap frame pointer) for csrrw at next trap entry
+            // Set sscratch = kernel_sp for csrrw at next trap entry
             "csrw sscratch, {ksp}",
             // Set sp to user stack
             "mv sp, {usp}",
-            // Return to user mode
+            // Return to supervisor mode
             "sret",
             satp = in(reg) satp,
             pc = in(reg) pc,

@@ -45,6 +45,14 @@ TrainOS is an educational operating system written in Rust for RISC-V 64-bit arc
 - **MMU enabled and sret to user mode works**
 - **Trap mechanism verified**: timer interrupts fire, trap handler runs, returns correctly
 - **CRITICAL**: User program stuck at entry point — sepc=0x11158 on every trap
+  - Root cause: machina emulator has TWO bugs:
+    1. 32-bit instructions don't execute at low VAs (< 0x80000000)
+    2. First instruction after sret never executes (even at kernel VAs,
+       unless it's a jump-to-self)
+  - Workaround: ELF loader relocates user programs to kernel VAs (0x90000000+)
+  - Status: S-mode execution with kernel VA relocation works (timer interrupts
+    confirm CPU executes instructions). But syscalls (ebreak/ecall) don't
+    produce visible output yet — needs further investigation.
 
 ### Previous Fixes (2026-04-10 to 2026-04-17)
 - PTE Encoding: Non-leaf and leaf PTEs use contiguous PPN at bits [43:10] / [53:10]
@@ -174,13 +182,10 @@ To enable user mode (requires machina): set `QEMU_SKIP_MMU=false` and `SKIP_USER
 
 ## Next Steps (Priority Order)
 
-1. **Fix user mode instruction execution** — CPU stuck at entry point (sepc=0x11158 never advances)
-   - Debug why instruction fetch doesn't complete from user page table
-   - Verify page table entries are correct for user-mode execute (U=1, X=1)
-   - Check TLB coherence after satp switch
-   - Verify physical pages aren't conflicting with page table structures
-2. **Once user mode runs** — Verify ecalls work, user output appears via syscall 1
-3. **Service startup chain** — Test init → driver → fs → network → vfs → shell in user mode
+1. **Fix post-sret instruction execution** — First instruction after sret never executes
+   (even at kernel VAs). Debug machina's sret implementation; consider mret-based workaround.
+2. **Enable syscall output** — Verify ebreak/ecall syscalls produce user-visible output
+3. **Service startup chain** — Test init → driver → fs → network → vfs → shell
 4. **Enable SMP** — Debug watchdog timeout, bring up multi-core support
 5. **Network virtqueue DMA** — Implement actual DMA-based frame send/receive
 6. **Security hardening** — Full capability enforcement, namespace isolation

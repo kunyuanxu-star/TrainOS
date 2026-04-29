@@ -791,10 +791,12 @@ pub fn init_kernel_page_table() {
         ((pa >> 12) as u64) << 10 | (flags as u64)
     }
 
-    // Root[0] -> L1 page table (covering DRAM 0x80000000-0x88000000)
+    // Root[2] -> L1 page table (covering DRAM 0x80000000-0x88000000)
+    // VA 0x80000000 has VPN = 0x80000, Root index = 0x80000 >> 18 = 2
+    let root_idx = (0x80000000usize >> 12 >> 18) & 0x1FF;
     unsafe {
         let root_ptr = root_pa as *mut u64;
-        core::ptr::write_volatile(root_ptr, make_nonleaf_pte(l1_ppn));
+        core::ptr::write_volatile(root_ptr.add(root_idx), make_nonleaf_pte(l1_ppn));
     }
 
     // Map full 128MB DRAM: each L1 entry covers 2MB, each L2 covers 4KB pages

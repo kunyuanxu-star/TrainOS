@@ -1,0 +1,12 @@
+[package]
+name = "init"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "init"
+
+[profile.release]
+opt-level = "s"
+lto = true
+debug = false

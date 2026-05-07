@@ -56,8 +56,13 @@ impl Endpoint {
     }
 }
 
-/// Non-blocking send. Queues message, wakes receiver if waiting.
+/// Non-blocking send. Queues message, boosts receiver priority (priority inheritance), wakes receiver if waiting.
 pub fn send(ep_id: usize, sender_pid: u32, msg: Message) -> Result<(), &'static str> {
+    // Get sender's priority for inheritance (before locking endpoints to avoid lock ordering issues)
+    let sender_prio = crate::sched::current_thread()
+        .map(|t| unsafe { (*t).effective_priority })
+        .unwrap_or(0);
+
     let mut eps = super::ENDPOINTS.lock();
     let ep = eps.get_mut(ep_id).and_then(|e| e.as_mut()).ok_or("invalid ep")?;
 
@@ -65,8 +70,12 @@ pub fn send(ep_id: usize, sender_pid: u32, msg: Message) -> Result<(), &'static 
     ep.pending_senders.push_back(sender_pid, msg);
 
     if let Some(receiver) = ep.waiting_receiver.take() {
-        // Wake the blocked receiver
         unsafe {
+            // Priority inheritance: receiver gets max of its own and sender's priority
+            let recv_prio = (*receiver).effective_priority;
+            if sender_prio > recv_prio {
+                (*receiver).effective_priority = sender_prio;
+            }
             (*receiver).state = crate::proc::thread::ThreadState::Ready;
         }
         crate::sched::enqueue_thread(receiver);
@@ -75,11 +84,17 @@ pub fn send(ep_id: usize, sender_pid: u32, msg: Message) -> Result<(), &'static 
 }
 
 /// Blocking receive. Blocks current thread if no message pending.
+/// Resets effective priority to base priority after receiving.
 pub fn recv(ep_id: usize, _receiver_pid: u32) -> Result<Message, &'static str> {
     let mut eps = super::ENDPOINTS.lock();
     let ep = eps.get_mut(ep_id).and_then(|e| e.as_mut()).ok_or("invalid ep")?;
 
     if let Some((_sender, msg)) = ep.pending_senders.pop_front() {
+        // Priority restoration: reset to base priority after receiving (inheritance served its purpose)
+        let current = crate::sched::current_thread().ok_or("no thread")?;
+        unsafe {
+            (*current).effective_priority = (*current).base_priority;
+        }
         Ok(msg)
     } else {
         // Block current thread

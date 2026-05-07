@@ -5,6 +5,8 @@ pub mod elf;
 
 use process::Process;
 use thread::Thread;
+use crate::cap::types::{CapType, ResourceData, Slot};
+use crate::cap::ops;
 use crate::mem::{buddy, sv39, layout::PAGE_SIZE};
 use alloc::boxed::Box;
 use spin::Mutex;
@@ -56,7 +58,21 @@ pub fn spawn(elf_data: &[u8], priority: u8) -> Option<u32> {
         (tf_sp as *mut crate::trap::TrapFrame).write(thread.trap_frame.unwrap());
     }
 
-    let mut proc = Box::new(Process::new(pid, priority, root_pt));
+    // Create a CNode (capability space) for this process
+    let cnode_id = ops::alloc_resource(
+        CapType::CNode,
+        ResourceData::CNode { slots: Mutex::new(alloc::vec::Vec::new()) }
+    );
+    // Pre-allocate 16 null slots in the CNode
+    {
+        let res = ops::get_resource(cnode_id).unwrap();
+        if let ResourceData::CNode { ref slots } = &res.data {
+            let mut s = slots.lock();
+            for _ in 0..16 { s.push(Slot::null()); }
+        }
+    }
+
+    let mut proc = Box::new(Process::new(pid, priority, root_pt, cnode_id));
     proc.thread = Some(thread);
     let thread_ptr: *mut Thread = proc.thread.as_mut().unwrap() as *mut Thread;
 
@@ -100,7 +116,20 @@ pub fn fork_child(child_pt: usize, _parent_pt: usize, entry: usize, user_sp: usi
         (tf_sp as *mut crate::trap::TrapFrame).write(thread.trap_frame.unwrap());
     }
 
-    let mut proc = Box::new(Process::new(child_pid, priority, child_pt));
+    // Create a new CNode for the child process with empty slots
+    let cnode_id = ops::alloc_resource(
+        CapType::CNode,
+        ResourceData::CNode { slots: Mutex::new(alloc::vec::Vec::new()) }
+    );
+    {
+        let res = ops::get_resource(cnode_id).unwrap();
+        if let ResourceData::CNode { ref slots } = &res.data {
+            let mut s = slots.lock();
+            for _ in 0..16 { s.push(Slot::null()); }
+        }
+    }
+
+    let mut proc = Box::new(Process::new(child_pid, priority, child_pt, cnode_id));
     proc.thread = Some(thread);
     let thread_ptr = proc.thread.as_mut().unwrap() as *mut Thread;
 

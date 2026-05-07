@@ -55,10 +55,10 @@ pub fn syscall_dispatch(tf: &mut TrapFrame) {
         SYS_EP_CREATE => ipc::sys_ep_create(),
         SYS_SEND => ipc::sys_send(arg0, arg1 as u16, arg2, arg3),
         SYS_RECV => ipc::sys_recv(arg0, arg1, arg2),
-        SYS_MINT => cap::sys_mint(arg0, arg1, arg2 as u8),
-        SYS_COPY => cap::sys_copy(arg0, arg1, arg2, arg3),
-        SYS_MOVE => cap::sys_move(arg0, arg1, arg2, arg3),
-        SYS_DELETE => cap::sys_delete(arg0, arg1),
+        SYS_MINT => cap::sys_mint(arg0, arg1 as u8),
+        SYS_COPY => cap::sys_copy(arg0, arg1 as u32, arg2),
+        SYS_MOVE => cap::sys_move(arg0, arg1 as u32, arg2),
+        SYS_DELETE => cap::sys_delete(arg0),
         SYS_MAP_MMIO => {
             let phys = arg0;
             let size = arg1;

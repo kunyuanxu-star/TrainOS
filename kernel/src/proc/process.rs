@@ -15,10 +15,11 @@ pub struct Process {
     pub page_table_root: usize,
     pub thread: Option<Thread>,
     pub parent: Option<u32>,
+    pub cnode_id: usize,
 }
 
 impl Process {
-    pub fn new(pid: u32, priority: u8, page_table_root: usize) -> Self {
+    pub fn new(pid: u32, priority: u8, page_table_root: usize, cnode_id: usize) -> Self {
         Process {
             pid,
             state: ProcessState::Ready,
@@ -26,6 +27,7 @@ impl Process {
             page_table_root,
             thread: None,
             parent: None,
+            cnode_id,
         }
     }
 }

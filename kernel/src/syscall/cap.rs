@@ -1,17 +1,60 @@
-use crate::cap::types::Rights;
+use crate::cap::types;
+use crate::cap::ops;
 
-pub fn sys_mint(cnode: usize, src_idx: usize, rights: u8) -> Result<usize, &'static str> {
-    crate::cap::ops::mint(cnode, src_idx, rights).map(|_| 0).ok_or("mint failed")
+/// Get the CNode resource ID of the calling process.
+fn caller_cnode() -> Result<usize, &'static str> {
+    let pid = crate::sched::current_thread()
+        .map(|t| unsafe { (*t).owner }).unwrap_or(0);
+    let procs = crate::proc::PROCESSES.lock();
+    let proc = procs.iter().find(|p| p.pid == pid).ok_or("no process")?;
+    Ok(proc.cnode_id)
 }
 
-pub fn sys_copy(src_cn: usize, src_idx: usize, dst_cn: usize, dst_idx: usize) -> Result<usize, &'static str> {
-    crate::cap::ops::copy_cap(src_cn, src_idx, dst_cn, dst_idx).map(|_| 0)
+/// sys_mint(src_slot_idx, desired_rights) -> new_slot_idx
+/// Derive a new capability from an existing one in the caller's CNode.
+pub fn sys_mint(src_idx: usize, desired_rights: u8) -> Result<usize, &'static str> {
+    let cnode = caller_cnode()?;
+    let slot = ops::mint(cnode, src_idx, desired_rights).ok_or("mint failed")?;
+
+    // Append the minted slot to the caller's CNode
+    let res = ops::get_resource(cnode).ok_or("cnode gone")?;
+    if let types::ResourceData::CNode { ref slots } = &res.data {
+        let mut s = slots.lock();
+        s.push(slot);
+        let idx = s.len() - 1;
+        return Ok(idx);
+    }
+    Err("mint: cnode resource invalid")
 }
 
-pub fn sys_move(src_cn: usize, src_idx: usize, dst_cn: usize, dst_idx: usize) -> Result<usize, &'static str> {
-    crate::cap::ops::move_cap(src_cn, src_idx, dst_cn, dst_idx).map(|_| 0)
+/// sys_copy(src_idx, dst_pid, dst_idx) -> 0
+/// Copy a capability from the caller's CNode to another process's CNode.
+pub fn sys_copy(src_idx: usize, dst_pid: u32, dst_idx: usize) -> Result<usize, &'static str> {
+    let src_cnode = caller_cnode()?;
+    let procs = crate::proc::PROCESSES.lock();
+    let dst_proc = procs.iter().find(|p| p.pid == dst_pid).ok_or("dst process not found")?;
+    let dst_cnode = dst_proc.cnode_id;
+    drop(procs);
+    ops::copy_cap(src_cnode, src_idx, dst_cnode, dst_idx)?;
+    Ok(0)
 }
 
-pub fn sys_delete(cnode: usize, slot_idx: usize) -> Result<usize, &'static str> {
-    crate::cap::ops::delete_cap(cnode, slot_idx).map(|_| 0)
+/// sys_move(src_idx, dst_pid, dst_idx) -> 0
+/// Move a capability from the caller's CNode to another process's CNode.
+pub fn sys_move(src_idx: usize, dst_pid: u32, dst_idx: usize) -> Result<usize, &'static str> {
+    let src_cnode = caller_cnode()?;
+    let procs = crate::proc::PROCESSES.lock();
+    let dst_proc = procs.iter().find(|p| p.pid == dst_pid).ok_or("dst process not found")?;
+    let dst_cnode = dst_proc.cnode_id;
+    drop(procs);
+    ops::move_cap(src_cnode, src_idx, dst_cnode, dst_idx)?;
+    Ok(0)
+}
+
+/// sys_delete(slot_idx) -> 0
+/// Delete a capability from the caller's CNode.
+pub fn sys_delete(slot_idx: usize) -> Result<usize, &'static str> {
+    let cnode = caller_cnode()?;
+    ops::delete_cap(cnode, slot_idx)?;
+    Ok(0)
 }

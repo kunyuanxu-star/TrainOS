@@ -74,7 +74,10 @@ pub fn enable_timer_interrupt() {
 
 // CLINT constants
 const CLINT_BASE: usize = 0x0200_0000;
-const CLINT_MTIMECMP: usize = CLINT_BASE + 0x4000;
+fn clint_mtimecmp_offset() -> usize {
+    let hart = crate::per_cpu::hart_id();
+    CLINT_BASE + 0x4000 + hart * 8
+}
 const CLINT_MTIME: usize = CLINT_BASE + 0xBFF8;
 const TIMEBASE_FREQ: usize = 10_000_000; // 10MHz
 const TICK_MS: usize = 10;
@@ -86,8 +89,8 @@ unsafe fn mtime() -> u64 {
 }
 
 unsafe fn set_mtimecmp(val: u64) {
-    let ptr = CLINT_MTIMECMP as *mut u64;
-    ptr.write_volatile(val);
+    let offset = clint_mtimecmp_offset();
+    (offset as *mut u64).write_volatile(val);
 }
 
 pub fn clint_set_next_timer() {
@@ -112,6 +115,7 @@ extern "C" fn handle_trap(tf: &mut TrapFrame) {
 
     if is_interrupt {
         match cause {
+            1 => software_interrupt(tf), // S-mode Software Interrupt (IPI)
             5 => timer_interrupt(tf), // Supervisor Timer
             _ => unknown_trap(scause),
         }
@@ -124,6 +128,13 @@ extern "C" fn handle_trap(tf: &mut TrapFrame) {
             _ => unknown_trap(scause),
         }
     }
+}
+
+fn software_interrupt(_tf: &mut TrapFrame) {
+    // Acknowledge SSIP by clearing the sip.SSIP bit
+    unsafe { core::arch::asm!("csrc sip, {}", in(reg) 1usize << 1); }
+    // Reschedule — may pick up a thread that was woken by another HART
+    crate::sched::schedule();
 }
 
 fn timer_interrupt(_tf: &mut TrapFrame) {

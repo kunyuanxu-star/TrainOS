@@ -4,6 +4,11 @@
 
 extern crate alloc;
 
+use core::sync::atomic::{AtomicBool, Ordering};
+
+#[cfg(not(test))]
+static BOOT_READY: AtomicBool = AtomicBool::new(false);
+
 use alloc::boxed::Box;
 
 #[cfg(not(test))]
@@ -17,6 +22,12 @@ mod trap;
 
 #[cfg(not(test))]
 mod sched;
+
+#[cfg(not(test))]
+mod per_cpu;
+
+#[cfg(not(test))]
+mod sync;
 
 #[cfg(not(test))]
 mod proc;
@@ -47,18 +58,44 @@ core::arch::global_asm!(
     ".section .text.entry, \"ax\", @progbits",
     ".globl _start",
     "_start:",
-    // Mask interrupts during boot
     "    csrw sie, zero",
-    // Set up boot stack (64KB, ample for boot)
-    "    la sp, _boot_stack_top",
-    // Jump to Rust
+    // Read HART ID from tp register (set by RustSBI)
+    "    mv t0, tp",
+    // Load per-HART boot stack: _boot_stacks + hart_id * 65536
+    "    slli t1, t0, 16",            // t1 = hart_id * 65536
+    "    la t2, _boot_stacks",
+    "    add t2, t2, t1",
+    "    mv sp, t2",
+    // If HART 0, jump to rust_main. Otherwise, rust_secondary.
+    "    bnez t0, 1f",
     "    tail rust_main",
+    "1:  tail rust_secondary",
     ".section .bss",
-    ".align 4",
-    "_boot_stack_bottom:",
-    "    .space 65536, 0",
-    "_boot_stack_top:",
+    ".align 12",                         // 4096-byte aligned
+    "_boot_stacks:",
+    "    .space 65536 * 4, 0",           // 4 HARTs x 64KB each
 );
+
+#[cfg(not(test))]
+#[no_mangle]
+extern "C" fn rust_secondary() -> ! {
+    // Park until primary HART signals ready
+    while !BOOT_READY.load(Ordering::Acquire) {
+        unsafe { core::arch::asm!("wfi"); }
+    }
+
+    // Same setup as primary (minus BSS clear and memory init)
+    crate::trap::enable_timer_interrupt();
+    crate::trap::init();
+    crate::mem::sv39::enable_mmu();
+
+    // Init per-CPU and enter scheduler
+    crate::per_cpu::init_secondary();
+    crate::sched::schedule();
+
+    // Should never reach here
+    crate::idle_loop();
+}
 
 #[cfg(not(test))]
 #[no_mangle]
@@ -267,6 +304,10 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
         }
         None => console::puts("  WARNING: uart spawn failed\r\n"),
     }
+
+    // Signal secondary HARTs that they can proceed
+    BOOT_READY.store(true, Ordering::Release);
+    console::puts("  Secondary HARTs released\r\n");
 
     // Create idle thread and start scheduler
     let idle = Box::new(crate::proc::thread::Thread::new_idle());

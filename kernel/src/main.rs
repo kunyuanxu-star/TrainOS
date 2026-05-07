@@ -330,6 +330,30 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
         None => console::puts("  WARNING: uart spawn failed\r\n"),
     }
 
+    // Spawn the drv service (VirtIO block driver, priority 40)
+    static DRV_ELF: &[u8] = include_bytes!("drv.elf");
+    match proc::spawn(DRV_ELF, 40) {
+        Some(pid) => {
+            console::puts("  DRV process spawned (pid=");
+            unsafe {
+                let mut n = pid;
+                let mut buf = [0u8; 10];
+                let mut i = 10;
+                loop {
+                    i -= 1;
+                    buf[i] = b'0' + (n % 10) as u8;
+                    n /= 10;
+                    if n == 0 { break; }
+                }
+                for j in i..10 {
+                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") buf[j] as usize);
+                }
+            }
+            console::puts(")\r\n");
+        }
+        None => console::puts("  WARNING: drv spawn failed\r\n"),
+    }
+
     // Signal secondary HARTs that they can proceed
     BOOT_READY.store(true, Ordering::Release);
     console::puts("  Secondary HARTs released\r\n");

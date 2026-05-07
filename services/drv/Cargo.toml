@@ -1,0 +1,10 @@
+[package]
+name = "drv"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "drv"
+
+[dependencies]
+tros = { path = "../../lib/tros" }

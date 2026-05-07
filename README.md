@@ -26,16 +26,17 @@ All device drivers, filesystems, network stacks, and POSIX compatibility run as 
 
 ## Current Status (2026-05-07)
 
-### V2.5 — SMP Microkernel with Network Stack
+### V3.0 — Full-Featured Microkernel
 
-- **SMP multi-core**: 2 HARTs, spinlock scheduler, per-CPU data, per-HART CLINT
-- **11 user-space services**: init, ping, fs, test_fs, sh, test_fork, uart, test_posix, drv, net, echo
+- **SMP 2.0**: Active IPI on IPC wakeup, per-CPU pick counts, scheduler stats
+- **13 user-space services**: init, ping, fs, test_fs, sh, test_fork, uart, test_posix, drv, net, echo, test_net, test_c
 - **Capability enforcement**: Per-process CNode with auto-stored EP caps
 - **POSIX compatibility**: open/read/write/close translated to IPC→FS service
-- **COW fork**: Deep-copy page tables with page fault handler
+- **COW fork + page fault handler**: Full deep-copy with COW breaking
 - **IPC priority inheritance**: Receiver inherits sender priority
-- **Network stack**: Port-based datagram routing, service registration
-- **VirtIO MMIO**: Framework verified, blocked by PMP (needs firmware update)
+- **Network stack**: Port-based datagram routing (UDP-like, NET: PASS)
+- **VirtIO MMIO proxy**: Kernel-mediated read32/write32, block device detected
+- **C/ASM program support**: ELF64 binary via Python generator, runs on bare metal
 
 ## Build & Run
 
@@ -142,7 +143,8 @@ TrainOS/
 - [x] V1.2-V1.4: IPC demo, FS service, Shell
 - [x] V1.5-V2.0: MMIO, COW fork, priority inheritance
 - [x] V2.1-V2.5: SMP, Cap enforcement, POSIX, VirtIO, Network
-- [ ] V3.0: Per-CPU scheduler queues, active IPI, TLB shootdown, PMP fix
+- [x] V3.0: Active IPI, C program support, MMIO proxy, VirtIO detection
+- [ ] V3.1: VirtIO block I/O, disk read/write, file system persistence
 
 ## License
 

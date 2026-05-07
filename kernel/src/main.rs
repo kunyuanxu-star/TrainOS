@@ -99,9 +99,9 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
     mem::sv39::enable_mmu();
     console::puts("  MMU enabled (Sv39)\r\n");
 
-    // Spawn the init user-space process
+    // Spawn the init user-space process (highest priority so it creates EP 1 first)
     static INIT_ELF: &[u8] = include_bytes!("init.elf");
-    match proc::spawn(INIT_ELF, 32) {
+    match proc::spawn(INIT_ELF, 48) {
         Some(pid) => {
             console::puts("  Init process spawned (pid=");
             // Simple digit-by-digit print for pid (avoid format)
@@ -146,6 +146,54 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
             console::puts(")\r\n");
         }
         None => console::puts("  WARNING: ping spawn failed\r\n"),
+    }
+
+    // Spawn the FS service
+    static FS_ELF: &[u8] = include_bytes!("fs.elf");
+    match proc::spawn(FS_ELF, 32) {
+        Some(pid) => {
+            console::puts("  FS process spawned (pid=");
+            unsafe {
+                let mut n = pid;
+                let mut buf = [0u8; 10];
+                let mut i = 10;
+                loop {
+                    i -= 1;
+                    buf[i] = b'0' + (n % 10) as u8;
+                    n /= 10;
+                    if n == 0 { break; }
+                }
+                for j in i..10 {
+                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") buf[j] as usize);
+                }
+            }
+            console::puts(")\r\n");
+        }
+        None => console::puts("  WARNING: FS spawn failed\r\n"),
+    }
+
+    // Spawn the test_fs service
+    static TEST_FS_ELF: &[u8] = include_bytes!("test_fs.elf");
+    match proc::spawn(TEST_FS_ELF, 24) {
+        Some(pid) => {
+            console::puts("  TEST_FS process spawned (pid=");
+            unsafe {
+                let mut n = pid;
+                let mut buf = [0u8; 10];
+                let mut i = 10;
+                loop {
+                    i -= 1;
+                    buf[i] = b'0' + (n % 10) as u8;
+                    n /= 10;
+                    if n == 0 { break; }
+                }
+                for j in i..10 {
+                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") buf[j] as usize);
+                }
+            }
+            console::puts(")\r\n");
+        }
+        None => console::puts("  WARNING: test_fs spawn failed\r\n"),
     }
 
     // Create idle thread and start scheduler

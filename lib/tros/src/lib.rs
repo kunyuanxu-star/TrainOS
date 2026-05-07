@@ -34,30 +34,49 @@ pub fn ep_create() -> usize {
 /// Send a message to an endpoint (syscall 11)
 /// Returns 0 on success
 pub fn send(ep_id: usize, opcode: u16, data: &[u8]) -> usize {
-    let result: usize;
+    let mut result: usize;
     unsafe {
         core::arch::asm!(
             "ecall",
             in("a7") 11usize,
-            in("a0") ep_id,
+            inout("a0") ep_id => result,
             in("a1") opcode as usize,
             in("a2") data.as_ptr() as usize,
             in("a3") data.len(),
-            lateout("a0") result,
         );
     }
     result
 }
 
-/// Receive a message from an endpoint (syscall 12)
-/// Returns sender_pid on success, blocks if no message
-pub fn recv(ep_id: usize) -> usize {
-    let result: usize;
+/// Receive a message from an endpoint (syscall 12).
+/// Copies payload into buf (up to buf.len() bytes).
+/// Returns (sender_pid, opcode) on success, (usize::MAX, 0) on error.
+pub fn recv(ep_id: usize, buf: &mut [u8]) -> (usize, u16) {
+    let mut result: usize;
     unsafe {
         core::arch::asm!(
             "ecall",
             in("a7") 12usize,
-            in("a0") ep_id,
+            inout("a0") ep_id => result,
+            in("a1") buf.as_ptr() as usize,
+            in("a2") buf.len(),
+        );
+    }
+    if result == usize::MAX {
+        return (usize::MAX, 0);
+    }
+    let opcode = ((result >> 24) & 0xFF) as u16;
+    let sender_pid = result & 0x00FF_FFFF;
+    (sender_pid, opcode)
+}
+
+/// Get the current process ID (syscall 5)
+pub fn getpid() -> usize {
+    let result: usize;
+    unsafe {
+        core::arch::asm!(
+            "ecall",
+            in("a7") 5usize,
             lateout("a0") result,
         );
     }

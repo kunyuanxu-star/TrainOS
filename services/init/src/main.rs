@@ -13,8 +13,9 @@ extern "C" fn _start() -> ! {
     tros::print("INIT\r\n");
 
     // Loop: receive messages on endpoint 1 (the first endpoint)
+    let mut buf = [0u8; 64];
     loop {
-        let sender = tros::recv(1);
+        let (sender, _opcode) = tros::recv(1, &mut buf);
         if sender != usize::MAX {
             tros::print("TrainOS IPC OK\r\n");
         }

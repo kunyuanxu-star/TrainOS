@@ -153,3 +153,68 @@ pub fn exit(_code: i32) -> ! {
     }
     loop { unsafe { core::arch::asm!("wfi"); } }
 }
+
+/// POSIX-compatible system calls.
+/// These use the kernel's POSIX syscalls (50-53) which translate to IPC internally.
+
+/// Open a file (syscall 50). Returns fd number.
+pub fn open(path: &str) -> usize {
+    let result: usize;
+    unsafe {
+        core::arch::asm!(
+            "ecall",
+            in("a7") 50usize,
+            in("a0") path.as_ptr() as usize,
+            in("a1") 0usize,
+            in("a2") 0usize,
+            lateout("a0") result,
+        );
+    }
+    result
+}
+
+/// Read from a file descriptor (syscall 51). Returns bytes read.
+pub fn read(fd: usize, buf: &mut [u8]) -> usize {
+    let result: usize;
+    unsafe {
+        core::arch::asm!(
+            "ecall",
+            in("a7") 51usize,
+            in("a0") fd,
+            in("a1") buf.as_ptr() as usize,
+            in("a2") buf.len(),
+            lateout("a0") result,
+        );
+    }
+    result
+}
+
+/// Write to a file descriptor (syscall 52). Returns bytes written.
+pub fn write(fd: usize, data: &[u8]) -> usize {
+    let result: usize;
+    unsafe {
+        core::arch::asm!(
+            "ecall",
+            in("a7") 52usize,
+            in("a0") fd,
+            in("a1") data.as_ptr() as usize,
+            in("a2") data.len(),
+            lateout("a0") result,
+        );
+    }
+    result
+}
+
+/// Close a file descriptor (syscall 53).
+pub fn close(fd: usize) -> usize {
+    let result: usize;
+    unsafe {
+        core::arch::asm!(
+            "ecall",
+            in("a7") 53usize,
+            in("a0") fd,
+            lateout("a0") result,
+        );
+    }
+    result
+}

@@ -233,6 +233,31 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
         None => console::puts("  WARNING: test_fs spawn failed\r\n"),
     }
 
+    // Spawn the test_posix service (V2.3 POSIX compatibility demo)
+    // Priority 31 (< FS=32 so FS starts first; > test_fork=30 so we run before fork hogs CPU)
+    static TEST_POSIX_ELF: &[u8] = include_bytes!("test_posix.elf");
+    match proc::spawn(TEST_POSIX_ELF, 31) {
+        Some(pid) => {
+            console::puts("  test_posix process spawned (pid=");
+            unsafe {
+                let mut n = pid;
+                let mut buf = [0u8; 10];
+                let mut i = 10;
+                loop {
+                    i -= 1;
+                    buf[i] = b'0' + (n % 10) as u8;
+                    n /= 10;
+                    if n == 0 { break; }
+                }
+                for j in i..10 {
+                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") buf[j] as usize);
+                }
+            }
+            console::puts(")\r\n");
+        }
+        None => console::puts("  WARNING: test_posix spawn failed\r\n"),
+    }
+
     // Spawn the shell service (same priority as test_fs for round-robin)
     static SH_ELF: &[u8] = include_bytes!("sh.elf");
     match proc::spawn(SH_ELF, 24) {

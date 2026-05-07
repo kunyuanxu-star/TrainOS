@@ -1,6 +1,7 @@
 pub mod proc;
 pub mod ipc;
 pub mod cap;
+pub mod posix;
 
 use crate::trap::TrapFrame;
 
@@ -21,6 +22,11 @@ pub const SYS_MINT:      usize = 30;
 pub const SYS_COPY:      usize = 31;
 pub const SYS_MOVE:      usize = 32;
 pub const SYS_DELETE:    usize = 33;
+// POSIX compatibility syscalls
+pub const SYS_OPEN:      usize = 50;
+pub const SYS_READ:      usize = 51;
+pub const SYS_WRITE:     usize = 52;
+pub const SYS_CLOSE:     usize = 53;
 // SBI forwarding (note: SYS_SPAWN and SYS_PUTCHAR both use nr=1, differentiated by context)
 pub const SYS_PUTCHAR:   usize = 1;
 pub const SYS_GETCHAR:   usize = 2;
@@ -74,6 +80,10 @@ pub fn syscall_dispatch(tf: &mut TrapFrame) {
         SYS_FORK => proc::sys_fork(tf.sepc),
         SYS_GETPID => Ok(crate::sched::current_thread()
             .map(|t| unsafe { (*t).owner as usize }).unwrap_or(0)),
+        SYS_OPEN  => posix::sys_open(arg0, arg1, arg2),
+        SYS_READ  => posix::sys_read(arg0, arg1, arg2),
+        SYS_WRITE => posix::sys_write(arg0, arg1, arg2),
+        SYS_CLOSE => posix::sys_close(arg0),
         _ => Err("unknown syscall"),
     };
 

@@ -209,6 +209,78 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
         None => console::puts("  WARNING: FS spawn failed\r\n"),
     }
 
+    // Spawn the NET service (V2.5 network stack, prio 43, above DRV(40))
+    static NET_ELF: &[u8] = include_bytes!("net.elf");
+    match proc::spawn(NET_ELF, 43) {
+        Some(pid) => {
+            console::puts("  NET process spawned (pid=");
+            unsafe {
+                let mut n = pid;
+                let mut buf = [0u8; 10];
+                let mut i = 10;
+                loop {
+                    i -= 1;
+                    buf[i] = b'0' + (n % 10) as u8;
+                    n /= 10;
+                    if n == 0 { break; }
+                }
+                for j in i..10 {
+                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") buf[j] as usize);
+                }
+            }
+            console::puts(")\r\n");
+        }
+        None => console::puts("  WARNING: NET spawn failed\r\n"),
+    }
+
+    // Spawn the ECHO service (V2.5 network echo, prio 42)
+    static ECHO_ELF: &[u8] = include_bytes!("echo.elf");
+    match proc::spawn(ECHO_ELF, 42) {
+        Some(pid) => {
+            console::puts("  ECHO process spawned (pid=");
+            unsafe {
+                let mut n = pid;
+                let mut buf = [0u8; 10];
+                let mut i = 10;
+                loop {
+                    i -= 1;
+                    buf[i] = b'0' + (n % 10) as u8;
+                    n /= 10;
+                    if n == 0 { break; }
+                }
+                for j in i..10 {
+                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") buf[j] as usize);
+                }
+            }
+            console::puts(")\r\n");
+        }
+        None => console::puts("  WARNING: ECHO spawn failed\r\n"),
+    }
+
+    // Spawn the TEST_NET service (V2.5 network test, prio 41)
+    static TEST_NET_ELF: &[u8] = include_bytes!("test_net.elf");
+    match proc::spawn(TEST_NET_ELF, 41) {
+        Some(pid) => {
+            console::puts("  TEST_NET process spawned (pid=");
+            unsafe {
+                let mut n = pid;
+                let mut buf = [0u8; 10];
+                let mut i = 10;
+                loop {
+                    i -= 1;
+                    buf[i] = b'0' + (n % 10) as u8;
+                    n /= 10;
+                    if n == 0 { break; }
+                }
+                for j in i..10 {
+                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") buf[j] as usize);
+                }
+            }
+            console::puts(")\r\n");
+        }
+        None => console::puts("  WARNING: TEST_NET spawn failed\r\n"),
+    }
+
     // Spawn the test_fs service
     static TEST_FS_ELF: &[u8] = include_bytes!("test_fs.elf");
     match proc::spawn(TEST_FS_ELF, 24) {

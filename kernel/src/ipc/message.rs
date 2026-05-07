@@ -4,6 +4,7 @@ pub const MAX_PAYLOAD: usize = 64;
 pub const MAX_CAP_TRANSFER: usize = 4;
 
 #[derive(Clone, Copy, Debug)]
+#[repr(C)]
 pub struct CapTransfer {
     pub src_slot: u32,
     pub dst_slot: u32,
@@ -14,6 +15,7 @@ pub struct CapTransfer {
 pub enum TransferMode { Copy, Move }
 
 #[derive(Clone, Copy, Debug)]
+#[repr(C)]
 pub struct Message {
     pub sender_pid: u32,
     pub opcode: u16,

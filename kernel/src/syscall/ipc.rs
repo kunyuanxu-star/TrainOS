@@ -85,8 +85,10 @@ pub fn sys_send(ep_id: usize, opcode: u16, payload_ptr: usize, payload_len: usiz
     if payload_ptr != 0 && payload_len > 0 {
         let len = core::cmp::min(payload_len, MAX_PAYLOAD);
         unsafe {
-            let src = core::slice::from_raw_parts(payload_ptr as *const u8, len);
-            msg.payload[..len].copy_from_slice(src);
+            let src = payload_ptr as *const u8;
+            for i in 0..len {
+                msg.payload[i] = core::ptr::read_volatile(src.add(i));
+            }
             msg.payload_len = len;
         }
     }
@@ -116,8 +118,10 @@ pub fn sys_recv(ep_id: usize, buf_ptr: usize, buf_len: usize) -> Result<usize, &
                 let len = core::cmp::min(msg.payload_len, buf_len);
                 if len > 0 && buf_ptr != 0 {
                     unsafe {
-                        let dst = core::slice::from_raw_parts_mut(buf_ptr as *mut u8, len);
-                        dst.copy_from_slice(&msg.payload[..len]);
+                        let dst = buf_ptr as *mut u8;
+                        for i in 0..len {
+                            core::ptr::write_volatile(dst.add(i), msg.payload[i]);
+                        }
                     }
                 }
                 return Ok(((msg.opcode as usize) << 24) | (msg.sender_pid as usize & 0x00FF_FFFF));

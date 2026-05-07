@@ -47,6 +47,7 @@ pub fn ep_create() -> usize {
 
 /// Send a message to an endpoint (syscall 11)
 /// Returns 0 on success
+#[inline(never)]
 pub fn send(ep_id: usize, opcode: u16, data: &[u8]) -> usize {
     let mut result: usize;
     unsafe {
@@ -58,6 +59,7 @@ pub fn send(ep_id: usize, opcode: u16, data: &[u8]) -> usize {
             in("a2") data.as_ptr() as usize,
             in("a3") data.len(),
         );
+        core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
     }
     result
 }
@@ -65,6 +67,7 @@ pub fn send(ep_id: usize, opcode: u16, data: &[u8]) -> usize {
 /// Receive a message from an endpoint (syscall 12).
 /// Copies payload into buf (up to buf.len() bytes).
 /// Returns (sender_pid, opcode) on success, (usize::MAX, 0) on error.
+#[inline(never)]
 pub fn recv(ep_id: usize, buf: &mut [u8]) -> (usize, u16) {
     let mut result: usize;
     unsafe {
@@ -75,6 +78,7 @@ pub fn recv(ep_id: usize, buf: &mut [u8]) -> (usize, u16) {
             in("a1") buf.as_ptr() as usize,
             in("a2") buf.len(),
         );
+        core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
     }
     if result == usize::MAX {
         return (usize::MAX, 0);

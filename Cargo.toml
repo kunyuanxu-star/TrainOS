@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["kernel", "services/init"]
+members = ["kernel", "services/init", "services/ping", "lib/tros"]
 
 [workspace.package]
 version = "0.1.0"

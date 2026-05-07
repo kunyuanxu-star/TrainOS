@@ -248,8 +248,12 @@ pub fn load_elf(elf_data: &[u8], page_table_root: usize) -> Option<(usize, usize
 
     // ── Allocate user stack ──────────────────────────────────────
     // Place the stack at the very top of the user address space
-    // (0x0000_0000 – 0x3FFF_FFFF_FFFF), growing downward.
-    let stack_bottom = 0x3FFF_FFFF_F000; // last 4 KiB page in user space
+    // (0x0000_0000 – 0x0000_003F_FFFF_FFFF), growing downward.
+    // The last valid user page is at 0x0000_003F_FFFF_F000 (VPN2=255,
+    // VPN1=511, VPN0=511).  stack_bottom + PAGE_SIZE would overflow
+    // past 2^38 (bit 38 = 1), producing a non-canonical Sv39 address,
+    // so we set user_sp 16 bytes below the boundary for safety.
+    let stack_bottom = 0x0000_003F_FFFF_F000; // last valid user page
     let stack_phys = buddy::alloc_page()?;
     unsafe {
         let kva = sv39::pa_to_kva(stack_phys);
@@ -265,5 +269,5 @@ pub fn load_elf(elf_data: &[u8], page_table_root: usize) -> Option<(usize, usize
         );
     }
 
-    Some((entry, stack_bottom + PAGE_SIZE))
+    Some((entry, stack_bottom + PAGE_SIZE - 16))
 }

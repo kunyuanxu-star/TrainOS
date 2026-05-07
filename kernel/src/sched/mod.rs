@@ -106,13 +106,15 @@ pub fn schedule() {
     // Re-enqueue current if still Running
     if let Some(cur) = current_ptr {
         unsafe {
-            if (*cur).state == ThreadState::Running {
+            let cur_state = (*cur).state;
+            if cur_state == ThreadState::Running {
                 sched.enqueue(cur);
             }
         }
     }
 
     let next = sched.dequeue_highest();
+
     sched.current = next;
     drop(sched);
 

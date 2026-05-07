@@ -21,6 +21,14 @@ pub fn spawn(elf_data: &[u8], priority: u8) -> Option<u32> {
         pid
     };
 
+    crate::console::puts("  spawn pid=");
+    let mut n = pid as usize;
+    let mut buf = [0u8; 10];
+    let mut i = 10;
+    loop { i -= 1; buf[i] = b'0' + (n % 10) as u8; n /= 10; if n == 0 { break; } }
+    for j in i..10 { unsafe { core::arch::asm!("ecall", in("a7") 1usize, in("a0") buf[j] as usize); } }
+    crate::console::puts("\r\n");
+
     // Allocate page table root for the process
     let root_pt = buddy::alloc_page()?;
 

@@ -1,0 +1,6 @@
+[package]
+name = "tros"
+version.workspace = true
+edition.workspace = true
+
+[lib]

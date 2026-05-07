@@ -1,10 +1,10 @@
 [package]
-name = "init"
+name = "ping"
 version.workspace = true
 edition.workspace = true
 
 [[bin]]
-name = "init"
+name = "ping"
 
 [dependencies]
 tros = { path = "../../lib/tros" }

@@ -68,7 +68,7 @@ pub fn init() {
 /// Enable timer interrupts (sie.STIE).
 pub fn enable_timer_interrupt() {
     unsafe {
-        core::arch::asm!("csrrs zero, sie, {}", in(reg) 0x20usize); // set STIE bit (bit 5)
+        core::arch::asm!("csrrs zero, sie, {}", in(reg) 0x20usize);
     }
 }
 
@@ -125,6 +125,11 @@ extern "C" fn handle_trap(tf: &mut TrapFrame) {
 
 fn timer_interrupt(_tf: &mut TrapFrame) {
     clint_set_next_timer();
+    // Clear pending supervisor timer interrupt (STIP) in sip.
+    // Writing mtimecmp alone does not clear sip.STIP, which was set
+    // by RustSBI's M-mode timer handler. Without this clear, the
+    // timer interrupt re-fires immediately after sret.
+    unsafe { core::arch::asm!("csrc sip, {}", in(reg) 1usize << 5); }
     crate::sched::schedule();
 }
 

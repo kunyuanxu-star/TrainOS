@@ -15,6 +15,9 @@ pub enum WaitTarget {
 }
 
 /// Saved callee-saved registers for context switch
+/// The `satp` field stores the page table root for this thread.
+/// context_switch saves/restores satp so that each thread runs with
+/// its own page table after a context switch.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct TaskContext {
@@ -23,6 +26,7 @@ pub struct TaskContext {
     pub s0: usize, pub s1: usize, pub s2: usize, pub s3: usize,
     pub s4: usize, pub s5: usize, pub s6: usize, pub s7: usize,
     pub s8: usize, pub s9: usize, pub s10: usize, pub s11: usize,
+    pub satp: usize,
 }
 
 impl TaskContext {
@@ -32,6 +36,7 @@ impl TaskContext {
             s0: 0, s1: 0, s2: 0, s3: 0,
             s4: 0, s5: 0, s6: 0, s7: 0,
             s8: 0, s9: 0, s10: 0, s11: 0,
+            satp: 0,
         }
     }
 }
@@ -54,12 +59,15 @@ impl Thread {
     pub fn new(tid: u32, owner: u32, priority: u8, entry: usize, tf_sp: usize, satp_val: usize) -> Self {
         let mut tf = TrapFrame::default();
         tf.sepc = entry;
-        tf.sstatus = 1 << 5; // SPIE bit set (enable interrupts after sret)
+        // SPIE=1 (re-enable S-mode interrupts after sret),
+        // SUM=1  (Supervisor can access User pages, needed for IPC payload copy)
+        tf.sstatus = (1 << 5) | (1 << 18);
         tf.satp = satp_val;
 
         let task_ctx = TaskContext {
             ra: user_trap_return as *const () as usize,
             sp: tf_sp, // points to trap frame on kernel stack
+            satp: satp_val,
             ..TaskContext::empty()
         };
 
@@ -77,13 +85,19 @@ impl Thread {
     }
 
     pub fn new_idle() -> Self {
+        // Read the current (kernel) satp for idle thread
+        let kernel_satp: usize;
+        unsafe { core::arch::asm!("csrr {}, satp", out(reg) kernel_satp); }
+        let mut task_ctx = TaskContext::empty();
+        task_ctx.satp = kernel_satp;
+
         Thread {
             tid: 0,
             owner: 0,
             state: ThreadState::Ready,
             base_priority: 0,
             effective_priority: 0,
-            task_ctx: TaskContext::empty(),
+            task_ctx,
             trap_frame: None,
             kernel_stack_top: 0,
             wait_target: None,

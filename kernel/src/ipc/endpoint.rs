@@ -56,22 +56,20 @@ impl Endpoint {
     }
 }
 
-/// Non-blocking send. Queues message or delivers if receiver waiting.
+/// Non-blocking send. Queues message, wakes receiver if waiting.
 pub fn send(ep_id: usize, sender_pid: u32, msg: Message) -> Result<(), &'static str> {
     let mut eps = super::ENDPOINTS.lock();
     let ep = eps.get_mut(ep_id).and_then(|e| e.as_mut()).ok_or("invalid ep")?;
 
+    // Always queue the message first, so the receiver can find it when it wakes
+    ep.pending_senders.push_back(sender_pid, msg);
+
     if let Some(receiver) = ep.waiting_receiver.take() {
-        // Receiver is waiting -- wake it and deliver
-        // Store message in receiver's buffer area (handled at syscall level)
-        // For now, just wake the receiver
+        // Wake the blocked receiver
         unsafe {
             (*receiver).state = crate::proc::thread::ThreadState::Ready;
         }
         crate::sched::enqueue_thread(receiver);
-    } else {
-        // Queue for later
-        ep.pending_senders.push_back(sender_pid, msg);
     }
     Ok(())
 }

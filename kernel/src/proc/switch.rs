@@ -18,6 +18,9 @@ core::arch::global_asm!(
     "    sd s9, 88(a0)",
     "    sd s10, 96(a0)",
     "    sd s11, 104(a0)",
+    // Save satp (page table root)
+    "    csrr t0, satp",
+    "    sd t0, 112(a0)",
     // Restore from new context
     "    ld ra, 0(a1)",
     "    ld sp, 8(a1)",
@@ -33,6 +36,11 @@ core::arch::global_asm!(
     "    ld s9, 88(a1)",
     "    ld s10, 96(a1)",
     "    ld s11, 104(a1)",
+    // Restore satp (page table root) and flush TLB
+    "    ld t0, 112(a1)",
+    "    csrw satp, t0",
+    "    sfence.vma zero, zero",
+    "    fence.i",
     "    ret",
 );
 

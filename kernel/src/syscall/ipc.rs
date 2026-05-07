@@ -18,7 +18,8 @@ pub fn sys_send(ep_id: usize, opcode: u16, payload_ptr: usize) -> Result<usize, 
 
     // Copy payload from user space.
     // We are running with the user process's satp active, so user virtual
-    // addresses are directly accessible.
+    // addresses are directly accessible. sstatus.SUM=1 permits S-mode
+    // access to User (U=1) pages.
     if payload_ptr != 0 {
         let len = core::cmp::min(msg.payload.len(), 64);
         unsafe {
@@ -33,22 +34,23 @@ pub fn sys_send(ep_id: usize, opcode: u16, payload_ptr: usize) -> Result<usize, 
 }
 
 /// sys_recv(ep_id: usize) -> Result
+/// Blocks until a message is received, retrying after being woken from wait.
 pub fn sys_recv(ep_id: usize) -> Result<usize, &'static str> {
     let receiver_pid = crate::sched::current_thread()
         .map(|t| unsafe { (*t).owner })
         .unwrap_or(0);
 
-    match ipc::endpoint::recv(ep_id, receiver_pid) {
-        Ok(msg) => {
-            // Return something useful -- the sender pid or opcode
-            Ok(msg.sender_pid as usize)
-        }
-        Err(_) => {
-            // Would block -- schedule away
-            crate::sched::schedule();
-            // When we return, the message should be available
-            // For now, return error
-            Err("interrupted")
+    // Loop to retry after being woken from Waiting state by a sender
+    loop {
+        match ipc::endpoint::recv(ep_id, receiver_pid) {
+            Ok(msg) => {
+                return Ok(msg.sender_pid as usize);
+            }
+            Err(_) => {
+                // Would block -- schedule away
+                crate::sched::schedule();
+                // When scheduled back, retry recv (message should be queued)
+            }
         }
     }
 }

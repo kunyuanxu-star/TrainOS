@@ -4,9 +4,6 @@ use core::alloc::{GlobalAlloc, Layout};
 /// The region starts at _kernel_end and extends for KERNEL_HEAP_SIZE bytes.
 
 use spin::Mutex;
-use super::layout;
-
-const KERNEL_HEAP_SIZE: usize = 4 * 1024 * 1024; // 4MB
 
 struct BumpAllocator {
     next: usize,
@@ -45,15 +42,9 @@ unsafe impl GlobalAlloc for KernelAllocator {
 #[global_allocator]
 static ALLOCATOR: KernelAllocator = KernelAllocator(Mutex::new(BumpAllocator::new()));
 
-pub fn init() {
-    let heap_start = layout::kernel_end();
-    let heap_start = ((heap_start + layout::PAGE_SIZE - 1) / layout::PAGE_SIZE) * layout::PAGE_SIZE;
+pub fn init_range(start: usize, end: usize) {
     let mut bump = ALLOCATOR.0.lock();
-    bump.next = heap_start;
-    bump.end = heap_start + KERNEL_HEAP_SIZE;
+    bump.next = start;
+    bump.end = end;
 }
 
-pub fn stats() -> (usize, usize) {
-    let bump = ALLOCATOR.0.lock();
-    (bump.next - layout::kernel_end(), KERNEL_HEAP_SIZE)
-}

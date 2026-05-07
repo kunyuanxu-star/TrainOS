@@ -2,22 +2,22 @@
 #![no_main]
 
 use core::panic::PanicInfo;
+use tros;
 
 #[no_mangle]
 extern "C" fn _start() -> ! {
-    let msg = b"TrainOS ready\r\n";
-    for &byte in msg.iter() {
-        unsafe {
-            core::arch::asm!(
-                "ecall",
-                in("a7") 1usize,
-                in("a0") byte as usize,
-            );
-        }
-    }
+    // Create an IPC endpoint
+    tros::ep_create();
 
+    // Print "INIT" to identify this process
+    tros::print("INIT\r\n");
+
+    // Loop: receive messages on endpoint 1 (the first endpoint)
     loop {
-        unsafe { core::arch::asm!("wfi"); }
+        let sender = tros::recv(1);
+        if sender != usize::MAX {
+            tros::print("TrainOS IPC OK\r\n");
+        }
     }
 }
 

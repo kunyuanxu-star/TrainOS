@@ -234,14 +234,38 @@ pub fn enable_mmu() {
     MMU_ENABLED.store(true, Ordering::SeqCst);
 }
 
-/// Copy all kernel L2-level page table entries into a target root page table.
-/// This ensures kernel memory remains accessible when satp points to the process PT.
+/// Copy kernel page table entries into a target root page table.
+/// Each kernel L1 page table page is **deep-copied** so that the process
+/// does not share L1 pages with the kernel (or other processes).
+///
+/// Without deep copy, the ELF loader would treat kernel L1 pages as
+/// writable and would corrupt the page table when mapping user code at
+/// low VPN2 indices that share an L1 page with a kernel mapping
+/// (e.g. the CLINT mapping at L2[0]).
 pub unsafe fn copy_kernel_mappings(target_root_phys: usize) {
     let kernel_root = root_pt_phys();
     let kernel_l2 = page_table_page_ref(kernel_root);
     let target_l2 = page_table_page(target_root_phys);
+
     for i in 0..512 {
-        target_l2[i] = kernel_l2[i];
+        let entry = kernel_l2[i];
+        if entry.is_branch() {
+            // Deep-copy the L1 page so the process gets its own copy.
+            let kernel_l1 = page_table_page_ref(entry.phys_addr());
+            let new_l1 = super::buddy::alloc_page()
+                .expect("copy_kernel_mappings: OOM allocating L1 copy");
+            let new_l1_pt = page_table_page(new_l1);
+            for j in 0..512 {
+                new_l1_pt[j] = kernel_l1[j];
+            }
+            let mut new_entry = PTE::empty();
+            new_entry.set_ppn(new_l1 >> 12);
+            new_entry.set_flags(false, false, false, false);
+            target_l2[i] = new_entry;
+        } else {
+            // Leaf or invalid: copy verbatim.
+            target_l2[i] = entry;
+        }
     }
 }
 

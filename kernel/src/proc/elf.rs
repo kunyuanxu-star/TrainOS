@@ -55,7 +55,7 @@ unsafe fn pt_page_ref(phys: usize) -> &'static [sv39::PTE; 512] {
 
 /// Walk a page table (given its root) and return (l0_phys, l0_index).
 /// Creates intermediate page table pages if `alloc` is true.
-unsafe fn walk_pt(root_pt: usize, va: usize, alloc: bool) -> Option<(usize, usize)> {
+pub(crate) unsafe fn walk_pt(root_pt: usize, va: usize, alloc: bool) -> Option<(usize, usize)> {
     let vpn2 = sv39::vpn2(va);
     let vpn1 = sv39::vpn1(va);
     let vpn0 = sv39::vpn0(va);
@@ -105,7 +105,7 @@ unsafe fn walk_pt(root_pt: usize, va: usize, alloc: bool) -> Option<(usize, usiz
 }
 
 /// Map a single 4 KiB page into a specific page table.
-unsafe fn map_into_pt(
+pub unsafe fn map_into_pt(
     root_pt: usize,
     va: usize,
     pa: usize,
@@ -270,4 +270,15 @@ pub fn load_elf(elf_data: &[u8], page_table_root: usize) -> Option<(usize, usize
     }
 
     Some((entry, stack_bottom + PAGE_SIZE - 16))
+}
+
+/// Map a physical page (e.g. MMIO region) into a process's page table.
+/// Returns the virtual address at which it was mapped.
+/// The VA is computed as 0x4000_0000 + offset from the physical address.
+pub fn map_phys_to_user(root_pt: usize, phys: usize, _size: usize) -> usize {
+    let va = 0x4000_0000 + (phys & 0xFFF);
+    unsafe {
+        map_into_pt(root_pt, va, phys, true, true, false, true);
+    }
+    va
 }

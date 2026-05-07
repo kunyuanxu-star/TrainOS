@@ -11,7 +11,7 @@ use spin::Mutex;
 use alloc::vec::Vec;
 
 static NEXT_PID: Mutex<u32> = Mutex::new(1);
-static PROCESSES: Mutex<Vec<Box<Process>>> = Mutex::new(Vec::new());
+pub(crate) static PROCESSES: Mutex<Vec<Box<Process>>> = Mutex::new(Vec::new());
 
 pub fn spawn(elf_data: &[u8], priority: u8) -> Option<u32> {
     let pid = {
@@ -68,3 +68,52 @@ pub fn spawn(elf_data: &[u8], priority: u8) -> Option<u32> {
 }
 
 pub fn init() {}
+
+/// Create a child process from a COW-shared page table.
+/// This is the kernel side of fork().
+pub fn fork_child(child_pt: usize, _parent_pt: usize, entry: usize, user_sp: usize, _satp_val: usize, priority: u8) -> Option<u32> {
+    let child_pid = {
+        let mut next = NEXT_PID.lock();
+        let pid = *next;
+        *next += 1;
+        pid
+    };
+
+    // Allocate kernel stack for child
+    let kstack_pa = buddy::alloc_page()?;
+    let tf_sp = sv39::pa_to_kva(kstack_pa + PAGE_SIZE) - 280;
+
+    // Compute child's own satp value
+    let child_satp = sv39::make_satp(child_pt);
+
+    // Create child thread with same entry point and user_sp as parent.
+    // entry is already sepc + 4 (instruction after ecall).
+    // Use same priority so both get scheduled (FIFO within priority level).
+    let mut thread = Thread::new(child_pid, child_pid, priority, entry, tf_sp, child_satp);
+    if let Some(ref mut tf) = thread.trap_frame {
+        tf.user_sp = user_sp;
+        tf.a0 = 0; // child returns 0 from fork
+    }
+
+    // Copy trap frame to stack
+    unsafe {
+        (tf_sp as *mut crate::trap::TrapFrame).write(thread.trap_frame.unwrap());
+    }
+
+    let mut proc = Box::new(Process::new(child_pid, priority, child_pt));
+    proc.thread = Some(thread);
+    let thread_ptr = proc.thread.as_mut().unwrap() as *mut Thread;
+
+    let mut procs = PROCESSES.lock();
+    procs.push(proc);
+
+    crate::sched::enqueue_thread(thread_ptr);
+    crate::console::puts("fork_child ok pid=");
+    let mut n = child_pid as usize;
+    let mut buf = [0u8; 10];
+    let mut i = 10;
+    loop { i -= 1; buf[i] = b'0' + (n % 10) as u8; n /= 10; if n == 0 { break; } }
+    for j in i..10 { unsafe { core::arch::asm!("ecall", in("a7") 1usize, in("a0") buf[j] as usize); } }
+    crate::console::puts("\r\n");
+    Some(child_pid)
+}

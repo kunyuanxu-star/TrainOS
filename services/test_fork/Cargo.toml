@@ -1,0 +1,10 @@
+[package]
+name = "test_fork"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "test_fork"
+
+[dependencies]
+tros = { path = "../../lib/tros" }

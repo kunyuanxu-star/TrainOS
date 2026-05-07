@@ -97,6 +97,51 @@ pub fn getpid() -> usize {
     result
 }
 
+/// Map a physical MMIO region into process address space (syscall 22).
+/// Returns virtual address, or 0 on error.
+pub fn map_mmio(phys: usize, size: usize) -> usize {
+    let result: usize;
+    unsafe {
+        core::arch::asm!(
+            "ecall",
+            in("a7") 22usize,
+            inout("a0") phys => result,
+            in("a1") size,
+        );
+    }
+    result
+}
+
+/// Map a physical MMIO region into process address space (syscall 20).
+/// Returns virtual address of the mapping.
+pub fn mmio_map(phys: usize, size: usize) -> usize {
+    let result: usize;
+    unsafe {
+        core::arch::asm!(
+            "ecall",
+            in("a7") 20usize,
+            in("a0") phys,
+            in("a1") size,
+            lateout("a0") result,
+        );
+    }
+    result
+}
+
+/// Fork the current process (syscall 4).
+/// Returns child PID in parent, 0 in child.
+pub fn fork() -> usize {
+    let result: usize;
+    unsafe {
+        core::arch::asm!(
+            "ecall",
+            in("a7") 4usize,
+            lateout("a0") result,
+        );
+    }
+    result
+}
+
 /// Exit current process (syscall 0)
 pub fn exit(_code: i32) -> ! {
     unsafe {

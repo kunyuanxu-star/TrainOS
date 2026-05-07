@@ -118,6 +118,9 @@ extern "C" fn handle_trap(tf: &mut TrapFrame) {
     } else {
         match cause {
             8 => syscall(tf),         // Environment call from U-mode
+            12 => page_fault(tf),     // Instruction page fault
+            13 => page_fault(tf),     // Load page fault
+            15 => page_fault(tf),     // Store/AMO page fault
             _ => unknown_trap(scause),
         }
     }
@@ -126,15 +129,59 @@ extern "C" fn handle_trap(tf: &mut TrapFrame) {
 fn timer_interrupt(_tf: &mut TrapFrame) {
     clint_set_next_timer();
     // Clear pending supervisor timer interrupt (STIP) in sip.
-    // Writing mtimecmp alone does not clear sip.STIP, which was set
-    // by RustSBI's M-mode timer handler. Without this clear, the
-    // timer interrupt re-fires immediately after sret.
     unsafe { core::arch::asm!("csrc sip, {}", in(reg) 1usize << 5); }
     crate::sched::schedule();
 }
 
 fn syscall(tf: &mut TrapFrame) {
     crate::syscall::syscall_dispatch(tf);
+}
+
+fn page_fault(tf: &mut TrapFrame) {
+    let stval: usize;
+    unsafe { core::arch::asm!("csrr {}, stval", out(reg) stval); }
+    let va = stval;
+
+    // Read current satp to find the current page table root
+    let satp_val: usize;
+    unsafe { core::arch::asm!("csrr {}, satp", out(reg) satp_val); }
+    let root_phys = (satp_val & ((1usize << 44) - 1)) << 12;
+
+    // Walk the current process's page table to check for COW
+    if let Some((l0_phys, idx)) = unsafe { crate::proc::elf::walk_pt(root_phys, va, false) } {
+        let l0 = unsafe { &*(crate::mem::sv39::pa_to_kva(l0_phys) as *const [crate::mem::sv39::PTE; 512]) };
+        let pte = l0[idx];
+        if pte.is_cow() {
+            // COW break: allocate new page, copy, update PTE
+            let new_page = crate::mem::buddy::alloc_page().expect("OOM in COW");
+            let old_kva = crate::mem::sv39::pa_to_kva(pte.phys_addr());
+            let new_kva = crate::mem::sv39::pa_to_kva(new_page);
+            unsafe {
+                core::ptr::copy_nonoverlapping(old_kva as *const u8, new_kva as *mut u8, 4096);
+            }
+            // Update PTE
+            let l0_mut = unsafe { &mut *(crate::mem::sv39::pa_to_kva(l0_phys) as *mut [crate::mem::sv39::PTE; 512]) };
+            let mut new_pte = crate::mem::sv39::PTE::empty();
+            new_pte.set_ppn(new_page >> 12);
+            new_pte.set_flags(true, true, pte.is_executable(), true); // R+W+U
+            new_pte.set_accessed(true);
+            new_pte.set_dirty(true);
+            l0_mut[idx] = new_pte;
+            // Flush TLB for this VA
+            unsafe { core::arch::asm!("sfence.vma {}", in(reg) va); }
+            return; // successfully handled
+        }
+    }
+
+    // Not a COW page — log and hang
+    crate::console::puts("Page fault at va=0x");
+    for i in (0..16).rev() {
+        let nibble = (va >> (i * 4)) & 0xF;
+        let c = if nibble < 10 { b'0' + nibble as u8 } else { b'a' + (nibble - 10) as u8 };
+        unsafe { core::arch::asm!("ecall", in("a7") 1usize, in("a0") c as usize); }
+    }
+    crate::console::puts("\r\n");
+    crate::idle_loop();
 }
 
 fn unknown_trap(scause: usize) {

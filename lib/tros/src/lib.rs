@@ -11,6 +11,20 @@ pub fn putchar(c: u8) {
     }
 }
 
+/// Read a character from console (SBI getchar, syscall 2)
+/// Returns character byte, or usize::MAX if no input available
+pub fn getchar() -> usize {
+    let result: usize;
+    unsafe {
+        core::arch::asm!(
+            "ecall",
+            in("a7") 2usize,
+            lateout("a0") result,
+        );
+    }
+    result
+}
+
 /// Print a string via putchar
 pub fn print(s: &str) {
     for b in s.bytes() {

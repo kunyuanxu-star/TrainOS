@@ -196,6 +196,30 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
         None => console::puts("  WARNING: test_fs spawn failed\r\n"),
     }
 
+    // Spawn the shell service (same priority as test_fs for round-robin)
+    static SH_ELF: &[u8] = include_bytes!("sh.elf");
+    match proc::spawn(SH_ELF, 24) {
+        Some(pid) => {
+            console::puts("  Shell process spawned (pid=");
+            unsafe {
+                let mut n = pid;
+                let mut buf = [0u8; 10];
+                let mut i = 10;
+                loop {
+                    i -= 1;
+                    buf[i] = b'0' + (n % 10) as u8;
+                    n /= 10;
+                    if n == 0 { break; }
+                }
+                for j in i..10 {
+                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") buf[j] as usize);
+                }
+            }
+            console::puts(")\r\n");
+        }
+        None => console::puts("  WARNING: sh spawn failed\r\n"),
+    }
+
     // Create idle thread and start scheduler
     let idle = Box::new(crate::proc::thread::Thread::new_idle());
     let idle_ptr: *mut crate::proc::thread::Thread = Box::into_raw(idle);

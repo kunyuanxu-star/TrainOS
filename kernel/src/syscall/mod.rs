@@ -6,7 +6,7 @@ use crate::trap::TrapFrame;
 
 // Syscall numbers
 pub const SYS_EXIT:      usize = 0;
-pub const SYS_SPAWN:     usize = 2;
+pub const SYS_SPAWN:     usize = 3;
 pub const SYS_GETPID:    usize = 5;
 pub const SYS_EP_CREATE: usize = 10;
 pub const SYS_SEND:      usize = 11;
@@ -21,6 +21,7 @@ pub const SYS_MOVE:      usize = 32;
 pub const SYS_DELETE:    usize = 33;
 // SBI forwarding (note: SYS_SPAWN and SYS_PUTCHAR both use nr=1, differentiated by context)
 pub const SYS_PUTCHAR:   usize = 1;
+pub const SYS_GETCHAR:   usize = 2;
 
 pub fn syscall_dispatch(tf: &mut TrapFrame) {
     let nr = tf.a7;
@@ -36,6 +37,18 @@ pub fn syscall_dispatch(tf: &mut TrapFrame) {
                 core::arch::asm!("ecall", in("a7") 1usize, in("a0") tf.a0);
             }
             Ok(0)
+        }
+        SYS_GETCHAR => {
+            // Forward SBI console getchar to M-mode
+            let c: usize;
+            unsafe {
+                core::arch::asm!(
+                    "ecall",
+                    in("a7") 2usize,
+                    lateout("a0") c,
+                );
+            }
+            Ok(c)
         }
         SYS_EP_CREATE => ipc::sys_ep_create(),
         SYS_SEND => ipc::sys_send(arg0, arg1 as u16, arg2, arg3),

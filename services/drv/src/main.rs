@@ -4,8 +4,17 @@
 use core::panic::PanicInfo;
 use tros;
 
-fn print_hex(val: usize) {
-    for i in (0..8).rev() {
+/// VirtIO MMIO register offsets
+const MAGIC_VALUE: usize = 0x000; // 0x74726976 = "virt"
+const VERSION:     usize = 0x004; // 1 (legacy) or 2 (modern)
+const DEVICE_ID:   usize = 0x008; // 2 = block device
+const VENDOR_ID:   usize = 0x00C;
+
+/// Physical base address of the first VirtIO MMIO device on machina.
+const VIRTIO_BASE: usize = 0x10001000;
+
+fn print_hex(val: usize, digits: usize) {
+    for i in (0..digits).rev() {
         let nibble = (val >> (i * 4)) & 0xF;
         let c = if nibble < 10 { b'0' + nibble as u8 } else { b'a' + (nibble - 10) as u8 };
         tros::putchar(c);
@@ -14,35 +23,37 @@ fn print_hex(val: usize) {
 
 #[no_mangle]
 extern "C" fn _start() -> ! {
-    tros::print("DRV: scanning VirtIO devices...\r\n");
+    tros::print("DRV: scanning VirtIO devices via kernel MMIO proxy...\r\n");
 
-    // Try to map the first VirtIO MMIO region.
-    // machina typically places virtio devices near 0x10008000.
-    let phys = 0x10008000;
-    tros::print("DRV: mapping phys=0x");
-    print_hex(phys);
-    tros::print("...\r\n");
+    // Read VirtIO MMIO registers using the kernel proxy syscall.
+    // The kernel (S-mode) accesses the physical address through an
+    // identity mapping set up during boot.
+    let magic   = tros::mmio_read32(VIRTIO_BASE + MAGIC_VALUE);
+    let version = tros::mmio_read32(VIRTIO_BASE + VERSION);
+    let dev_id  = tros::mmio_read32(VIRTIO_BASE + DEVICE_ID);
+    let vendor  = tros::mmio_read32(VIRTIO_BASE + VENDOR_ID);
 
-    let vaddr = tros::mmio_map(phys, 0x1000);
-    if vaddr == 0 || vaddr == usize::MAX {
-        tros::print("DRV: mmio_map failed\r\n");
-        tros::print("DRV: FAIL\r\n");
+    tros::print("DRV:   magic  = 0x");
+    print_hex(magic, 8);
+    tros::print("\r\n");
+
+    tros::print("DRV:   version = 0x");
+    print_hex(version, 8);
+    tros::print("\r\n");
+
+    tros::print("DRV:   dev_id = 0x");
+    print_hex(dev_id, 8);
+    tros::print("\r\n");
+
+    tros::print("DRV:   vendor = 0x");
+    print_hex(vendor, 8);
+    tros::print("\r\n");
+
+    // Check magic value: 0x74726976 ("virt")
+    if magic == 0x74726976 {
+        tros::print("DRV: PASS (VirtIO device found)\r\n");
     } else {
-        tros::print("DRV:   mapped va=0x");
-        print_hex(vaddr);
-        tros::print("\r\n");
-
-        // NOTE: machina's PMP configuration blocks S/U-mode access to
-        // physical addresses below 0x80000000, so we cannot read the
-        // MMIO registers directly from user space. The MMIO mapping
-        // itself has been proven to work via the syscall returning a
-        // valid virtual address.
-        //
-        // To read MMIO registers, the kernel would need to either:
-        //   a) Reconfigure PMP to allow MMIO access, or
-        //   b) Provide a syscall to read/write MMIO on behalf of user space
-
-        tros::print("DRV: PASS (MMIO mapping works)\r\n");
+        tros::print("DRV: FAIL (no VirtIO device)\r\n");
     }
 
     tros::print("DRV: done\r\n");

@@ -46,6 +46,7 @@ pub struct Scheduler {
     ready_queues: [ThreadQueue; NUM_PRIORITIES],
     priority_bitmap: u64,
     current: Option<*mut Thread>,
+    pick_count: [u64; 4],  // picks per HART
 }
 
 impl Scheduler {
@@ -55,6 +56,7 @@ impl Scheduler {
             ready_queues: [EMPTY; NUM_PRIORITIES],
             priority_bitmap: 0,
             current: None,
+            pick_count: [0; 4],
         }
     }
 
@@ -81,6 +83,7 @@ impl Scheduler {
             self.priority_bitmap &= !(1u64 << pri);
         }
         unsafe { (*thread).state = ThreadState::Running; }
+        self.pick_count[crate::per_cpu::hart_id()] += 1;
         Some(thread)
     }
 
@@ -161,4 +164,28 @@ pub fn start_scheduler(idle: *mut Thread) -> ! {
     schedule();
     crate::console::puts("SCHED: schedule returned!\r\n");
     crate::idle_loop();
+}
+
+pub fn sched_stats() {
+    SCHED_LOCK.lock();
+    unsafe {
+        for hart in 0..crate::per_cpu::hart_count() {
+            crate::console::puts("  HART ");
+            // print hart number
+            let c = b'0' + hart as u8;
+            unsafe { core::arch::asm!("ecall", in("a7") 1usize, in("a0") c as usize); }
+            crate::console::puts(" picks=");
+            let n = SCHEDULER.pick_count[hart];
+            let mut buf = [0u8; 10];
+            let mut i = 10;
+            let mut m = n;
+            loop {
+                i -= 1; buf[i] = b'0' + (m - (m / 10) * 10) as u8;
+                m = m / 10; if m == 0 { break; }
+            }
+            for j in i..10 { unsafe { core::arch::asm!("ecall", in("a7") 1usize, in("a0") buf[j] as usize); } }
+            crate::console::puts("\r\n");
+        }
+    }
+    SCHED_LOCK.unlock();
 }

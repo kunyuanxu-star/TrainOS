@@ -402,9 +402,9 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
         None => console::puts("  WARNING: uart spawn failed\r\n"),
     }
 
-    // Spawn the drv service (VirtIO block driver, priority 40)
+    // Spawn the drv service (VirtIO block driver, priority 49 so it runs above all others)
     static DRV_ELF: &[u8] = include_bytes!("drv.elf");
-    match proc::spawn(DRV_ELF, 40) {
+    match proc::spawn(DRV_ELF, 49) {
         Some(pid) => {
             console::puts("  DRV process spawned (pid=");
             unsafe {
@@ -424,6 +424,30 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
             console::puts(")\r\n");
         }
         None => console::puts("  WARNING: drv spawn failed\r\n"),
+    }
+
+    // Spawn the C/ASM test program (V3.0 Route B — Standard C program support demo)
+    static TEST_C_ELF: &[u8] = include_bytes!("test_c.elf");
+    match proc::spawn(TEST_C_ELF, 50) {
+        Some(pid) => {
+            console::puts("  C program spawned (pid=");
+            unsafe {
+                let mut n = pid;
+                let mut buf = [0u8; 10];
+                let mut i = 10;
+                loop {
+                    i -= 1;
+                    buf[i] = b'0' + (n % 10) as u8;
+                    n /= 10;
+                    if n == 0 { break; }
+                }
+                for j in i..10 {
+                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") buf[j] as usize);
+                }
+            }
+            console::puts(")\r\n");
+        }
+        None => console::puts("  WARNING: C program spawn failed\r\n"),
     }
 
     // Signal secondary HARTs that they can proceed

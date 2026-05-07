@@ -79,6 +79,16 @@ pub fn send(ep_id: usize, sender_pid: u32, msg: Message) -> Result<(), &'static 
             (*receiver).state = crate::proc::thread::ThreadState::Ready;
         }
         crate::sched::enqueue_thread(receiver);
+        // After enqueue, send IPI to all other HARTs to trigger reschedule
+        for hart in 0..crate::per_cpu::hart_count() {
+            if hart != crate::per_cpu::hart_id() {
+                // Write to CLINT MSIP to trigger software interrupt
+                unsafe {
+                    let msip = (0x0200_0000 + hart * 4) as *mut u32;
+                    msip.write_volatile(1);
+                }
+            }
+        }
     }
     Ok(())
 }

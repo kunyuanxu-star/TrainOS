@@ -340,4 +340,16 @@ pub unsafe fn setup_kernel_mapping() {
     clint_pte.set_accessed(true);
     clint_pte.set_dirty(true);
     l1_mmio[clint_l1_idx] = clint_pte;
+
+    // Identity-map the MMIO region [0x10000000, 0x10200000) for
+    // kernel proxy syscalls (UART at 0x10000000, VirtIO at 0x10001000).
+    // Shares the same L2[0] → L1 page as CLINT.
+    // VPN1(0x10000000) = 128 in this 1GB L2[0] window.
+    let mmio_l1_idx = vpn1(0x10000000);
+    let mut mmio_pte = PTE::empty();
+    mmio_pte.set_ppn(0x10000000 >> 12);
+    mmio_pte.set_flags(true, true, false, false); // R+W, kernel-only
+    mmio_pte.set_accessed(true);
+    mmio_pte.set_dirty(true);
+    l1_mmio[mmio_l1_idx] = mmio_pte;
 }

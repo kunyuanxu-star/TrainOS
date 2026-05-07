@@ -132,6 +132,33 @@ pub fn mmio_map(phys: usize, size: usize) -> usize {
     result
 }
 
+/// Read a 32-bit value from a physical MMIO address via kernel proxy (syscall 23).
+/// The kernel reads the MMIO register in S-mode on behalf of user-space.
+pub fn mmio_read32(phys: usize) -> usize {
+    let result: usize;
+    unsafe {
+        core::arch::asm!(
+            "ecall",
+            in("a7") 23usize,
+            in("a0") phys,
+            lateout("a0") result,
+        );
+    }
+    result
+}
+
+/// Write a 32-bit value to a physical MMIO address via kernel proxy (syscall 24).
+pub fn mmio_write32(phys: usize, val: usize) {
+    unsafe {
+        core::arch::asm!(
+            "ecall",
+            in("a7") 24usize,
+            in("a0") phys,
+            in("a1") val,
+        );
+    }
+}
+
 /// Fork the current process (syscall 4).
 /// Returns child PID in parent, 0 in child.
 pub fn fork() -> usize {

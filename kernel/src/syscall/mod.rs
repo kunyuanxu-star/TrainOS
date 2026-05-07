@@ -15,9 +15,11 @@ pub const SYS_SEND:      usize = 11;
 pub const SYS_RECV:      usize = 12;
 pub const SYS_CALL:      usize = 13;
 pub const SYS_REPLY:     usize = 14;
-pub const SYS_MMIO_MAP:  usize = 20;
-pub const SYS_UNMAP:     usize = 21;
-pub const SYS_MAP_MMIO:  usize = 22;
+pub const SYS_MMIO_MAP:    usize = 20;
+pub const SYS_UNMAP:       usize = 21;
+pub const SYS_MAP_MMIO:    usize = 22;
+pub const SYS_MMIO_READ32: usize = 23;
+pub const SYS_MMIO_WRITE32: usize = 24;
 pub const SYS_MINT:      usize = 30;
 pub const SYS_COPY:      usize = 31;
 pub const SYS_MOVE:      usize = 32;
@@ -84,6 +86,8 @@ pub fn syscall_dispatch(tf: &mut TrapFrame) {
         SYS_READ  => posix::sys_read(arg0, arg1, arg2),
         SYS_WRITE => posix::sys_write(arg0, arg1, arg2),
         SYS_CLOSE => posix::sys_close(arg0),
+        SYS_MMIO_READ32  => sys_mmio_read32(arg0),
+        SYS_MMIO_WRITE32 => sys_mmio_write32(arg0, arg1),
         _ => Err("unknown syscall"),
     };
 
@@ -137,4 +141,31 @@ fn sys_map_mmio(phys: usize, size: usize) -> Result<usize, &'static str> {
     }
     crate::console::puts("\r\n");
     Ok(va)
+}
+
+/// Read a 32-bit value from a physical MMIO address.
+/// The kernel (S-mode) accesses the address directly via the identity mapping
+/// set up in setup_kernel_mapping().
+fn sys_mmio_read32(phys: usize) -> Result<usize, &'static str> {
+    if phys & 0x3 != 0 {
+        return Err("unaligned mmio read");
+    }
+    // The kernel page table has an identity mapping for the lower 2GB
+    // (L2[0] → L1 page) which includes the MMIO region at 0x10000000.
+    // Access using physical address directly through the identity mapping.
+    unsafe {
+        let val = (phys as *const u32).read_volatile();
+        Ok(val as usize)
+    }
+}
+
+/// Write a 32-bit value to a physical MMIO address.
+fn sys_mmio_write32(phys: usize, val: usize) -> Result<usize, &'static str> {
+    if phys & 0x3 != 0 {
+        return Err("unaligned mmio write");
+    }
+    unsafe {
+        (phys as *mut u32).write_volatile(val as u32);
+    }
+    Ok(0)
 }

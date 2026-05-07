@@ -30,6 +30,10 @@ pub fn cpu(hart: usize) -> &'static PerCpu {
     unsafe { &PER_CPU[hart] }
 }
 
+pub fn hart_count() -> usize {
+    MAX_HARTS
+}
+
 pub fn hart_id() -> usize {
     let id: usize;
     unsafe { core::arch::asm!("mv {}, tp", out(reg) id); }

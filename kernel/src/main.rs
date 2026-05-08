@@ -563,9 +563,10 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
         None => console::puts("  WARNING: test_inv spawn failed\r\n"),
     }
 
-    // Spawn the TEST_PKG service (V9.0B package manager test client, priority 21)
+    // Spawn the TEST_PKG service (V9.0B package manager test client, priority 53)
+    // Runs after PKG(58) creates EP 6, before NET(43) and FS-related services.
     static TEST_PKG_ELF: &[u8] = include_bytes!("test_pkg.elf");
-    match proc::spawn(TEST_PKG_ELF, 21) {
+    match proc::spawn(TEST_PKG_ELF, 53) {
         Some(pid) => {
             console::puts("  TEST_PKG process spawned (pid=");
             unsafe {

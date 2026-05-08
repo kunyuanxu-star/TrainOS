@@ -1,0 +1,10 @@
+[package]
+name = "bench"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "bench"
+
+[dependencies]
+tros = { path = "../../lib/tros" }

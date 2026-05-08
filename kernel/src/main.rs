@@ -1041,6 +1041,32 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
         None => console::puts("  WARNING: PCI spawn failed\r\n"),
     }
 
+    // Spawn the BENCH service (V10.0D performance benchmark suite, priority 59)
+    static BENCH_ELF: &[u8] = include_bytes!("bench.elf");
+    match proc::spawn(BENCH_ELF, 59) {
+        Some(pid) => {
+            console::puts("  BENCH process spawned (pid=");
+            unsafe {
+                let mut n = pid;
+                let mut buf = [0u8; 10];
+                let mut i = 10;
+                loop {
+                    i -= 1;
+                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
+                    n /= 10;
+                    if n == 0 {
+                        break;
+                    }
+                }
+                for &b in buf[i..].iter() {
+                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
+                }
+            }
+            console::puts(")\r\n");
+        }
+        None => console::puts("  WARNING: BENCH spawn failed\r\n"),
+    }
+
     // Spawn the VETH virtual ethernet service (V7.0A virtual Ethernet over IPC, priority 58)
     static VETH_ELF: &[u8] = include_bytes!("veth.elf");
     match proc::spawn(VETH_ELF, 58) {
@@ -1122,6 +1148,33 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
             console::puts(")\r\n");
         }
         None => console::puts("  WARNING: DEMO spawn failed\r\n"),
+    }
+
+    // Spawn the RUSTDEMO service (V10.0A Rust user-space program, priority 60)
+    // Exercises all libtros syscalls: IPC, FS, MEM, CAP, PERF
+    static RUSTDEMO_ELF: &[u8] = include_bytes!("rustdemo.elf");
+    match proc::spawn(RUSTDEMO_ELF, 60) {
+        Some(pid) => {
+            console::puts("  RUSTDEMO process spawned (pid=");
+            unsafe {
+                let mut n = pid;
+                let mut buf = [0u8; 10];
+                let mut i = 10;
+                loop {
+                    i -= 1;
+                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
+                    n /= 10;
+                    if n == 0 {
+                        break;
+                    }
+                }
+                for &b in buf[i..].iter() {
+                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
+                }
+            }
+            console::puts(")\r\n");
+        }
+        None => console::puts("  WARNING: RUSTDEMO spawn failed\r\n"),
     }
 
     // Create idle thread and start scheduler

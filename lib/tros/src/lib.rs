@@ -249,3 +249,52 @@ pub fn close(fd: usize) -> usize {
     }
     result
 }
+
+/// Read a disk sector from the VirtIO block device (syscall 40).
+/// sector: logical block address (512-byte units)
+/// buf: mutable buffer to receive data (must be >= 512 bytes)
+/// Returns: number of bytes read
+pub fn blk_read(sector: usize, buf: &mut [u8]) -> usize {
+    let result: usize;
+    unsafe {
+        core::arch::asm!(
+            "ecall",
+            in("a7") 40usize,
+            in("a0") sector,
+            in("a1") buf.as_ptr() as usize,
+            in("a2") buf.len(),
+            lateout("a0") result,
+        );
+    }
+    result
+}
+
+/// Query process list (syscall 41).
+/// Fills buf with process info. Returns number of processes written.
+pub fn proclist(buf: &mut [u8]) -> usize {
+    let result: usize;
+    unsafe {
+        core::arch::asm!(
+            "ecall",
+            in("a7") 41usize,
+            in("a0") buf.as_ptr() as usize,
+            in("a1") buf.len(),
+            lateout("a0") result,
+        );
+    }
+    result
+}
+
+/// Kill a process by PID (syscall 42). Returns 0 on success.
+pub fn kill(pid: u32) -> usize {
+    let result: usize;
+    unsafe {
+        core::arch::asm!(
+            "ecall",
+            in("a7") 42usize,
+            in("a0") pid as usize,
+            lateout("a0") result,
+        );
+    }
+    result
+}

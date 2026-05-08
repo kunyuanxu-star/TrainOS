@@ -402,9 +402,9 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
         None => console::puts("  WARNING: uart spawn failed\r\n"),
     }
 
-    // Spawn the drv service (VirtIO block driver, priority 49 so it runs above all others)
+    // Spawn the drv service (VirtIO block driver, priority 5 so it runs last)
     static DRV_ELF: &[u8] = include_bytes!("drv.elf");
-    match proc::spawn(DRV_ELF, 49) {
+    match proc::spawn(DRV_ELF, 5) {
         Some(pid) => {
             console::puts("  DRV process spawned (pid=");
             unsafe {
@@ -448,6 +448,54 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
             console::puts(")\r\n");
         }
         None => console::puts("  WARNING: C program spawn failed\r\n"),
+    }
+
+    // Spawn the PROC service (V3.2 namespace isolation — process listing/management)
+    static PROC_ELF: &[u8] = include_bytes!("proc.elf");
+    match proc::spawn(PROC_ELF, 60) {
+        Some(pid) => {
+            console::puts("  PROC process spawned (pid=");
+            unsafe {
+                let mut n = pid;
+                let mut buf = [0u8; 10];
+                let mut i = 10;
+                loop {
+                    i -= 1;
+                    buf[i] = b'0' + (n % 10) as u8;
+                    n /= 10;
+                    if n == 0 { break; }
+                }
+                for j in i..10 {
+                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") buf[j] as usize);
+                }
+            }
+            console::puts(")\r\n");
+        }
+        None => console::puts("  WARNING: PROC spawn failed\r\n"),
+    }
+
+    // Spawn the TEST_PROC service (V3.2 test client)
+    static TEST_PROC_ELF: &[u8] = include_bytes!("test_proc.elf");
+    match proc::spawn(TEST_PROC_ELF, 59) {
+        Some(pid) => {
+            console::puts("  TEST_PROC process spawned (pid=");
+            unsafe {
+                let mut n = pid;
+                let mut buf = [0u8; 10];
+                let mut i = 10;
+                loop {
+                    i -= 1;
+                    buf[i] = b'0' + (n % 10) as u8;
+                    n /= 10;
+                    if n == 0 { break; }
+                }
+                for j in i..10 {
+                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") buf[j] as usize);
+                }
+            }
+            console::puts(")\r\n");
+        }
+        None => console::puts("  WARNING: TEST_PROC spawn failed\r\n"),
     }
 
     // Signal secondary HARTs that they can proceed

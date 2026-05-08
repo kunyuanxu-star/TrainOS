@@ -24,6 +24,9 @@ pub const SYS_MINT:      usize = 30;
 pub const SYS_COPY:      usize = 31;
 pub const SYS_MOVE:      usize = 32;
 pub const SYS_DELETE:    usize = 33;
+pub const SYS_BLK_READ:  usize = 40;
+pub const SYS_PROCLIST:  usize = 41;
+pub const SYS_KILL:      usize = 42;
 // POSIX compatibility syscalls
 pub const SYS_OPEN:      usize = 50;
 pub const SYS_READ:      usize = 51;
@@ -88,6 +91,9 @@ pub fn syscall_dispatch(tf: &mut TrapFrame) {
         SYS_CLOSE => posix::sys_close(arg0),
         SYS_MMIO_READ32  => sys_mmio_read32(arg0),
         SYS_MMIO_WRITE32 => sys_mmio_write32(arg0, arg1),
+        SYS_BLK_READ => proc::sys_blk_read(arg0, arg1, arg2),
+        SYS_PROCLIST => proc::sys_proclist(arg0, arg1),
+        SYS_KILL     => proc::sys_kill(arg0 as u32),
         _ => Err("unknown syscall"),
     };
 

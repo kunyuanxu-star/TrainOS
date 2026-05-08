@@ -57,6 +57,26 @@ extern "C" fn _start() -> ! {
                 let resp = [b'O', b'K'];
                 tros::send(reply_ep, 0, &resp);
             }
+            4 => {
+                // APPEND: append data to existing storage
+                let data_len = buf[2] as usize;
+                if data_len > 0 && data_len <= 63 {
+                    unsafe {
+                        let current_len = (&raw const STORAGE_LEN as *const usize).read();
+                        let new_len = current_len + data_len;
+                        let new_len = if new_len > 64 { 64 } else { new_len };
+                        let dst = (&raw mut STORAGE as *mut u8).add(current_len);
+                        let src = buf.as_ptr().add(3);
+                        for i in 0..(new_len - current_len) {
+                            dst.add(i).write(src.add(i).read());
+                        }
+                        (&raw mut STORAGE_LEN as *mut usize).write(new_len);
+                    }
+                }
+                tros::print("FS: appended data\r\n");
+                let resp = [b'O', b'K'];
+                tros::send(reply_ep, 0, &resp);
+            }
             2 => {
                 // READ: create a slice directly from static storage and send it.
                 // Use raw pointer to avoid any stack aliasing with `buf`.

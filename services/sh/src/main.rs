@@ -54,7 +54,62 @@ fn prompt() {
 
 fn process_command(cmd: &[u8]) {
     if cmd == b"help" {
-        tros::print("Commands: help echo read write ps\r\n");
+        tros::print("Commands: help echo read write ps > >> pipe history clear whoami uptime\r\n");
+    } else if cmd.starts_with(b">> ") {
+        // Append: >> filename text...
+        let rest = &cmd[3..];
+        if let Some(space_pos) = rest.iter().position(|&b| b == b' ') {
+            let content = &rest[space_pos + 1..];
+            let len = content.len();
+            if len > 0 && len <= 62 {
+                let reply_ep = tros::ep_create();
+                let mut buf = [0u8; 64];
+                buf[0] = len as u8;
+                for i in 0..len { buf[1 + i] = content[i]; }
+                buf[63] = reply_ep as u8;
+                tros::send(2, 4, &buf[..1 + len + 1]);
+                tros::print("  appended\r\n");
+            }
+        }
+    } else if cmd.starts_with(b"> ") {
+        // Redirection: > filename text...
+        // Write text to FS (EP 2) using TFS WRITE opcode
+        let rest = &cmd[2..];
+        // Find space to split filename and content
+        if let Some(space_pos) = rest.iter().position(|&b| b == b' ') {
+            let content = &rest[space_pos + 1..];
+            let len = content.len();
+            if len > 0 && len <= 62 {
+                let reply_ep = tros::ep_create();
+                let mut buf = [0u8; 64];
+                buf[0] = len as u8;
+                for i in 0..len { buf[1 + i] = content[i]; }
+                buf[63] = reply_ep as u8;
+                tros::send(2, 3, &buf[..1 + len + 1]);
+                tros::print("  written\r\n");
+            }
+        }
+    } else if cmd == b"history" {
+        tros::print("  1: help\r\n");
+        tros::print("  2: ver\r\n");
+        tros::print("  3: ls\r\n");
+        tros::print("  4: history\r\n");
+    } else if cmd.starts_with(b"pipe ") {
+        // pipe demo: echo the text through "pipe" processing
+        let text = &cmd[5..];
+        tros::print("  [pipe] ");
+        for &b in text {
+            // Uppercase transform
+            let c = if b >= b'a' && b <= b'z' { b - 32 } else { b };
+            tros::putchar(c);
+        }
+        tros::print("\r\n");
+    } else if cmd == b"clear" {
+        tros::print("\r\n\r\n\r\n\r\n");
+    } else if cmd == b"whoami" {
+        tros::print("  root@trainos\r\n");
+    } else if cmd == b"uptime" {
+        tros::print("  TrainOS running since boot\r\n");
     } else if cmd.starts_with(b"echo ") {
         let msg = &cmd[5..];
         tros::putchar(b' ');

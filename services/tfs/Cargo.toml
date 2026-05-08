@@ -1,0 +1,10 @@
+[package]
+name = "tfs"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "tfs"
+
+[dependencies]
+tros = { path = "../../lib/tros" }

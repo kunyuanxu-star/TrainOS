@@ -236,6 +236,55 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
         None => console::puts("  WARNING: NET spawn failed\r\n"),
     }
 
+    // Spawn the EDIT service (V6.0D line editor, prio 62, EP 2 after test_cap takes EP 1)
+    // High priority to run before wfi-loop services that starve lower priorities.
+    static EDIT_ELF: &[u8] = include_bytes!("edit.elf");
+    match proc::spawn(EDIT_ELF, 62) {
+        Some(pid) => {
+            console::puts("  EDIT process spawned (pid=");
+            unsafe {
+                let mut n = pid;
+                let mut buf = [0u8; 10];
+                let mut i = 10;
+                loop {
+                    i -= 1;
+                    buf[i] = b'0' + (n % 10) as u8;
+                    n /= 10;
+                    if n == 0 { break; }
+                }
+                for j in i..10 {
+                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") buf[j] as usize);
+                }
+            }
+            console::puts(")\r\n");
+        }
+        None => console::puts("  WARNING: edit spawn failed\r\n"),
+    }
+
+    // Spawn the TEST_EDIT service (V6.0D editor test client, same prio 62 to avoid starvation)
+    static TEST_EDIT_ELF: &[u8] = include_bytes!("test_edit.elf");
+    match proc::spawn(TEST_EDIT_ELF, 62) {
+        Some(pid) => {
+            console::puts("  TEST_EDIT process spawned (pid=");
+            unsafe {
+                let mut n = pid;
+                let mut buf = [0u8; 10];
+                let mut i = 10;
+                loop {
+                    i -= 1;
+                    buf[i] = b'0' + (n % 10) as u8;
+                    n /= 10;
+                    if n == 0 { break; }
+                }
+                for j in i..10 {
+                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") buf[j] as usize);
+                }
+            }
+            console::puts(")\r\n");
+        }
+        None => console::puts("  WARNING: test_edit spawn failed\r\n"),
+    }
+
     // Spawn the ECHO service (V2.5 network echo, prio 42)
     static ECHO_ELF: &[u8] = include_bytes!("echo.elf");
     match proc::spawn(ECHO_ELF, 42) {
@@ -430,6 +479,30 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
         None => console::puts("  WARNING: test_inv spawn failed\r\n"),
     }
 
+    // Spawn the test_clib service (V6.0A mini C library test, priority 62)
+    static TEST_CLIB_ELF: &[u8] = include_bytes!("test_clib.elf");
+    match proc::spawn(TEST_CLIB_ELF, 62) {
+        Some(pid) => {
+            console::puts("  TEST_CLIB process spawned (pid=");
+            unsafe {
+                let mut n = pid;
+                let mut buf = [0u8; 10];
+                let mut i = 10;
+                loop {
+                    i -= 1;
+                    buf[i] = b'0' + (n % 10) as u8;
+                    n /= 10;
+                    if n == 0 { break; }
+                }
+                for j in i..10 {
+                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") buf[j] as usize);
+                }
+            }
+            console::puts(")\r\n");
+        }
+        None => console::puts("  WARNING: test_clib spawn failed\r\n"),
+    }
+
     // Spawn the test_fork service (V2.0 demo)
     static TEST_FORK_ELF: &[u8] = include_bytes!("test_fork.elf");
     match proc::spawn(TEST_FORK_ELF, 30) {
@@ -550,6 +623,30 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
             console::puts(")\r\n");
         }
         None => console::puts("  WARNING: netdrv spawn failed\r\n"),
+    }
+
+    // Spawn the TFS rich filesystem service (V6.0C directory tree, priority 54)
+    static TFS_ELF: &[u8] = include_bytes!("tfs.elf");
+    match proc::spawn(TFS_ELF, 61) {
+        Some(pid) => {
+            console::puts("  TFS process spawned (pid=");
+            unsafe {
+                let mut n = pid;
+                let mut buf = [0u8; 10];
+                let mut i = 10;
+                loop {
+                    i -= 1;
+                    buf[i] = b'0' + (n % 10) as u8;
+                    n /= 10;
+                    if n == 0 { break; }
+                }
+                for j in i..10 {
+                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") buf[j] as usize);
+                }
+            }
+            console::puts(")\r\n");
+        }
+        None => console::puts("  WARNING: tfs spawn failed\r\n"),
     }
 
     // Spawn the TFS test service (V4.0A persistent disk FS, priority 55)
@@ -674,7 +771,7 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
 
     // Spawn the TEST_PERF service (V5.0D performance benchmark, priority 27)
     static TEST_PERF_ELF: &[u8] = include_bytes!("test_perf.elf");
-    match proc::spawn(TEST_PERF_ELF, 56) {
+    match proc::spawn(TEST_PERF_ELF, 27) {
         Some(pid) => {
             console::puts("  TEST_PERF process spawned (pid=");
             unsafe {

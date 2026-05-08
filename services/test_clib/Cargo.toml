@@ -1,0 +1,10 @@
+[package]
+name = "test_clib"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "test_clib"
+
+[dependencies]
+tros = { path = "../../lib/tros" }

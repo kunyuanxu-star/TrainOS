@@ -11,6 +11,105 @@ pub fn putchar(c: u8) {
     }
 }
 
+// ====== Mini C Library ======
+
+/// strlen — count bytes until null
+pub fn strlen(s: &[u8]) -> usize {
+    let mut i = 0;
+    while i < s.len() && s[i] != 0 { i += 1; }
+    i
+}
+
+/// memcpy
+pub fn memcpy(dst: &mut [u8], src: &[u8], n: usize) {
+    for i in 0..n { dst[i] = src[i]; }
+}
+
+/// memset
+pub fn memset(buf: &mut [u8], val: u8, n: usize) {
+    for i in 0..n { buf[i] = val; }
+}
+
+/// Simple sprintf-like: format a number into a buffer. Returns bytes written.
+pub fn format_uint(mut n: usize, buf: &mut [u8]) -> usize {
+    let mut i = buf.len();
+    if n == 0 {
+        i -= 1; buf[i] = b'0';
+        return i;
+    }
+    loop {
+        i -= 1;
+        buf[i] = b'0' + (n - (n / 10) * 10) as u8;
+        n = n / 10;
+        if n == 0 { break; }
+    }
+    i
+}
+
+/// Print a 64-bit unsigned integer to console.
+pub fn print_uint(mut val: usize) {
+    let mut buf = [0u8; 20];
+    let mut idx = 20;
+    if val == 0 {
+        idx = 19;
+        buf[19] = 48;
+    } else {
+        loop {
+            idx -= 1;
+            buf[idx] = 48 + (val - (val / 10) * 10) as u8;
+            val /= 10;
+            if val == 0 { break; }
+        }
+    }
+    for j in idx..20 { putchar(buf[j]); }
+}
+
+/// Print a string with an unsigned integer argument.
+/// Format: "text %u more_text"
+/// Only supports a single %u specifier.
+/// NOTE: %u substitution may not work in release mode due to LLVM SWAR optimization bug.
+/// Use print_uint() directly for reliable number printing.
+pub fn printf(fmt: &str, arg: usize) {
+    let b = fmt.as_bytes();
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'%' && i + 1 < b.len() && b[i + 1] == b'u' {
+            print_uint(arg);
+            i += 2;
+        } else {
+            putchar(b[i]);
+            i += 1;
+        }
+    }
+}
+
+/// Print hex value
+pub fn print_hex(val: usize) {
+    for i in (0..16).rev() {
+        let nibble = (val >> (i * 4)) & 0xF;
+        let c = if nibble < 10 { b'0' + nibble as u8 } else { b'a' + (nibble - 10) as u8 };
+        putchar(c);
+    }
+}
+
+/// Simple heap: static bump allocator for user-space
+/// Returns aligned pointer (8-byte). Returns pointer to static buffer, or null.
+static mut HEAP: [u8; 4096] = [0; 4096];
+static mut HEAP_OFFSET: usize = 0;
+
+pub fn malloc(size: usize) -> *mut u8 {
+    unsafe {
+        let aligned = (HEAP_OFFSET + 7) & !7;
+        if aligned + size > 4096 { return core::ptr::null_mut(); }
+        HEAP_OFFSET = aligned + size;
+        HEAP.as_mut_ptr().add(aligned)
+    }
+}
+
+pub fn free(_ptr: *mut u8) {
+    // Bump allocator: no-op
+}
+
 /// Read a character from console (SBI getchar, syscall 2)
 /// Returns character byte, or usize::MAX if no input available
 pub fn getchar() -> usize {

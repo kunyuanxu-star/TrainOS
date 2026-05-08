@@ -24,28 +24,42 @@ extern "C" fn _start() -> ! {
     let mut buf = [0u8; 64];
     loop {
         let (_sender, opcode) = tros::recv(my_ep, &mut buf);
-        if _sender == usize::MAX { continue; }
+        if _sender == usize::MAX {
+            continue;
+        }
         match opcode {
-            0 => { // LOOKUP: buf[0..] = service name, returns EP number
+            0 => {
+                // LOOKUP: buf[0..] = service name, returns EP number
                 let mut found_ep: usize = 0;
                 unsafe {
                     for i in 0..COUNT {
                         let mut matches = true;
                         for j in 0..ENTRIES[i].0.len() {
-                            if ENTRIES[i].0[j] == 0 { break; }
-                            if j >= 16 || ENTRIES[i].0[j] != buf[j] { matches = false; break; }
+                            if ENTRIES[i].0[j] == 0 {
+                                break;
+                            }
+                            if j >= 16 || ENTRIES[i].0[j] != buf[j] {
+                                matches = false;
+                                break;
+                            }
                         }
-                        if matches { found_ep = ENTRIES[i].1; break; }
+                        if matches {
+                            found_ep = ENTRIES[i].1;
+                            break;
+                        }
                     }
                 }
                 tros::print("REG: lookup -> ep=");
                 print_small(found_ep);
                 tros::print("\r\n");
             }
-            1 => { // REGISTER: buf[0..16]=name, buf[16]=ep
+            1 => {
+                // REGISTER: buf[0..16]=name, buf[16]=ep
                 let ep = buf[16] as usize;
                 let mut name = [0u8; 16];
-                for i in 0..16 { name[i] = buf[i]; }
+                for i in 0..16 {
+                    name[i] = buf[i];
+                }
                 register(&name, ep);
             }
             _ => {}
@@ -56,7 +70,9 @@ extern "C" fn _start() -> ! {
 fn register(name: &[u8], ep: usize) {
     unsafe {
         if COUNT < 8 {
-            for i in 0..name.len().min(16) { ENTRIES[COUNT].0[i] = name[i]; }
+            for i in 0..name.len().min(16) {
+                ENTRIES[COUNT].0[i] = name[i];
+            }
             ENTRIES[COUNT].1 = ep;
             COUNT += 1;
         }
@@ -67,10 +83,28 @@ fn print_small(n: usize) {
     let mut m = n;
     let mut buf = [0u8; 10];
     let mut i = 10;
-    if m == 0 { tros::putchar(b'0'); return; }
-    loop { i -= 1; buf[i] = b'0' + (m - (m/10)*10) as u8; m = m/10; if m == 0 { break; } }
-    for j in i..10 { tros::putchar(buf[j]); }
+    if m == 0 {
+        tros::putchar(b'0');
+        return;
+    }
+    loop {
+        i -= 1;
+        buf[i] = b'0' + (m - (m / 10) * 10) as u8;
+        m = m / 10;
+        if m == 0 {
+            break;
+        }
+    }
+    for j in i..10 {
+        tros::putchar(buf[j]);
+    }
 }
 
 #[panic_handler]
-fn panic(_info: &PanicInfo) -> ! { loop { unsafe { core::arch::asm!("wfi"); } } }
+fn panic(_info: &PanicInfo) -> ! {
+    loop {
+        unsafe {
+            core::arch::asm!("wfi");
+        }
+    }
+}

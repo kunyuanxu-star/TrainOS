@@ -16,32 +16,41 @@ pub fn putchar(c: u8) {
 /// strlen — count bytes until null
 pub fn strlen(s: &[u8]) -> usize {
     let mut i = 0;
-    while i < s.len() && s[i] != 0 { i += 1; }
+    while i < s.len() && s[i] != 0 {
+        i += 1;
+    }
     i
 }
 
 /// memcpy
 pub fn memcpy(dst: &mut [u8], src: &[u8], n: usize) {
-    for i in 0..n { dst[i] = src[i]; }
+    for i in 0..n {
+        dst[i] = src[i];
+    }
 }
 
 /// memset
 pub fn memset(buf: &mut [u8], val: u8, n: usize) {
-    for i in 0..n { buf[i] = val; }
+    for i in 0..n {
+        buf[i] = val;
+    }
 }
 
 /// Simple sprintf-like: format a number into a buffer. Returns bytes written.
 pub fn format_uint(mut n: usize, buf: &mut [u8]) -> usize {
     let mut i = buf.len();
     if n == 0 {
-        i -= 1; buf[i] = b'0';
+        i -= 1;
+        buf[i] = b'0';
         return i;
     }
     loop {
         i -= 1;
         buf[i] = b'0' + (n - (n / 10) * 10) as u8;
         n = n / 10;
-        if n == 0 { break; }
+        if n == 0 {
+            break;
+        }
     }
     i
 }
@@ -58,10 +67,14 @@ pub fn print_uint(mut val: usize) {
             idx -= 1;
             buf[idx] = 48 + (val - (val / 10) * 10) as u8;
             val /= 10;
-            if val == 0 { break; }
+            if val == 0 {
+                break;
+            }
         }
     }
-    for j in idx..20 { putchar(buf[j]); }
+    for j in idx..20 {
+        putchar(buf[j]);
+    }
 }
 
 /// Print a string with an unsigned integer argument.
@@ -87,7 +100,11 @@ pub fn printf(fmt: &str, arg: usize) {
 pub fn print_hex(val: usize) {
     for i in (0..16).rev() {
         let nibble = (val >> (i * 4)) & 0xF;
-        let c = if nibble < 10 { b'0' + nibble as u8 } else { b'a' + (nibble - 10) as u8 };
+        let c = if nibble < 10 {
+            b'0' + nibble as u8
+        } else {
+            b'a' + (nibble - 10) as u8
+        };
         putchar(c);
     }
 }
@@ -100,7 +117,9 @@ static mut HEAP_OFFSET: usize = 0;
 pub fn malloc(size: usize) -> *mut u8 {
     unsafe {
         let aligned = (HEAP_OFFSET + 7) & !7;
-        if aligned + size > 4096 { return core::ptr::null_mut(); }
+        if aligned + size > 4096 {
+            return core::ptr::null_mut();
+        }
         HEAP_OFFSET = aligned + size;
         HEAP.as_mut_ptr().add(aligned)
     }
@@ -292,7 +311,11 @@ pub fn exit(_code: i32) -> ! {
             in("a0") 0usize,
         );
     }
-    loop { unsafe { core::arch::asm!("wfi"); } }
+    loop {
+        unsafe {
+            core::arch::asm!("wfi");
+        }
+    }
 }
 
 /// POSIX-compatible system calls.
@@ -487,7 +510,7 @@ pub fn uptime_ms() -> usize {
             lateout("a0") result,
         );
     }
-    result * 10  // ticks * 10ms per tick
+    result * 10 // ticks * 10ms per tick
 }
 
 /// Returns performance counters: (send_count, recv_count, ctx_switch_count) (syscall 44).

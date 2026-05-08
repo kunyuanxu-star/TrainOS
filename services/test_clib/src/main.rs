@@ -17,7 +17,9 @@ extern "C" fn _start() -> ! {
     let ptr = tros::malloc(16);
     if !ptr.is_null() {
         unsafe {
-            for i in 0..4 { *ptr.add(i) = b'A' + i as u8; }
+            for i in 0..4 {
+                *ptr.add(i) = b'A' + i as u8;
+            }
         }
         tros::print("CLIB: malloc works: ");
         unsafe {
@@ -33,7 +35,9 @@ extern "C" fn _start() -> ! {
     tros::memcpy(&mut buf[5..], b"hello", 5);
 
     tros::print("CLIB: mem ops: ");
-    for i in 0..10 { tros::putchar(buf[i]); }
+    for i in 0..10 {
+        tros::putchar(buf[i]);
+    }
     tros::print("\r\n");
 
     if len == 5 {
@@ -44,4 +48,10 @@ extern "C" fn _start() -> ! {
 }
 
 #[panic_handler]
-fn panic(_info: &PanicInfo) -> ! { loop { unsafe { core::arch::asm!("wfi"); } } }
+fn panic(_info: &PanicInfo) -> ! {
+    loop {
+        unsafe {
+            core::arch::asm!("wfi");
+        }
+    }
+}

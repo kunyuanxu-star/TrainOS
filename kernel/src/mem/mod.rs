@@ -20,5 +20,7 @@ pub fn init() {
 
     heap::init_range(heap_start, heap_end);
     sv39::init_root_pt();
-    unsafe { sv39::setup_kernel_mapping(); }
+    unsafe {
+        sv39::setup_kernel_mapping();
+    }
 }

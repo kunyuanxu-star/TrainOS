@@ -8,9 +8,13 @@ use super::layout::PAGE_SIZE;
 pub struct PTE(usize);
 
 impl PTE {
-    pub const fn empty() -> Self { PTE(0) }
+    pub const fn empty() -> Self {
+        PTE(0)
+    }
 
-    pub fn is_valid(&self) -> bool { self.0 & 1 != 0 }
+    pub fn is_valid(&self) -> bool {
+        self.0 & 1 != 0
+    }
     pub fn is_leaf(&self) -> bool {
         self.is_valid() && (self.0 & 0b1110 != 0) // R, W, or X set
     }
@@ -18,8 +22,12 @@ impl PTE {
         self.is_valid() && (self.0 & 0b1110 == 0) // valid but no R/W/X => pointer
     }
 
-    pub fn ppn(&self) -> usize { (self.0 >> 10) & ((1 << 44) - 1) }
-    pub fn phys_addr(&self) -> usize { self.ppn() << 12 }
+    pub fn ppn(&self) -> usize {
+        (self.0 >> 10) & ((1 << 44) - 1)
+    }
+    pub fn phys_addr(&self) -> usize {
+        self.ppn() << 12
+    }
 
     pub fn set_ppn(&mut self, ppn: usize) {
         self.0 = (self.0 & 0x3FF) | ((ppn & ((1 << 44) - 1)) << 10);
@@ -27,37 +35,77 @@ impl PTE {
 
     pub fn set_flags(&mut self, r: bool, w: bool, x: bool, u: bool) {
         let mut flags = 1u8; // V
-        if r { flags |= 1 << 1; }
-        if w { flags |= 1 << 2; }
-        if x { flags |= 1 << 3; }
-        if u { flags |= 1 << 4; }
+        if r {
+            flags |= 1 << 1;
+        }
+        if w {
+            flags |= 1 << 2;
+        }
+        if x {
+            flags |= 1 << 3;
+        }
+        if u {
+            flags |= 1 << 4;
+        }
         self.0 = (self.0 & !0xFF) | flags as usize;
     }
 
     // A and D bits (hardware-managed, but may need explicit setting)
-    pub fn is_accessed(&self) -> bool { (self.0 >> 6) & 1 != 0 }
-    pub fn set_accessed(&mut self, a: bool) {
-        if a { self.0 |= 1 << 6; } else { self.0 &= !(1 << 6); }
+    pub fn is_accessed(&self) -> bool {
+        (self.0 >> 6) & 1 != 0
     }
-    pub fn is_dirty(&self) -> bool { (self.0 >> 7) & 1 != 0 }
+    pub fn set_accessed(&mut self, a: bool) {
+        if a {
+            self.0 |= 1 << 6;
+        } else {
+            self.0 &= !(1 << 6);
+        }
+    }
+    pub fn is_dirty(&self) -> bool {
+        (self.0 >> 7) & 1 != 0
+    }
     pub fn set_dirty(&mut self, d: bool) {
-        if d { self.0 |= 1 << 7; } else { self.0 &= !(1 << 7); }
+        if d {
+            self.0 |= 1 << 7;
+        } else {
+            self.0 &= !(1 << 7);
+        }
     }
 
     // RSW bits (software-defined)
-    pub fn is_cow(&self) -> bool { (self.0 >> 8) & 1 != 0 }
-    pub fn set_cow(&mut self, cow: bool) {
-        if cow { self.0 |= 1 << 8; } else { self.0 &= !(1 << 8); }
+    pub fn is_cow(&self) -> bool {
+        (self.0 >> 8) & 1 != 0
     }
-    pub fn is_shared(&self) -> bool { (self.0 >> 9) & 1 != 0 }
+    pub fn set_cow(&mut self, cow: bool) {
+        if cow {
+            self.0 |= 1 << 8;
+        } else {
+            self.0 &= !(1 << 8);
+        }
+    }
+    pub fn is_shared(&self) -> bool {
+        (self.0 >> 9) & 1 != 0
+    }
     pub fn set_shared(&mut self, shared: bool) {
-        if shared { self.0 |= 1 << 9; } else { self.0 &= !(1 << 9); }
+        if shared {
+            self.0 |= 1 << 9;
+        } else {
+            self.0 &= !(1 << 9);
+        }
     }
 
-    pub fn is_writable(&self) -> bool { (self.0 >> 2) & 1 != 0 }
-    pub fn is_readable(&self) -> bool { (self.0 >> 1) & 1 != 0 }
-    pub fn is_executable(&self) -> bool { (self.0 >> 3) & 1 != 0 }
-    pub fn is_user(&self) -> bool { (self.0 >> 4) & 1 != 0 }
+    pub fn is_writable(&self) -> bool {
+        (self.0 >> 2) & 1 != 0
+    }
+    pub fn is_readable(&self) -> bool {
+        (self.0 >> 1) & 1 != 0
+    }
+    pub fn is_executable(&self) -> bool {
+        (self.0 >> 3) & 1 != 0
+    }
+    pub fn is_user(&self) -> bool {
+        (self.0 >> 4) & 1 != 0
+    }
 }
 
 /// Sv39 virtual address decomposition
@@ -66,12 +114,24 @@ pub const VPN1_SHIFT: usize = 21;
 pub const VPN0_SHIFT: usize = 12;
 pub const VPN_MASK: usize = 0x1FF;
 
-pub fn vpn2(va: usize) -> usize { (va >> VPN2_SHIFT) & VPN_MASK }
-pub fn vpn1(va: usize) -> usize { (va >> VPN1_SHIFT) & VPN_MASK }
-pub fn vpn0(va: usize) -> usize { (va >> VPN0_SHIFT) & VPN_MASK }
-pub fn offset(va: usize) -> usize { va & (PAGE_SIZE - 1) }
-pub fn page_align_down(va: usize) -> usize { va & !(PAGE_SIZE - 1) }
-pub fn page_align_up(va: usize) -> usize { (va + PAGE_SIZE - 1) & !(PAGE_SIZE - 1) }
+pub fn vpn2(va: usize) -> usize {
+    (va >> VPN2_SHIFT) & VPN_MASK
+}
+pub fn vpn1(va: usize) -> usize {
+    (va >> VPN1_SHIFT) & VPN_MASK
+}
+pub fn vpn0(va: usize) -> usize {
+    (va >> VPN0_SHIFT) & VPN_MASK
+}
+pub fn offset(va: usize) -> usize {
+    va & (PAGE_SIZE - 1)
+}
+pub fn page_align_down(va: usize) -> usize {
+    va & !(PAGE_SIZE - 1)
+}
+pub fn page_align_up(va: usize) -> usize {
+    (va + PAGE_SIZE - 1) & !(PAGE_SIZE - 1)
+}
 
 /// Kernel virtual base: physical DRAM is identity-mapped at this VA.
 pub const KERNEL_VBASE: usize = 0xFFFF_FFC0_0000_0000;
@@ -117,11 +177,12 @@ unsafe fn page_table_page_ref(phys: usize) -> &'static [PTE; 512] {
 
 /// Initialize root page table. Allocates an L2 page.
 pub fn init_root_pt() {
-    let l2_page = super::buddy::alloc_page()
-        .expect("failed to allocate root PT");
+    let l2_page = super::buddy::alloc_page().expect("failed to allocate root PT");
     unsafe {
         let pt = page_table_page(l2_page);
-        for i in 0..512 { pt[i] = PTE::empty(); }
+        for pte in pt.iter_mut() {
+            *pte = PTE::empty();
+        }
     }
     *ROOT_PT.lock() = Some(l2_page);
 }
@@ -138,10 +199,14 @@ pub unsafe fn walk(va: usize, alloc: bool) -> Option<(usize, usize)> {
     // L2 -> L1
     let l2 = page_table_page(root); // mutable
     let l1_phys = if !l2[vpn2_idx].is_valid() {
-        if !alloc { return None; }
+        if !alloc {
+            return None;
+        }
         let new_page = super::buddy::alloc_page()?;
         let new_pt = page_table_page(new_page);
-        for i in 0..512 { new_pt[i] = PTE::empty(); }
+        for pte in new_pt.iter_mut() {
+            *pte = PTE::empty();
+        }
         let mut entry = PTE::empty();
         entry.set_ppn(new_page >> 12);
         entry.set_flags(false, false, false, false); // non-leaf: R=W=X=0
@@ -161,10 +226,14 @@ pub unsafe fn walk(va: usize, alloc: bool) -> Option<(usize, usize)> {
         return None; // For map/unmap we need L0 level
     }
     let l0_phys = if !l1[vpn1_idx].is_valid() {
-        if !alloc { return None; }
+        if !alloc {
+            return None;
+        }
         let new_page = super::buddy::alloc_page()?;
         let new_pt = page_table_page(new_page);
-        for i in 0..512 { new_pt[i] = PTE::empty(); }
+        for pte in new_pt.iter_mut() {
+            *pte = PTE::empty();
+        }
         let mut entry = PTE::empty();
         entry.set_ppn(new_page >> 12);
         entry.set_flags(false, false, false, false); // non-leaf: R=W=X=0
@@ -252,12 +321,10 @@ pub unsafe fn copy_kernel_mappings(target_root_phys: usize) {
         if entry.is_branch() {
             // Deep-copy the L1 page so the process gets its own copy.
             let kernel_l1 = page_table_page_ref(entry.phys_addr());
-            let new_l1 = super::buddy::alloc_page()
-                .expect("copy_kernel_mappings: OOM allocating L1 copy");
+            let new_l1 =
+                super::buddy::alloc_page().expect("copy_kernel_mappings: OOM allocating L1 copy");
             let new_l1_pt = page_table_page(new_l1);
-            for j in 0..512 {
-                new_l1_pt[j] = kernel_l1[j];
-            }
+            new_l1_pt.copy_from_slice(kernel_l1);
             let mut new_entry = PTE::empty();
             new_entry.set_ppn(new_l1 >> 12);
             new_entry.set_flags(false, false, false, false);
@@ -282,10 +349,12 @@ pub unsafe fn setup_kernel_mapping() {
     let root = root_pt_phys();
 
     // Allocate ONE L1 page
-    let l1_page = super::buddy::alloc_page()
-        .expect("failed to allocate L1 page for kernel mapping");
+    let l1_page =
+        super::buddy::alloc_page().expect("failed to allocate L1 page for kernel mapping");
     let l1 = page_table_page(l1_page);
-    for j in 0..512 { l1[j] = PTE::empty(); }
+    for pte in l1.iter_mut() {
+        *pte = PTE::empty();
+    }
 
     // Point L2[vpn2(KERNEL_VBASE)] to the L1 page.
     let l2 = page_table_page(root);
@@ -307,24 +376,24 @@ pub unsafe fn setup_kernel_mapping() {
     // Fill 64 L1 entries, each a 2MB superpage.
     // VPN1 for KERNEL_VBASE is 0, so entries start at l1[0].
     // Set A (Accessed) and D (Dirty) bits explicitly.
-    for i in 0..64 {
+    for (i, pte) in l1.iter_mut().enumerate().take(64) {
         let pa = dram_base + i * 0x20_0000; // 2MB-aligned
-        let mut pte = PTE::empty();
         pte.set_ppn(pa >> 12);
         pte.set_flags(true, true, true, false); // R+W+X, kernel
         pte.set_accessed(true);
         pte.set_dirty(true);
-        l1[i] = pte;
     }
 
     // Identity-map the CLINT MMIO region at 0x02000000 so that
     // clint_set_next_timer() (which reads/writes CLINT_MTIME/MTIMECMP
     // via physical addresses) does not fault after MMU is enabled.
     // CLINT_BASE = 0x02000000 -> vpn2 = (0x02000000 >> 30) & 0x1FF = 0.
-    let l1_mmio_page = super::buddy::alloc_page()
-        .expect("failed to allocate L1 page for CLINT mapping");
+    let l1_mmio_page =
+        super::buddy::alloc_page().expect("failed to allocate L1 page for CLINT mapping");
     let l1_mmio = page_table_page(l1_mmio_page);
-    for j in 0..512 { l1_mmio[j] = PTE::empty(); }
+    for pte in l1_mmio.iter_mut() {
+        *pte = PTE::empty();
+    }
 
     let l2_mmio_idx = vpn2(0x02000000);
     let mut l2_mmio_entry = PTE::empty();

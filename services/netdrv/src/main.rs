@@ -25,7 +25,10 @@ fn net_probe(base: usize) -> bool {
             tros::mmio_write32(base + VR_STATUS, 0); // reset
             tros::mmio_write32(base + VR_STATUS, STATUS_ACK as usize);
             tros::mmio_write32(base + VR_STATUS, (STATUS_ACK | STATUS_DRIVER) as usize);
-            tros::mmio_write32(base + VR_STATUS, (STATUS_ACK | STATUS_DRIVER | STATUS_DRIVER_OK) as usize);
+            tros::mmio_write32(
+                base + VR_STATUS,
+                (STATUS_ACK | STATUS_DRIVER | STATUS_DRIVER_OK) as usize,
+            );
 
             // Read MAC address (device-specific config at offset 0x14)
             let mac_lo = tros::mmio_read32(base + 0x14) as u32;
@@ -81,12 +84,20 @@ extern "C" fn _start() -> ! {
 fn print_hex(val: u32) {
     for i in (0..8).rev() {
         let nibble = (val >> (i * 4)) & 0xF;
-        let c = if nibble < 10 { b'0' + nibble as u8 } else { b'a' + (nibble - 10) as u8 };
+        let c = if nibble < 10 {
+            b'0' + nibble as u8
+        } else {
+            b'a' + (nibble - 10) as u8
+        };
         tros::putchar(c);
     }
 }
 
 #[panic_handler]
 fn panic(_info: &PanicInfo) -> ! {
-    loop { unsafe { core::arch::asm!("wfi"); } }
+    loop {
+        unsafe {
+            core::arch::asm!("wfi");
+        }
+    }
 }

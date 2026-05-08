@@ -20,7 +20,9 @@ fn print_num(n: usize) {
         i -= 1;
         buf[i] = b'0' + (v - (v / 10) * 10) as u8;
         v /= 10;
-        if v == 0 { break; }
+        if v == 0 {
+            break;
+        }
     }
     for j in i..10 {
         tros::putchar(buf[j]);
@@ -44,23 +46,23 @@ extern "C" fn _start() -> ! {
 
         match opcode {
             // opcode 0: SHOW — display all lines
-            0 => {
-                unsafe {
-                    tros::print("EDIT: ");
-                    print_num(LINE_COUNT);
-                    tros::print(" lines\r\n");
-                    for i in 0..LINE_COUNT {
-                        tros::print("  ");
-                        print_num(i + 1);
-                        tros::print(": ");
-                        for j in 0..60 {
-                            if LINES[i][j] == 0 { break; }
-                            tros::putchar(LINES[i][j]);
+            0 => unsafe {
+                tros::print("EDIT: ");
+                print_num(LINE_COUNT);
+                tros::print(" lines\r\n");
+                for i in 0..LINE_COUNT {
+                    tros::print("  ");
+                    print_num(i + 1);
+                    tros::print(": ");
+                    for j in 0..60 {
+                        if LINES[i][j] == 0 {
+                            break;
                         }
-                        tros::print("\r\n");
+                        tros::putchar(LINES[i][j]);
                     }
+                    tros::print("\r\n");
                 }
-            }
+            },
             // opcode 1: INSERT — buf[0..] = text
             1 => {
                 unsafe {
@@ -71,7 +73,9 @@ extern "C" fn _start() -> ! {
                             j += 1;
                         }
                         // Null-terminate to avoid stale data from partial recv overlap
-                        if j < 60 { LINES[LINE_COUNT][j] = 0; }
+                        if j < 60 {
+                            LINES[LINE_COUNT][j] = 0;
+                        }
                         LINE_COUNT += 1;
                         tros::print("EDIT: inserted line ");
                         print_num(LINE_COUNT);
@@ -88,10 +92,14 @@ extern "C" fn _start() -> ! {
                     if n > 0 && n <= LINE_COUNT {
                         // Shift remaining lines down
                         for i in (n - 1)..(LINE_COUNT - 1) {
-                            for j in 0..60 { LINES[i][j] = LINES[i+1][j]; }
+                            for j in 0..60 {
+                                LINES[i][j] = LINES[i + 1][j];
+                            }
                         }
                         // Clear the last now-unused line
-                        for j in 0..60 { LINES[LINE_COUNT - 1][j] = 0; }
+                        for j in 0..60 {
+                            LINES[LINE_COUNT - 1][j] = 0;
+                        }
                         LINE_COUNT -= 1;
                         tros::print("EDIT: deleted line ");
                         print_num(n);
@@ -114,10 +122,18 @@ extern "C" fn _start() -> ! {
                         let mut pos = 3;
                         for i in 0..LINE_COUNT {
                             for j in 0..60 {
-                                if LINES[i][j] == 0 { break; }
-                                if pos < 63 { wbuf[pos] = LINES[i][j]; pos += 1; }
+                                if LINES[i][j] == 0 {
+                                    break;
+                                }
+                                if pos < 63 {
+                                    wbuf[pos] = LINES[i][j];
+                                    pos += 1;
+                                }
                             }
-                            if pos < 63 { wbuf[pos] = b'\n'; pos += 1; }
+                            if pos < 63 {
+                                wbuf[pos] = b'\n';
+                                pos += 1;
+                            }
                         }
                         wbuf[2] = (pos - 3) as u8;
                         tros::send(2, 3, &wbuf[..pos]);
@@ -134,4 +150,10 @@ extern "C" fn _start() -> ! {
 }
 
 #[panic_handler]
-fn panic(_info: &PanicInfo) -> ! { loop { unsafe { core::arch::asm!("wfi"); } } }
+fn panic(_info: &PanicInfo) -> ! {
+    loop {
+        unsafe {
+            core::arch::asm!("wfi");
+        }
+    }
+}

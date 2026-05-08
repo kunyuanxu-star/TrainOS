@@ -1,5 +1,3 @@
-use crate::cap::types::CapRef;
-
 pub const MAX_PAYLOAD: usize = 64;
 pub const MAX_CAP_TRANSFER: usize = 4;
 
@@ -12,7 +10,10 @@ pub struct CapTransfer {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum TransferMode { Copy, Move }
+pub enum TransferMode {
+    Copy,
+    Move,
+}
 
 #[derive(Clone, Copy, Debug)]
 #[repr(C)]
@@ -27,7 +28,8 @@ pub struct Message {
 impl Message {
     pub fn new(sender_pid: u32, opcode: u16) -> Self {
         Message {
-            sender_pid, opcode,
+            sender_pid,
+            opcode,
             payload: [0; MAX_PAYLOAD],
             payload_len: 0,
             cap_transfers: [None; MAX_CAP_TRANSFER],

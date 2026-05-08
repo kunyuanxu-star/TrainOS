@@ -25,8 +25,10 @@ extern "C" fn _start() -> ! {
     wbuf[0] = (reply_ep & 0xFF) as u8;
     wbuf[1] = ((reply_ep >> 8) & 0xFF) as u8;
     wbuf[2] = len as u8;
-    for i in 0..len { wbuf[3+i] = msg[i]; }
-    tros::send(2, 3, &wbuf[..3+len]);
+    for i in 0..len {
+        wbuf[3 + i] = msg[i];
+    }
+    tros::send(2, 3, &wbuf[..3 + len]);
 
     let mut rbuf = [0u8; 64];
     let (_s, _o) = tros::recv(reply_ep, &mut rbuf);
@@ -54,31 +56,59 @@ extern "C" fn _start() -> ! {
     // 4. Capability stats
     tros::print("[4/5] CAP: capability system ... ");
     let (total, used, ep, mem) = tros::cap_stats();
-    if total > 0 { tros::print("OK\r\n"); }
-    else { tros::print("FAIL\r\n"); }
+    if total > 0 {
+        tros::print("OK\r\n");
+    } else {
+        tros::print("FAIL\r\n");
+    }
 
     // 5. Performance counters
     tros::print("[5/5] PERF: IPC counters ... ");
     let (sends, _recvs, _ctx) = tros::perf_stats();
-    if sends > 0 { tros::print("OK\r\n"); }
-    else { tros::print("FAIL\r\n"); }
+    if sends > 0 {
+        tros::print("OK\r\n");
+    } else {
+        tros::print("FAIL\r\n");
+    }
 
     tros::print("\r\n========================================\r\n");
     tros::print("  All systems operational\r\n");
     tros::print("  TrainOS V8.0 — READY\r\n");
     tros::print("========================================\r\n");
 
-    loop { unsafe { core::arch::asm!("wfi"); } }
+    loop {
+        unsafe {
+            core::arch::asm!("wfi");
+        }
+    }
 }
 
 fn print_small(n: usize) {
     let mut m = n;
     let mut buf = [0u8; 10];
     let mut i = 10;
-    if m == 0 { tros::putchar(b'0'); return; }
-    loop { i -= 1; buf[i] = b'0' + (m - (m/10)*10) as u8; m = m/10; if m == 0 { break; } }
-    for j in i..10 { tros::putchar(buf[j]); }
+    if m == 0 {
+        tros::putchar(b'0');
+        return;
+    }
+    loop {
+        i -= 1;
+        buf[i] = b'0' + (m - (m / 10) * 10) as u8;
+        m = m / 10;
+        if m == 0 {
+            break;
+        }
+    }
+    for j in i..10 {
+        tros::putchar(buf[j]);
+    }
 }
 
 #[panic_handler]
-fn panic(_info: &PanicInfo) -> ! { loop { unsafe { core::arch::asm!("wfi"); } } }
+fn panic(_info: &PanicInfo) -> ! {
+    loop {
+        unsafe {
+            core::arch::asm!("wfi");
+        }
+    }
+}

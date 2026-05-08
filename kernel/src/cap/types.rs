@@ -1,6 +1,5 @@
-use alloc::sync::Arc;
-use spin::Mutex;
 use alloc::vec::Vec;
+use spin::Mutex;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum CapType {
@@ -12,14 +11,14 @@ pub enum CapType {
 }
 
 pub type Rights = u8;
-pub const RIGHT_READ:  Rights = 1 << 0;
+pub const RIGHT_READ: Rights = 1 << 0;
 pub const RIGHT_WRITE: Rights = 1 << 1;
-pub const RIGHT_EXEC:  Rights = 1 << 2;
-pub const RIGHT_MAP:   Rights = 1 << 3;
-pub const RIGHT_SEND:  Rights = 1 << 4;
-pub const RIGHT_RECV:  Rights = 1 << 5;
+pub const RIGHT_EXEC: Rights = 1 << 2;
+pub const RIGHT_MAP: Rights = 1 << 3;
+pub const RIGHT_SEND: Rights = 1 << 4;
+pub const RIGHT_RECV: Rights = 1 << 5;
 pub const RIGHT_SPAWN: Rights = 1 << 6;
-pub const RIGHT_KILL:  Rights = 1 << 7;
+pub const RIGHT_KILL: Rights = 1 << 7;
 
 pub struct Resource {
     pub ref_count: Mutex<usize>,
@@ -46,7 +45,11 @@ pub struct Slot {
 
 impl Slot {
     pub fn null() -> Self {
-        Slot { cap_type: CapType::Null, rights: 0, resource_id: 0 }
+        Slot {
+            cap_type: CapType::Null,
+            rights: 0,
+            resource_id: 0,
+        }
     }
 }
 

@@ -1,5 +1,5 @@
-use crate::proc::thread::{Thread, ThreadState};
 use crate::proc::switch::context_switch;
+use crate::proc::thread::{Thread, ThreadState};
 use crate::sync::SpinLock;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU64, Ordering};
@@ -49,7 +49,7 @@ pub struct Scheduler {
     ready_queues: [ThreadQueue; NUM_PRIORITIES],
     priority_bitmap: u64,
     current: Option<*mut Thread>,
-    pick_count: [u64; 4],  // picks per HART
+    pick_count: [u64; 4], // picks per HART
 }
 
 impl Scheduler {
@@ -75,7 +75,9 @@ impl Scheduler {
     }
 
     fn highest_priority(&self) -> Option<usize> {
-        if self.priority_bitmap == 0 { return None; }
+        if self.priority_bitmap == 0 {
+            return None;
+        }
         Some(63 - (self.priority_bitmap.leading_zeros() as usize))
     }
 
@@ -85,7 +87,9 @@ impl Scheduler {
         if self.ready_queues[pri].is_empty() {
             self.priority_bitmap &= !(1u64 << pri);
         }
-        unsafe { (*thread).state = ThreadState::Running; }
+        unsafe {
+            (*thread).state = ThreadState::Running;
+        }
         self.pick_count[crate::per_cpu::hart_id()] += 1;
         Some(thread)
     }
@@ -117,7 +121,9 @@ pub fn schedule() {
     }
 
     let next = unsafe { (*core::ptr::addr_of_mut!(SCHEDULER)).dequeue_highest() };
-    unsafe { (*core::ptr::addr_of_mut!(SCHEDULER)).current = next; }
+    unsafe {
+        (*core::ptr::addr_of_mut!(SCHEDULER)).current = next;
+    }
     SCHED_LOCK.unlock();
 
     // Context switch OUTSIDE the lock to avoid deadlocks
@@ -149,7 +155,9 @@ pub fn schedule() {
 
 pub fn enqueue_thread(thread: *mut Thread) {
     SCHED_LOCK.lock();
-    unsafe { (*core::ptr::addr_of_mut!(SCHEDULER)).enqueue(thread); }
+    unsafe {
+        (*core::ptr::addr_of_mut!(SCHEDULER)).enqueue(thread);
+    }
     SCHED_LOCK.unlock();
 }
 
@@ -163,7 +171,9 @@ pub fn current_thread() -> Option<*mut Thread> {
 pub fn start_scheduler(idle: *mut Thread) -> ! {
     {
         SCHED_LOCK.lock();
-        unsafe { (*core::ptr::addr_of_mut!(SCHEDULER)).current = Some(idle); }
+        unsafe {
+            (*core::ptr::addr_of_mut!(SCHEDULER)).current = Some(idle);
+        }
         SCHED_LOCK.unlock();
     }
     schedule();
@@ -178,17 +188,23 @@ pub fn sched_stats() {
             crate::console::puts("  HART ");
             // print hart number
             let c = b'0' + hart as u8;
-            unsafe { core::arch::asm!("ecall", in("a7") 1usize, in("a0") c as usize); }
+            core::arch::asm!("ecall", in("a7") 1usize, in("a0") c as usize);
             crate::console::puts(" picks=");
             let n = SCHEDULER.pick_count[hart];
             let mut buf = [0u8; 10];
             let mut i = 10;
             let mut m = n;
             loop {
-                i -= 1; buf[i] = b'0' + (m - (m / 10) * 10) as u8;
-                m = m / 10; if m == 0 { break; }
+                i -= 1;
+                buf[i] = b'0' + (m - (m / 10) * 10) as u8;
+                m /= 10;
+                if m == 0 {
+                    break;
+                }
             }
-            for j in i..10 { unsafe { core::arch::asm!("ecall", in("a7") 1usize, in("a0") buf[j] as usize); } }
+            for &b in buf[i..].iter() {
+                core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
+            }
             crate::console::puts("\r\n");
         }
     }

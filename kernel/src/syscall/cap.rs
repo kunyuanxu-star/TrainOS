@@ -1,10 +1,11 @@
-use crate::cap::types;
 use crate::cap::ops;
+use crate::cap::types;
 
 /// Get the CNode resource ID of the calling process.
 fn caller_cnode() -> Result<usize, &'static str> {
     let pid = crate::sched::current_thread()
-        .map(|t| unsafe { (*t).owner }).unwrap_or(0);
+        .map(|t| unsafe { (*t).owner })
+        .unwrap_or(0);
     let procs = crate::proc::PROCESSES.lock();
     let proc = procs.iter().find(|p| p.pid == pid).ok_or("no process")?;
     Ok(proc.cnode_id)
@@ -32,7 +33,10 @@ pub fn sys_mint(src_idx: usize, desired_rights: u8) -> Result<usize, &'static st
 pub fn sys_copy(src_idx: usize, dst_pid: u32, dst_idx: usize) -> Result<usize, &'static str> {
     let src_cnode = caller_cnode()?;
     let procs = crate::proc::PROCESSES.lock();
-    let dst_proc = procs.iter().find(|p| p.pid == dst_pid).ok_or("dst process not found")?;
+    let dst_proc = procs
+        .iter()
+        .find(|p| p.pid == dst_pid)
+        .ok_or("dst process not found")?;
     let dst_cnode = dst_proc.cnode_id;
     drop(procs);
     ops::copy_cap(src_cnode, src_idx, dst_cnode, dst_idx)?;
@@ -44,7 +48,10 @@ pub fn sys_copy(src_idx: usize, dst_pid: u32, dst_idx: usize) -> Result<usize, &
 pub fn sys_move(src_idx: usize, dst_pid: u32, dst_idx: usize) -> Result<usize, &'static str> {
     let src_cnode = caller_cnode()?;
     let procs = crate::proc::PROCESSES.lock();
-    let dst_proc = procs.iter().find(|p| p.pid == dst_pid).ok_or("dst process not found")?;
+    let dst_proc = procs
+        .iter()
+        .find(|p| p.pid == dst_pid)
+        .ok_or("dst process not found")?;
     let dst_cnode = dst_proc.cnode_id;
     drop(procs);
     ops::move_cap(src_cnode, src_idx, dst_cnode, dst_idx)?;
@@ -62,7 +69,9 @@ pub fn sys_delete(slot_idx: usize) -> Result<usize, &'static str> {
 /// Return capability statistics for the calling process.
 /// Format: [total_slots:16][used_slots:16][ep_caps:16][mem_caps:16] packed into usize
 pub fn sys_cap_stats() -> Result<usize, &'static str> {
-    let pid = crate::sched::current_thread().map(|t| unsafe { (*t).owner }).unwrap_or(0);
+    let pid = crate::sched::current_thread()
+        .map(|t| unsafe { (*t).owner })
+        .unwrap_or(0);
     let procs = crate::proc::PROCESSES.lock();
     let proc = procs.iter().find(|p| p.pid == pid).ok_or("no process")?;
     let cnode_id = proc.cnode_id;
@@ -79,9 +88,17 @@ pub fn sys_cap_stats() -> Result<usize, &'static str> {
         for slot in slots.iter() {
             match slot.cap_type {
                 types::CapType::Null => {}
-                types::CapType::EP => { used += 1; ep_count += 1; }
-                types::CapType::Mem => { used += 1; mem_count += 1; }
-                _ => { used += 1; }
+                types::CapType::EP => {
+                    used += 1;
+                    ep_count += 1;
+                }
+                types::CapType::Mem => {
+                    used += 1;
+                    mem_count += 1;
+                }
+                _ => {
+                    used += 1;
+                }
             }
         }
 

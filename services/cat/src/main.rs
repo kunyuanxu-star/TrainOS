@@ -17,11 +17,22 @@ extern "C" fn _start() -> ! {
     let (_sender, _op) = tros::recv(reply_ep, &mut buf);
 
     tros::print("CAT: ");
-    for i in 0..32 { if buf[i] == 0 { break; } tros::putchar(buf[i]); }
+    for i in 0..32 {
+        if buf[i] == 0 {
+            break;
+        }
+        tros::putchar(buf[i]);
+    }
     tros::print("\r\n");
 
     tros::exit(0);
 }
 
 #[panic_handler]
-fn panic(_info: &PanicInfo) -> ! { loop { unsafe { core::arch::asm!("wfi"); } } }
+fn panic(_info: &PanicInfo) -> ! {
+    loop {
+        unsafe {
+            core::arch::asm!("wfi");
+        }
+    }
+}

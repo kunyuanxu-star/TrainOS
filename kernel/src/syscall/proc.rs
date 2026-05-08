@@ -1,4 +1,4 @@
-use crate::mem::{sv39, buddy};
+use crate::mem::{buddy, sv39};
 use crate::proc::process::ProcessState;
 
 pub fn sys_spawn(_elf_ptr: usize, _elf_len: usize) -> Result<usize, &'static str> {
@@ -7,12 +7,18 @@ pub fn sys_spawn(_elf_ptr: usize, _elf_len: usize) -> Result<usize, &'static str
     Err("spawn not implemented via syscall")
 }
 
-pub fn sys_exit(code: i32) -> Result<usize, &'static str> {
+pub fn sys_exit(_code: i32) -> Result<usize, &'static str> {
     let current = crate::sched::current_thread().ok_or("no thread")?;
-    unsafe { (*current).state = crate::proc::thread::ThreadState::Dead; }
+    unsafe {
+        (*current).state = crate::proc::thread::ThreadState::Dead;
+    }
     crate::sched::schedule();
     // Never returns
-    loop { unsafe { core::arch::asm!("wfi"); } }
+    loop {
+        unsafe {
+            core::arch::asm!("wfi");
+        }
+    }
 }
 
 /// Map a physical MMIO region into the current process's page table.
@@ -20,15 +26,23 @@ pub fn sys_exit(code: i32) -> Result<usize, &'static str> {
 /// size: region size in bytes (will be rounded up to page boundary)
 /// Returns: virtual address of the mapping
 pub fn sys_mmio_map(phys: usize, size: usize) -> Result<usize, &'static str> {
-    if phys == 0 || size == 0 { return Err("invalid args"); }
-    if phys & 0xFFF != 0 { return Err("phys not page-aligned"); }
+    if phys == 0 || size == 0 {
+        return Err("invalid args");
+    }
+    if phys & 0xFFF != 0 {
+        return Err("phys not page-aligned");
+    }
 
     // Get current process
     let pid = crate::sched::current_thread()
-        .map(|t| unsafe { (*t).owner }).ok_or("no current process")?;
+        .map(|t| unsafe { (*t).owner })
+        .ok_or("no current process")?;
 
     let procs = crate::proc::PROCESSES.lock();
-    let proc = procs.iter().find(|p| p.pid == pid).ok_or("process not found")?;
+    let proc = procs
+        .iter()
+        .find(|p| p.pid == pid)
+        .ok_or("process not found")?;
     let pt_root = proc.page_table_root;
     drop(procs);
 
@@ -42,9 +56,7 @@ pub fn sys_mmio_map(phys: usize, size: usize) -> Result<usize, &'static str> {
         let pa = phys + i * 0x1000;
         let va = vbase + i * 0x1000;
         unsafe {
-            crate::proc::elf::map_into_pt(
-                pt_root, va, pa, true, true, false, true
-            );
+            crate::proc::elf::map_into_pt(pt_root, va, pa, true, true, false, true);
         }
     }
 
@@ -56,16 +68,22 @@ pub fn sys_mmio_map(phys: usize, size: usize) -> Result<usize, &'static str> {
 pub fn sys_fork(parent_sepc: usize) -> Result<usize, &'static str> {
     // Get current process
     let pid = crate::sched::current_thread()
-        .map(|t| unsafe { (*t).owner }).ok_or("no current process")?;
+        .map(|t| unsafe { (*t).owner })
+        .ok_or("no current process")?;
 
-    let (pt_root, user_sp, satp_val, priority) = {
+    let (pt_root, user_sp, _satp_val, priority) = {
         let procs = crate::proc::PROCESSES.lock();
-        let proc = procs.iter().find(|p| p.pid == pid).ok_or("process not found")?;
+        let proc = procs
+            .iter()
+            .find(|p| p.pid == pid)
+            .ok_or("process not found")?;
         let thread = proc.thread.as_ref().ok_or("no thread")?;
-        (proc.page_table_root,
-         thread.trap_frame.as_ref().unwrap().user_sp,
-         thread.trap_frame.as_ref().unwrap().satp,
-         thread.effective_priority)
+        (
+            proc.page_table_root,
+            thread.trap_frame.as_ref().unwrap().user_sp,
+            thread.trap_frame.as_ref().unwrap().satp,
+            thread.effective_priority,
+        )
     };
 
     // Child entry point = instruction after the ecall (sepc + 4)
@@ -87,7 +105,15 @@ pub fn sys_fork(parent_sepc: usize) -> Result<usize, &'static str> {
     }
 
     let child_satp = sv39::make_satp(child_pt);
-    let child_pid = crate::proc::fork_child(child_pt, pt_root, child_entry, user_sp, child_satp, priority).ok_or("fork_child failed")?;
+    let child_pid = crate::proc::fork_child(
+        child_pt,
+        pt_root,
+        child_entry,
+        user_sp,
+        child_satp,
+        priority,
+    )
+    .ok_or("fork_child failed")?;
 
     Ok(child_pid as usize)
 }
@@ -104,8 +130,12 @@ unsafe fn copy_user_mappings_full(parent_pt: usize, child_pt: usize) -> Result<(
     // Only copy user-space entries (VPN2 < 256, lower half of Sv39)
     for vpn2_idx in 0..256 {
         let l2_entry = parent_l2[vpn2_idx];
-        if !l2_entry.is_valid() { continue; }
-        if l2_entry.is_leaf() { continue; } // skip superpages at L2
+        if !l2_entry.is_valid() {
+            continue;
+        }
+        if l2_entry.is_leaf() {
+            continue;
+        } // skip superpages at L2
 
         // Allocate and copy L1 page
         let parent_l1_phys = l2_entry.phys_addr();
@@ -125,7 +155,9 @@ unsafe fn copy_user_mappings_full(parent_pt: usize, child_pt: usize) -> Result<(
         // Copy L1 entries
         for vpn1_idx in 0..512 {
             let l1_entry = parent_l1[vpn1_idx];
-            if !l1_entry.is_valid() { continue; }
+            if !l1_entry.is_valid() {
+                continue;
+            }
 
             if l1_entry.is_leaf() {
                 // 2MB superpage — just share (read-only in practice, or copy on write later)
@@ -148,7 +180,9 @@ unsafe fn copy_user_mappings_full(parent_pt: usize, child_pt: usize) -> Result<(
                 // Copy L0 entries — for writable pages, allocate new page in child
                 for vpn0_idx in 0..512 {
                     let l0_entry = parent_l0[vpn0_idx];
-                    if !l0_entry.is_valid() || !l0_entry.is_leaf() { continue; }
+                    if !l0_entry.is_valid() || !l0_entry.is_leaf() {
+                        continue;
+                    }
 
                     if l0_entry.is_writable() || l0_entry.is_dirty() {
                         // Allocate a new physical page for the child
@@ -156,7 +190,11 @@ unsafe fn copy_user_mappings_full(parent_pt: usize, child_pt: usize) -> Result<(
                         let old_kva = sv39::pa_to_kva(l0_entry.phys_addr());
                         let new_kva = sv39::pa_to_kva(new_page);
                         // Copy page content from parent to child
-                        core::ptr::copy_nonoverlapping(old_kva as *const u8, new_kva as *mut u8, 4096);
+                        core::ptr::copy_nonoverlapping(
+                            old_kva as *const u8,
+                            new_kva as *mut u8,
+                            4096,
+                        );
 
                         // Create writable PTE for child
                         let mut child_pte = PTE::empty();
@@ -183,19 +221,26 @@ unsafe fn copy_user_mappings_full(parent_pt: usize, child_pt: usize) -> Result<(
 /// Only includes processes with valid (non-Dead) state.
 pub fn sys_proclist(buf_ptr: usize, buf_len: usize) -> Result<usize, &'static str> {
     let procs = crate::proc::PROCESSES.lock();
-    let alive_count = procs.iter().filter(|p| p.state != ProcessState::Dead).count();
+    let alive_count = procs
+        .iter()
+        .filter(|p| p.state != ProcessState::Dead)
+        .count();
     let count = alive_count.min(buf_len / 6);
 
     let mut written = 0;
     for proc in procs.iter() {
-        if proc.state == ProcessState::Dead { continue; }
-        if written >= count { break; }
+        if proc.state == ProcessState::Dead {
+            continue;
+        }
+        if written >= count {
+            break;
+        }
 
         let off = written * 6;
         unsafe {
             let buf = buf_ptr as *mut u8;
             // pid (4 bytes, little-endian)
-            buf.add(off + 0).write((proc.pid & 0xFF) as u8);
+            buf.add(off).write((proc.pid & 0xFF) as u8);
             buf.add(off + 1).write(((proc.pid >> 8) & 0xFF) as u8);
             buf.add(off + 2).write(((proc.pid >> 16) & 0xFF) as u8);
             buf.add(off + 3).write(((proc.pid >> 24) & 0xFF) as u8);
@@ -230,26 +275,26 @@ pub fn sys_kill(pid: u32) -> Result<usize, &'static str> {
 // ── VirtIO block device driver (V3.1) ──────────────────────────────────────
 //
 // VirtIO MMIO register offsets (modern MMIO transport)
-const VR_REG_QUEUE_SEL:     usize = 0x30;
+const VR_REG_QUEUE_SEL: usize = 0x30;
 const VR_REG_QUEUE_NUM_MAX: usize = 0x34;
-const VR_REG_QUEUE_NUM:     usize = 0x38;
-const VR_REG_QUEUE_DESC_LOW:  usize = 0x80;
+const VR_REG_QUEUE_NUM: usize = 0x38;
+const VR_REG_QUEUE_DESC_LOW: usize = 0x80;
 const VR_REG_QUEUE_DESC_HIGH: usize = 0x84;
-const VR_REG_QUEUE_AVAIL_LOW:  usize = 0x90;
+const VR_REG_QUEUE_AVAIL_LOW: usize = 0x90;
 const VR_REG_QUEUE_AVAIL_HIGH: usize = 0x94;
-const VR_REG_QUEUE_USED_LOW:   usize = 0xA0;
-const VR_REG_QUEUE_USED_HIGH:  usize = 0xA4;
-const VR_REG_STATUS:     usize = 0x70;
+const VR_REG_QUEUE_USED_LOW: usize = 0xA0;
+const VR_REG_QUEUE_USED_HIGH: usize = 0xA4;
+const VR_REG_STATUS: usize = 0x70;
 const VR_REG_QUEUE_READY: usize = 0x44;
 
 // Device status bits
 const STATUS_ACKNOWLEDGE: u32 = 1;
-const STATUS_DRIVER:      u32 = 2;
-const STATUS_DRIVER_OK:   u32 = 4;
-const STATUS_FAILED:      u32 = 128;
+const STATUS_DRIVER: u32 = 2;
+const STATUS_DRIVER_OK: u32 = 4;
+const STATUS_FAILED: u32 = 128;
 
 // Block request types
-const VIRTIO_BLK_T_IN:  u32 = 0;
+const VIRTIO_BLK_T_IN: u32 = 0;
 const VIRTIO_BLK_T_OUT: u32 = 1;
 
 // Physical address of the VirtIO block device on machina
@@ -293,10 +338,10 @@ pub fn sys_blk_read(sector: usize, buf_ptr: usize, buf_len: usize) -> Result<usi
     // Read device features (first 32 bits)
     vr_write(0x14, 0); // DeviceFeaturesSel = 0
     let _dev_features = vr_read(0x10); // DeviceFeatures (ignored, we want no features)
-    // Write 0 as DriverFeatures (no features requested)
+                                       // Write 0 as DriverFeatures (no features requested)
     vr_write(0x20, 0); // DriverFeatures = 0
     vr_write(0x24, 0); // DriverFeaturesSel = 0
-    // Set FEATURES_OK (bit 8) and verify
+                       // Set FEATURES_OK (bit 8) and verify
     vr_write(VR_REG_STATUS, STATUS_ACKNOWLEDGE | STATUS_DRIVER | (1 << 8));
     let feat_check = vr_read(VR_REG_STATUS);
     if feat_check & (1 << 8) == 0 {
@@ -319,9 +364,7 @@ pub fn sys_blk_read(sector: usize, buf_ptr: usize, buf_len: usize) -> Result<usi
     let total_size = desc_size + ((avail_size + 1) & !1) + ((used_size + 3) & !3);
 
     let vq_mem = unsafe {
-        alloc::alloc::alloc_zeroed(
-            core::alloc::Layout::from_size_align(total_size, 4096).unwrap(),
-        )
+        alloc::alloc::alloc_zeroed(core::alloc::Layout::from_size_align(total_size, 4096).unwrap())
     };
     if vq_mem.is_null() {
         return Err("OOM (vq)");
@@ -332,31 +375,28 @@ pub fn sys_blk_read(sector: usize, buf_ptr: usize, buf_len: usize) -> Result<usi
     let used_ring = (avail_ring + avail_size + 3) & !3; // 4-byte align
 
     // 6. Allocate request header (16 bytes: type + reserved + sector)
-    let req_buf = unsafe {
-        alloc::alloc::alloc(core::alloc::Layout::from_size_align(16, 8).unwrap())
-    };
+    let req_buf =
+        unsafe { alloc::alloc::alloc(core::alloc::Layout::from_size_align(16, 8).unwrap()) };
     if req_buf.is_null() {
         return Err("OOM (req)");
     }
 
     unsafe {
         (req_buf as *mut u32).write_volatile(VIRTIO_BLK_T_IN); // type
-        (req_buf as *mut u32).add(1).write_volatile(0);        // reserved
+        (req_buf as *mut u32).add(1).write_volatile(0); // reserved
         (req_buf as *mut u64).add(1).write_volatile(sector as u64); // sector
     }
 
     // 7. Allocate data buffer (512 bytes, identity-mapped for DMA)
-    let data_buf = unsafe {
-        alloc::alloc::alloc(core::alloc::Layout::from_size_align(512, 64).unwrap())
-    };
+    let data_buf =
+        unsafe { alloc::alloc::alloc(core::alloc::Layout::from_size_align(512, 64).unwrap()) };
     if data_buf.is_null() {
         return Err("OOM (data)");
     }
 
     // 8. Allocate status byte
-    let status_buf = unsafe {
-        alloc::alloc::alloc(core::alloc::Layout::from_size_align(1, 1).unwrap())
-    };
+    let status_buf =
+        unsafe { alloc::alloc::alloc(core::alloc::Layout::from_size_align(1, 1).unwrap()) };
     if status_buf.is_null() {
         return Err("OOM (status)");
     }
@@ -366,27 +406,27 @@ pub fn sys_blk_read(sector: usize, buf_ptr: usize, buf_len: usize) -> Result<usi
     unsafe {
         let d0 = desc_table as *mut u32;
         d0.add(0).write_volatile(req_buf as u32); // addr low (identity-mapped)
-        d0.add(1).write_volatile(0);              // addr high
-        d0.add(2).write_volatile(16);             // len
-        d0.add(3).write_volatile(1 | (1 << 16));   // flags=NEXT, next=1
+        d0.add(1).write_volatile(0); // addr high
+        d0.add(2).write_volatile(16); // len
+        d0.add(3).write_volatile(1 | (1 << 16)); // flags=NEXT, next=1
     }
 
     // Descriptor 1: data buffer (IN, device->driver, flags=NEXT|WRITE)
     unsafe {
         let d1 = (desc_table + 16) as *mut u32;
         d1.add(0).write_volatile(data_buf as u32); // addr low (identity-mapped)
-        d1.add(1).write_volatile(0);               // addr high
-        d1.add(2).write_volatile(512);             // len
-        d1.add(3).write_volatile(3 | (2 << 16));    // flags=NEXT|WRITE, next=2
+        d1.add(1).write_volatile(0); // addr high
+        d1.add(2).write_volatile(512); // len
+        d1.add(3).write_volatile(3 | (2 << 16)); // flags=NEXT|WRITE, next=2
     }
 
     // Descriptor 2: status byte (IN, device->driver, flags=WRITE)
     unsafe {
         let d2 = (desc_table + 32) as *mut u32;
         d2.add(0).write_volatile(status_buf as u32); // addr low
-        d2.add(1).write_volatile(0);                 // addr high
-        d2.add(2).write_volatile(1);                 // len
-        d2.add(3).write_volatile(2);                 // flags: WRITE
+        d2.add(1).write_volatile(0); // addr high
+        d2.add(2).write_volatile(1); // len
+        d2.add(3).write_volatile(2); // flags: WRITE
     }
 
     // 10. Set up available ring
@@ -533,9 +573,7 @@ pub fn sys_blk_write(sector: usize, buf_ptr: usize, buf_len: usize) -> Result<us
     let total_size = desc_size + ((avail_size + 1) & !1) + ((used_size + 3) & !3);
 
     let vq_mem = unsafe {
-        alloc::alloc::alloc_zeroed(
-            core::alloc::Layout::from_size_align(total_size, 4096).unwrap(),
-        )
+        alloc::alloc::alloc_zeroed(core::alloc::Layout::from_size_align(total_size, 4096).unwrap())
     };
     if vq_mem.is_null() {
         return Err("OOM (vq)");
@@ -546,23 +584,21 @@ pub fn sys_blk_write(sector: usize, buf_ptr: usize, buf_len: usize) -> Result<us
     let used_ring = (avail_ring + avail_size + 3) & !3; // 4-byte align
 
     // 6. Allocate request header (16 bytes: type + reserved + sector)
-    let req_buf = unsafe {
-        alloc::alloc::alloc(core::alloc::Layout::from_size_align(16, 8).unwrap())
-    };
+    let req_buf =
+        unsafe { alloc::alloc::alloc(core::alloc::Layout::from_size_align(16, 8).unwrap()) };
     if req_buf.is_null() {
         return Err("OOM (req)");
     }
 
     unsafe {
         (req_buf as *mut u32).write_volatile(VIRTIO_BLK_T_OUT); // type = 1 for OUT
-        (req_buf as *mut u32).add(1).write_volatile(0);          // reserved
+        (req_buf as *mut u32).add(1).write_volatile(0); // reserved
         (req_buf as *mut u64).add(1).write_volatile(sector as u64); // sector
     }
 
     // 7. Allocate data buffer (512 bytes, identity-mapped for DMA)
-    let data_buf = unsafe {
-        alloc::alloc::alloc(core::alloc::Layout::from_size_align(512, 64).unwrap())
-    };
+    let data_buf =
+        unsafe { alloc::alloc::alloc(core::alloc::Layout::from_size_align(512, 64).unwrap()) };
     if data_buf.is_null() {
         return Err("OOM (data)");
     }
@@ -573,9 +609,8 @@ pub fn sys_blk_write(sector: usize, buf_ptr: usize, buf_len: usize) -> Result<us
     }
 
     // 8. Allocate status byte
-    let status_buf = unsafe {
-        alloc::alloc::alloc(core::alloc::Layout::from_size_align(1, 1).unwrap())
-    };
+    let status_buf =
+        unsafe { alloc::alloc::alloc(core::alloc::Layout::from_size_align(1, 1).unwrap()) };
     if status_buf.is_null() {
         return Err("OOM (status)");
     }
@@ -585,27 +620,27 @@ pub fn sys_blk_write(sector: usize, buf_ptr: usize, buf_len: usize) -> Result<us
     unsafe {
         let d0 = desc_table as *mut u32;
         d0.add(0).write_volatile(req_buf as u32); // addr low (identity-mapped)
-        d0.add(1).write_volatile(0);              // addr high
-        d0.add(2).write_volatile(16);             // len
-        d0.add(3).write_volatile(1 | (1 << 16));   // flags=NEXT, next=1
+        d0.add(1).write_volatile(0); // addr high
+        d0.add(2).write_volatile(16); // len
+        d0.add(3).write_volatile(1 | (1 << 16)); // flags=NEXT, next=1
     }
 
     // Descriptor 1: data buffer (OUT, driver->device, flags=NEXT, no WRITE)
     unsafe {
         let d1 = (desc_table + 16) as *mut u32;
         d1.add(0).write_volatile(data_buf as u32); // addr low (identity-mapped)
-        d1.add(1).write_volatile(0);               // addr high
-        d1.add(2).write_volatile(512);             // len
-        d1.add(3).write_volatile(1 | (2 << 16));    // flags=NEXT (no WRITE), next=2
+        d1.add(1).write_volatile(0); // addr high
+        d1.add(2).write_volatile(512); // len
+        d1.add(3).write_volatile(1 | (2 << 16)); // flags=NEXT (no WRITE), next=2
     }
 
     // Descriptor 2: status byte (IN, device->driver, flags=WRITE)
     unsafe {
         let d2 = (desc_table + 32) as *mut u32;
         d2.add(0).write_volatile(status_buf as u32); // addr low
-        d2.add(1).write_volatile(0);                 // addr high
-        d2.add(2).write_volatile(1);                 // len
-        d2.add(3).write_volatile(2);                 // flags: WRITE
+        d2.add(1).write_volatile(0); // addr high
+        d2.add(2).write_volatile(1); // len
+        d2.add(3).write_volatile(2); // flags: WRITE
     }
 
     // 10. Set up available ring
@@ -689,7 +724,13 @@ pub fn sys_blk_write(sector: usize, buf_ptr: usize, buf_len: usize) -> Result<us
 fn hex_dbg(val: usize) {
     for i in (0..16).rev() {
         let nibble = (val >> (i * 4)) & 0xF;
-        let c = if nibble < 10 { b'0' + nibble as u8 } else { b'a' + (nibble - 10) as u8 };
-        unsafe { core::arch::asm!("ecall", in("a7") 1usize, in("a0") c as usize); }
+        let c = if nibble < 10 {
+            b'0' + nibble as u8
+        } else {
+            b'a' + (nibble - 10) as u8
+        };
+        unsafe {
+            core::arch::asm!("ecall", in("a7") 1usize, in("a0") c as usize);
+        }
     }
 }

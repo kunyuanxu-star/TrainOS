@@ -10,7 +10,9 @@ fn run_echo() {
     // echo: print a string to console
     let msg = b"hello world";
     tros::print("  echo '");
-    for &b in msg { tros::putchar(b); }
+    for &b in msg {
+        tros::putchar(b);
+    }
     tros::print("'\r\n");
 }
 
@@ -36,7 +38,9 @@ fn run_cat() {
 
     tros::print("  cat /hello.txt    -> ");
     for i in 0..32 {
-        if buf[i] == 0 { break; }
+        if buf[i] == 0 {
+            break;
+        }
         tros::putchar(buf[i]);
     }
     tros::print("\r\n");
@@ -52,7 +56,9 @@ fn run_ls() {
         let pid = i + 1;
         let mut tmp = [0u8; 16];
         let idx = tros::format_uint(pid, &mut tmp);
-        for j in idx..16 { tros::putchar(tmp[j]); }
+        for j in idx..16 {
+            tros::putchar(tmp[j]);
+        }
     }
     tros::print("\r\n");
 }
@@ -87,4 +93,10 @@ extern "C" fn _start() -> ! {
 }
 
 #[panic_handler]
-fn panic(_info: &PanicInfo) -> ! { loop { unsafe { core::arch::asm!("wfi"); } } }
+fn panic(_info: &PanicInfo) -> ! {
+    loop {
+        unsafe {
+            core::arch::asm!("wfi");
+        }
+    }
+}

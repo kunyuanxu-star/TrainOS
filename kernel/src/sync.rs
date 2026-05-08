@@ -6,16 +6,26 @@ pub struct SpinLock {
 
 impl SpinLock {
     pub const fn new() -> Self {
-        SpinLock { flag: AtomicBool::new(false) }
+        SpinLock {
+            flag: AtomicBool::new(false),
+        }
     }
 
     pub fn lock(&self) {
-        while self.flag.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed).is_err() {
+        while self
+            .flag
+            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .is_err()
+        {
             // Hint for hypervisor to yield
             #[cfg(target_arch = "riscv64")]
-            unsafe { core::arch::asm!("nop"); }
+            unsafe {
+                core::arch::asm!("nop");
+            }
             #[cfg(not(target_arch = "riscv64"))]
-            unsafe { core::arch::asm!("pause"); }
+            unsafe {
+                core::arch::asm!("pause");
+            }
         }
     }
 
@@ -25,7 +35,9 @@ impl SpinLock {
 
     #[allow(dead_code)]
     pub fn try_lock(&self) -> bool {
-        self.flag.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed).is_ok()
+        self.flag
+            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .is_ok()
     }
 }
 

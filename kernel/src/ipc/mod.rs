@@ -1,8 +1,8 @@
-pub mod message;
 pub mod endpoint;
+pub mod message;
 
-use endpoint::Endpoint;
 use alloc::vec::Vec;
+use endpoint::Endpoint;
 use spin::Mutex;
 
 static ENDPOINTS: Mutex<Vec<Option<Endpoint>>> = Mutex::new(Vec::new());
@@ -28,7 +28,9 @@ pub fn create_endpoint() -> usize {
         *next += 1;
     }
     let mut eps = ENDPOINTS.lock();
-    while eps.len() <= id { eps.push(None); }
+    while eps.len() <= id {
+        eps.push(None);
+    }
     eps[id] = Some(Endpoint::new(id));
     id
 }

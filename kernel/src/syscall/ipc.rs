@@ -1,6 +1,6 @@
-use crate::ipc;
-use crate::cap::types::{CapType, ResourceData, Rights, RIGHT_SEND, RIGHT_RECV};
 use crate::cap::ops;
+use crate::cap::types::{CapType, ResourceData, Rights, RIGHT_RECV, RIGHT_SEND};
+use crate::ipc;
 use crate::ipc::message::{Message, MAX_PAYLOAD};
 
 /// Check if the current process has an EP capability with the required rights.
@@ -18,7 +18,8 @@ fn check_ep_cap(_ep_id: usize, _required_rights: Rights) -> bool {
 /// Returns true if stored successfully, false otherwise.
 fn store_ep_cap(ep_res_id: usize) -> bool {
     let pid = crate::sched::current_thread()
-        .map(|t| unsafe { (*t).owner }).unwrap_or(0);
+        .map(|t| unsafe { (*t).owner })
+        .unwrap_or(0);
     let procs = crate::proc::PROCESSES.lock();
     let proc = match procs.iter().find(|p| p.pid == pid) {
         Some(p) => p,
@@ -57,10 +58,7 @@ pub fn sys_ep_create() -> Result<usize, &'static str> {
     let ep_id = ipc::create_endpoint();
 
     // Create a capability resource for this EP and store it in the caller's CNode
-    let ep_res_id = ops::alloc_resource(
-        CapType::EP,
-        ResourceData::EP { ep_id }
-    );
+    let ep_res_id = ops::alloc_resource(CapType::EP, ResourceData::EP { ep_id });
     store_ep_cap(ep_res_id);
 
     Ok(ep_id)
@@ -68,7 +66,12 @@ pub fn sys_ep_create() -> Result<usize, &'static str> {
 
 /// sys_send(ep_id: usize, opcode: u16, payload_ptr: usize, payload_len: usize) -> Result
 /// payload: up to payload_len bytes at user-space payload_ptr (max 64)
-pub fn sys_send(ep_id: usize, opcode: u16, payload_ptr: usize, payload_len: usize) -> Result<usize, &'static str> {
+pub fn sys_send(
+    ep_id: usize,
+    opcode: u16,
+    payload_ptr: usize,
+    payload_len: usize,
+) -> Result<usize, &'static str> {
     if !check_ep_cap(ep_id, RIGHT_SEND) {
         return Err("no send cap");
     }
@@ -76,7 +79,7 @@ pub fn sys_send(ep_id: usize, opcode: u16, payload_ptr: usize, payload_len: usiz
         .map(|t| unsafe { (*t).owner })
         .unwrap_or(0);
 
-    let mut msg = Message::new(sender_pid, opcode as u16);
+    let mut msg = Message::new(sender_pid, opcode);
 
     // Copy payload from user space.
     // We are running with the user process's satp active, so user virtual

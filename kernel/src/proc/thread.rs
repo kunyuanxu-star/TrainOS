@@ -23,19 +23,38 @@ pub enum WaitTarget {
 pub struct TaskContext {
     pub ra: usize,
     pub sp: usize,
-    pub s0: usize, pub s1: usize, pub s2: usize, pub s3: usize,
-    pub s4: usize, pub s5: usize, pub s6: usize, pub s7: usize,
-    pub s8: usize, pub s9: usize, pub s10: usize, pub s11: usize,
+    pub s0: usize,
+    pub s1: usize,
+    pub s2: usize,
+    pub s3: usize,
+    pub s4: usize,
+    pub s5: usize,
+    pub s6: usize,
+    pub s7: usize,
+    pub s8: usize,
+    pub s9: usize,
+    pub s10: usize,
+    pub s11: usize,
     pub satp: usize,
 }
 
 impl TaskContext {
     pub const fn empty() -> Self {
         TaskContext {
-            ra: 0, sp: 0,
-            s0: 0, s1: 0, s2: 0, s3: 0,
-            s4: 0, s5: 0, s6: 0, s7: 0,
-            s8: 0, s9: 0, s10: 0, s11: 0,
+            ra: 0,
+            sp: 0,
+            s0: 0,
+            s1: 0,
+            s2: 0,
+            s3: 0,
+            s4: 0,
+            s5: 0,
+            s6: 0,
+            s7: 0,
+            s8: 0,
+            s9: 0,
+            s10: 0,
+            s11: 0,
             satp: 0,
         }
     }
@@ -46,7 +65,7 @@ pub const KERNEL_STACK_SIZE: usize = 8192;
 #[repr(C)]
 pub struct Thread {
     pub tid: u32,
-    pub owner: u32,         // pid
+    pub owner: u32, // pid
     pub state: ThreadState,
     pub base_priority: u8,
     pub effective_priority: u8,
@@ -57,7 +76,14 @@ pub struct Thread {
 }
 
 impl Thread {
-    pub fn new(tid: u32, owner: u32, priority: u8, entry: usize, tf_sp: usize, satp_val: usize) -> Self {
+    pub fn new(
+        tid: u32,
+        owner: u32,
+        priority: u8,
+        entry: usize,
+        tf_sp: usize,
+        satp_val: usize,
+    ) -> Self {
         let mut tf = TrapFrame::default();
         tf.sepc = entry;
         // SPIE=1 (re-enable S-mode interrupts after sret),
@@ -88,7 +114,9 @@ impl Thread {
     pub fn new_idle() -> Self {
         // Read the current (kernel) satp for idle thread
         let kernel_satp: usize;
-        unsafe { core::arch::asm!("csrr {}, satp", out(reg) kernel_satp); }
+        unsafe {
+            core::arch::asm!("csrr {}, satp", out(reg) kernel_satp);
+        }
         let mut task_ctx = TaskContext::empty();
         task_ctx.satp = kernel_satp;
 

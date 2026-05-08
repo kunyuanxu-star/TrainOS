@@ -1,6 +1,5 @@
 /// POSIX compatibility syscalls.
 /// These translate POSIX calls into IPC messages to the FS service (EP 2).
-
 use crate::ipc::message::{Message, MAX_PAYLOAD};
 
 /// Open a file. Returns fd on success.
@@ -12,25 +11,29 @@ pub fn sys_open(_path_ptr: usize, _flags: usize, _mode: usize) -> Result<usize, 
 
 /// Read from fd. Returns bytes read.
 pub fn sys_read(fd: usize, buf_ptr: usize, count: usize) -> Result<usize, &'static str> {
-    if fd != 0 { return Err("bad fd"); }
+    if fd != 0 {
+        return Err("bad fd");
+    }
 
     let sender_pid = crate::sched::current_thread()
-        .map(|t| unsafe { (*t).owner }).unwrap_or(0);
+        .map(|t| unsafe { (*t).owner })
+        .unwrap_or(0);
     let reply_ep = crate::ipc::create_endpoint();
 
     // Create a message to FS: opcode 2 = READ
     // Payload: [reply_ep(2 bytes)]
-    let mut msg = Message::new(sender_pid as u32, 2);
+    let mut msg = Message::new(sender_pid, 2);
     msg.payload[0] = reply_ep as u8;
     msg.payload[1] = (reply_ep >> 8) as u8;
     msg.payload_len = 2;
 
-    crate::ipc::endpoint::send(2, sender_pid as u32, msg)
-        .ok().ok_or("send failed")?;
+    crate::ipc::endpoint::send(2, sender_pid, msg)
+        .ok()
+        .ok_or("send failed")?;
 
     // Retry loop: recv blocks the thread (Waiting), and we retry after being woken
     loop {
-        match crate::ipc::endpoint::recv(reply_ep, sender_pid as u32) {
+        match crate::ipc::endpoint::recv(reply_ep, sender_pid) {
             Ok(resp) => {
                 // Copy response to user buffer via direct access (SUM=1 in sstatus)
                 let len = core::cmp::min(resp.payload_len, count);
@@ -52,14 +55,17 @@ pub fn sys_read(fd: usize, buf_ptr: usize, count: usize) -> Result<usize, &'stat
 
 /// Write to fd. Returns bytes written.
 pub fn sys_write(fd: usize, buf_ptr: usize, count: usize) -> Result<usize, &'static str> {
-    if fd != 0 { return Err("bad fd"); }
+    if fd != 0 {
+        return Err("bad fd");
+    }
 
     let len = core::cmp::min(count, MAX_PAYLOAD - 3);
     let sender_pid = crate::sched::current_thread()
-        .map(|t| unsafe { (*t).owner }).unwrap_or(0);
+        .map(|t| unsafe { (*t).owner })
+        .unwrap_or(0);
     let reply_ep = crate::ipc::create_endpoint();
 
-    let mut msg = Message::new(sender_pid as u32, 3); // opcode 3 = WRITE
+    let mut msg = Message::new(sender_pid, 3); // opcode 3 = WRITE
 
     // Payload: [reply_ep(2 bytes), data_len(1 byte), data(...)]
     msg.payload[0] = reply_ep as u8;
@@ -73,11 +79,12 @@ pub fn sys_write(fd: usize, buf_ptr: usize, count: usize) -> Result<usize, &'sta
     }
     msg.payload_len = 3 + len;
 
-    crate::ipc::endpoint::send(2, sender_pid as u32, msg)
-        .ok().ok_or("send failed")?;
+    crate::ipc::endpoint::send(2, sender_pid, msg)
+        .ok()
+        .ok_or("send failed")?;
 
     loop {
-        match crate::ipc::endpoint::recv(reply_ep, sender_pid as u32) {
+        match crate::ipc::endpoint::recv(reply_ep, sender_pid) {
             Ok(_) => return Ok(len),
             Err(_) => {
                 // Would block -- schedule away; retry when woken by FS reply

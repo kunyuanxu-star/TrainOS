@@ -20,7 +20,9 @@ extern "C" fn _start() -> ! {
 
     loop {
         let (sender_pid, opcode) = tros::recv(ep, &mut buf);
-        if sender_pid == usize::MAX { continue; }
+        if sender_pid == usize::MAX {
+            continue;
+        }
 
         match opcode {
             // opcode 1: REGISTER(port, listener_ep)
@@ -79,15 +81,28 @@ fn print_small(n: usize) {
     let mut m = n;
     let mut buf = [0u8; 10];
     let mut i = 10;
-    if m == 0 { tros::putchar(b'0'); return; }
-    loop {
-        i -= 1; buf[i] = b'0' + (m - (m / 10) * 10) as u8;
-        m = m / 10; if m == 0 { break; }
+    if m == 0 {
+        tros::putchar(b'0');
+        return;
     }
-    for j in i..10 { tros::putchar(buf[j]); }
+    loop {
+        i -= 1;
+        buf[i] = b'0' + (m - (m / 10) * 10) as u8;
+        m = m / 10;
+        if m == 0 {
+            break;
+        }
+    }
+    for j in i..10 {
+        tros::putchar(buf[j]);
+    }
 }
 
 #[panic_handler]
 fn panic(_info: &PanicInfo) -> ! {
-    loop { unsafe { core::arch::asm!("wfi"); } }
+    loop {
+        unsafe {
+            core::arch::asm!("wfi");
+        }
+    }
 }

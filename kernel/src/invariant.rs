@@ -1,5 +1,5 @@
-/// Kernel invariant checks. Only compiled in debug mode.
-/// These are assertions about kernel data structure consistency.
+//! Kernel invariant checks. Only compiled in debug mode.
+//! These are assertions about kernel data structure consistency.
 
 /// Check scheduler invariants:
 /// - priority_bitmap is consistent with ready_queues
@@ -9,7 +9,6 @@ pub fn check_scheduler_invariants() {
     // Only run in debug mode or when INVARIANT_CHECK is set
     #[cfg(debug_assertions)]
     {
-        use crate::sched;
         // Basic check: scheduler should always have a valid state
         // More detailed checks would require exposing internal state
     }

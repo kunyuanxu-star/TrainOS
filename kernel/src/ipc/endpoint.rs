@@ -56,7 +56,11 @@ unsafe impl Send for Endpoint {}
 
 impl Endpoint {
     pub fn new(id: usize) -> Self {
-        Endpoint { id, pending_senders: MessageQueue::new(), waiting_receiver: None }
+        Endpoint {
+            id,
+            pending_senders: MessageQueue::new(),
+            waiting_receiver: None,
+        }
     }
 }
 
@@ -68,7 +72,10 @@ pub fn send(ep_id: usize, sender_pid: u32, msg: Message) -> Result<(), &'static 
         .unwrap_or(0);
 
     let mut eps = super::ENDPOINTS.lock();
-    let ep = eps.get_mut(ep_id).and_then(|e| e.as_mut()).ok_or("invalid ep")?;
+    let ep = eps
+        .get_mut(ep_id)
+        .and_then(|e| e.as_mut())
+        .ok_or("invalid ep")?;
 
     // Always queue the message first, so the receiver can find it when it wakes
     ep.pending_senders.push_back(sender_pid, msg);
@@ -102,7 +109,10 @@ pub fn send(ep_id: usize, sender_pid: u32, msg: Message) -> Result<(), &'static 
 /// Resets effective priority to base priority after receiving.
 pub fn recv(ep_id: usize, _receiver_pid: u32) -> Result<Message, &'static str> {
     let mut eps = super::ENDPOINTS.lock();
-    let ep = eps.get_mut(ep_id).and_then(|e| e.as_mut()).ok_or("invalid ep")?;
+    let ep = eps
+        .get_mut(ep_id)
+        .and_then(|e| e.as_mut())
+        .ok_or("invalid ep")?;
 
     if let Some((_sender, msg)) = ep.pending_senders.pop_front() {
         // Priority restoration: reset to base priority after receiving (inheritance served its purpose)
@@ -114,8 +124,7 @@ pub fn recv(ep_id: usize, _receiver_pid: u32) -> Result<Message, &'static str> {
         Ok(msg)
     } else {
         // Block current thread
-        let current = crate::sched::current_thread()
-            .ok_or("no current thread")?;
+        let current = crate::sched::current_thread().ok_or("no current thread")?;
         unsafe {
             (*current).state = crate::proc::thread::ThreadState::Waiting;
             (*current).wait_target = Some(crate::proc::thread::WaitTarget::Endpoint(ep_id));

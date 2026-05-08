@@ -17,14 +17,22 @@ extern "C" fn _start() -> ! {
     let va = tros::map_mmio(UART_BASE, 0x1000);
     if va == 0 {
         tros::print("UART: map_mmio failed!\r\n");
-        loop { unsafe { core::arch::asm!("wfi"); } }
+        loop {
+            unsafe {
+                core::arch::asm!("wfi");
+            }
+        }
     }
 
     tros::print("UART: mapped at va=0x");
     // Print VA in hex (simple)
     for i in (0..8).rev() {
         let nibble = (va >> (i * 4)) & 0xF;
-        let c = if nibble < 10 { b'0' + nibble as u8 } else { b'a' + (nibble - 10) as u8 };
+        let c = if nibble < 10 {
+            b'0' + nibble as u8
+        } else {
+            b'a' + (nibble - 10) as u8
+        };
         tros::putchar(c);
     }
     tros::print("\r\n");
@@ -39,15 +47,29 @@ extern "C" fn _start() -> ! {
     // Write "UART_OK\r\n" byte by byte via MMIO
     let msg = b"\r\nUART_OK\r\n";
     for &byte in msg.iter() {
-        unsafe { (thr_addr as *mut u8).write_volatile(byte); }
+        unsafe {
+            (thr_addr as *mut u8).write_volatile(byte);
+        }
         // Small delay for UART
-        for _ in 0..100 { unsafe { core::arch::asm!("nop"); } }
+        for _ in 0..100 {
+            unsafe {
+                core::arch::asm!("nop");
+            }
+        }
     }
 
-    loop { unsafe { core::arch::asm!("wfi"); } }
+    loop {
+        unsafe {
+            core::arch::asm!("wfi");
+        }
+    }
 }
 
 #[panic_handler]
 fn panic(_info: &PanicInfo) -> ! {
-    loop { unsafe { core::arch::asm!("wfi"); } }
+    loop {
+        unsafe {
+            core::arch::asm!("wfi");
+        }
+    }
 }

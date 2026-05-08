@@ -65,7 +65,7 @@ core::arch::global_asm!(
     // Read HART ID from tp register (set by RustSBI)
     "    mv t0, tp",
     // Load per-HART boot stack: _boot_stacks + hart_id * 65536
-    "    slli t1, t0, 16",            // t1 = hart_id * 65536
+    "    slli t1, t0, 16", // t1 = hart_id * 65536
     "    la t2, _boot_stacks",
     "    add t2, t2, t1",
     "    mv sp, t2",
@@ -74,9 +74,9 @@ core::arch::global_asm!(
     "    tail rust_main",
     "1:  tail rust_secondary",
     ".section .bss",
-    ".align 12",                         // 4096-byte aligned
+    ".align 12", // 4096-byte aligned
     "_boot_stacks:",
-    "    .space 65536 * 4, 0",           // 4 HARTs x 64KB each
+    "    .space 65536 * 4, 0", // 4 HARTs x 64KB each
 );
 
 #[cfg(not(test))]
@@ -84,7 +84,9 @@ core::arch::global_asm!(
 extern "C" fn rust_secondary() -> ! {
     // Park until primary HART signals ready
     while !BOOT_READY.load(Ordering::Acquire) {
-        unsafe { core::arch::asm!("wfi"); }
+        unsafe {
+            core::arch::asm!("wfi");
+        }
     }
 
     // Same setup as primary (minus BSS clear and memory init)
@@ -151,12 +153,14 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
                 let mut i = 10;
                 loop {
                     i -= 1;
-                    buf[i] = b'0' + (n % 10) as u8;
+                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
                     n /= 10;
-                    if n == 0 { break; }
+                    if n == 0 {
+                        break;
+                    }
                 }
-                for j in i..10 {
-                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") buf[j] as usize);
+                for &b in buf[i..].iter() {
+                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
                 }
             }
             console::puts(")\r\n");
@@ -175,12 +179,14 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
                 let mut i = 10;
                 loop {
                     i -= 1;
-                    buf[i] = b'0' + (n % 10) as u8;
+                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
                     n /= 10;
-                    if n == 0 { break; }
+                    if n == 0 {
+                        break;
+                    }
                 }
-                for j in i..10 {
-                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") buf[j] as usize);
+                for &b in buf[i..].iter() {
+                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
                 }
             }
             console::puts(")\r\n");
@@ -199,12 +205,14 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
                 let mut i = 10;
                 loop {
                     i -= 1;
-                    buf[i] = b'0' + (n % 10) as u8;
+                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
                     n /= 10;
-                    if n == 0 { break; }
+                    if n == 0 {
+                        break;
+                    }
                 }
-                for j in i..10 {
-                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") buf[j] as usize);
+                for &b in buf[i..].iter() {
+                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
                 }
             }
             console::puts(")\r\n");
@@ -223,12 +231,14 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
                 let mut i = 10;
                 loop {
                     i -= 1;
-                    buf[i] = b'0' + (n % 10) as u8;
+                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
                     n /= 10;
-                    if n == 0 { break; }
+                    if n == 0 {
+                        break;
+                    }
                 }
-                for j in i..10 {
-                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") buf[j] as usize);
+                for &b in buf[i..].iter() {
+                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
                 }
             }
             console::puts(")\r\n");
@@ -248,12 +258,14 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
                 let mut i = 10;
                 loop {
                     i -= 1;
-                    buf[i] = b'0' + (n % 10) as u8;
+                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
                     n /= 10;
-                    if n == 0 { break; }
+                    if n == 0 {
+                        break;
+                    }
                 }
-                for j in i..10 {
-                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") buf[j] as usize);
+                for &b in buf[i..].iter() {
+                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
                 }
             }
             console::puts(")\r\n");
@@ -272,12 +284,14 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
                 let mut i = 10;
                 loop {
                     i -= 1;
-                    buf[i] = b'0' + (n % 10) as u8;
+                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
                     n /= 10;
-                    if n == 0 { break; }
+                    if n == 0 {
+                        break;
+                    }
                 }
-                for j in i..10 {
-                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") buf[j] as usize);
+                for &b in buf[i..].iter() {
+                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
                 }
             }
             console::puts(")\r\n");
@@ -296,12 +310,14 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
                 let mut i = 10;
                 loop {
                     i -= 1;
-                    buf[i] = b'0' + (n % 10) as u8;
+                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
                     n /= 10;
-                    if n == 0 { break; }
+                    if n == 0 {
+                        break;
+                    }
                 }
-                for j in i..10 {
-                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") buf[j] as usize);
+                for &b in buf[i..].iter() {
+                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
                 }
             }
             console::puts(")\r\n");
@@ -320,12 +336,14 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
                 let mut i = 10;
                 loop {
                     i -= 1;
-                    buf[i] = b'0' + (n % 10) as u8;
+                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
                     n /= 10;
-                    if n == 0 { break; }
+                    if n == 0 {
+                        break;
+                    }
                 }
-                for j in i..10 {
-                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") buf[j] as usize);
+                for &b in buf[i..].iter() {
+                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
                 }
             }
             console::puts(")\r\n");
@@ -345,17 +363,46 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
                 let mut i = 10;
                 loop {
                     i -= 1;
-                    buf[i] = b'0' + (n % 10) as u8;
+                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
                     n /= 10;
-                    if n == 0 { break; }
+                    if n == 0 {
+                        break;
+                    }
                 }
-                for j in i..10 {
-                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") buf[j] as usize);
+                for &b in buf[i..].iter() {
+                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
                 }
             }
             console::puts(")\r\n");
         }
         None => console::puts("  WARNING: REG spawn failed\r\n"),
+    }
+
+    // Spawn the TEST_NET2 service (V9.0C network integration test, priority 54)
+    // Runs after VETH(58) registers EP 7, before demo(55).
+    static TEST_NET2_ELF: &[u8] = include_bytes!("test_net2.elf");
+    match proc::spawn(TEST_NET2_ELF, 54) {
+        Some(pid) => {
+            console::puts("  TEST_NET2 process spawned (pid=");
+            unsafe {
+                let mut n = pid;
+                let mut buf = [0u8; 10];
+                let mut i = 10;
+                loop {
+                    i -= 1;
+                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
+                    n /= 10;
+                    if n == 0 {
+                        break;
+                    }
+                }
+                for &b in buf[i..].iter() {
+                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
+                }
+            }
+            console::puts(")\r\n");
+        }
+        None => console::puts("  WARNING: test_net2 spawn failed\r\n"),
     }
 
     // Spawn the test_fs service
@@ -369,12 +416,14 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
                 let mut i = 10;
                 loop {
                     i -= 1;
-                    buf[i] = b'0' + (n % 10) as u8;
+                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
                     n /= 10;
-                    if n == 0 { break; }
+                    if n == 0 {
+                        break;
+                    }
                 }
-                for j in i..10 {
-                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") buf[j] as usize);
+                for &b in buf[i..].iter() {
+                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
                 }
             }
             console::puts(")\r\n");
@@ -394,12 +443,14 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
                 let mut i = 10;
                 loop {
                     i -= 1;
-                    buf[i] = b'0' + (n % 10) as u8;
+                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
                     n /= 10;
-                    if n == 0 { break; }
+                    if n == 0 {
+                        break;
+                    }
                 }
-                for j in i..10 {
-                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") buf[j] as usize);
+                for &b in buf[i..].iter() {
+                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
                 }
             }
             console::puts(")\r\n");
@@ -418,12 +469,14 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
                 let mut i = 10;
                 loop {
                     i -= 1;
-                    buf[i] = b'0' + (n % 10) as u8;
+                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
                     n /= 10;
-                    if n == 0 { break; }
+                    if n == 0 {
+                        break;
+                    }
                 }
-                for j in i..10 {
-                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") buf[j] as usize);
+                for &b in buf[i..].iter() {
+                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
                 }
             }
             console::puts(")\r\n");
@@ -442,12 +495,14 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
                 let mut i = 10;
                 loop {
                     i -= 1;
-                    buf[i] = b'0' + (n % 10) as u8;
+                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
                     n /= 10;
-                    if n == 0 { break; }
+                    if n == 0 {
+                        break;
+                    }
                 }
-                for j in i..10 {
-                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") buf[j] as usize);
+                for &b in buf[i..].iter() {
+                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
                 }
             }
             console::puts(")\r\n");
@@ -467,12 +522,14 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
                 let mut i = 10;
                 loop {
                     i -= 1;
-                    buf[i] = b'0' + (n % 10) as u8;
+                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
                     n /= 10;
-                    if n == 0 { break; }
+                    if n == 0 {
+                        break;
+                    }
                 }
-                for j in i..10 {
-                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") buf[j] as usize);
+                for &b in buf[i..].iter() {
+                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
                 }
             }
             console::puts(")\r\n");
@@ -491,17 +548,45 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
                 let mut i = 10;
                 loop {
                     i -= 1;
-                    buf[i] = b'0' + (n % 10) as u8;
+                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
                     n /= 10;
-                    if n == 0 { break; }
+                    if n == 0 {
+                        break;
+                    }
                 }
-                for j in i..10 {
-                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") buf[j] as usize);
+                for &b in buf[i..].iter() {
+                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
                 }
             }
             console::puts(")\r\n");
         }
         None => console::puts("  WARNING: test_inv spawn failed\r\n"),
+    }
+
+    // Spawn the TEST_PKG service (V9.0B package manager test client, priority 21)
+    static TEST_PKG_ELF: &[u8] = include_bytes!("test_pkg.elf");
+    match proc::spawn(TEST_PKG_ELF, 21) {
+        Some(pid) => {
+            console::puts("  TEST_PKG process spawned (pid=");
+            unsafe {
+                let mut n = pid;
+                let mut buf = [0u8; 10];
+                let mut i = 10;
+                loop {
+                    i -= 1;
+                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
+                    n /= 10;
+                    if n == 0 {
+                        break;
+                    }
+                }
+                for &b in buf[i..].iter() {
+                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
+                }
+            }
+            console::puts(")\r\n");
+        }
+        None => console::puts("  WARNING: TEST_PKG spawn failed\r\n"),
     }
 
     // Spawn the test_clib service (V6.0A mini C library test, priority 62)
@@ -515,12 +600,14 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
                 let mut i = 10;
                 loop {
                     i -= 1;
-                    buf[i] = b'0' + (n % 10) as u8;
+                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
                     n /= 10;
-                    if n == 0 { break; }
+                    if n == 0 {
+                        break;
+                    }
                 }
-                for j in i..10 {
-                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") buf[j] as usize);
+                for &b in buf[i..].iter() {
+                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
                 }
             }
             console::puts(")\r\n");
@@ -539,12 +626,14 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
                 let mut i = 10;
                 loop {
                     i -= 1;
-                    buf[i] = b'0' + (n % 10) as u8;
+                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
                     n /= 10;
-                    if n == 0 { break; }
+                    if n == 0 {
+                        break;
+                    }
                 }
-                for j in i..10 {
-                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") buf[j] as usize);
+                for &b in buf[i..].iter() {
+                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
                 }
             }
             console::puts(")\r\n");
@@ -564,12 +653,14 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
                 let mut i = 10;
                 loop {
                     i -= 1;
-                    buf[i] = b'0' + (n % 10) as u8;
+                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
                     n /= 10;
-                    if n == 0 { break; }
+                    if n == 0 {
+                        break;
+                    }
                 }
-                for j in i..10 {
-                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") buf[j] as usize);
+                for &b in buf[i..].iter() {
+                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
                 }
             }
             console::puts(")\r\n");
@@ -588,12 +679,14 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
                 let mut i = 10;
                 loop {
                     i -= 1;
-                    buf[i] = b'0' + (n % 10) as u8;
+                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
                     n /= 10;
-                    if n == 0 { break; }
+                    if n == 0 {
+                        break;
+                    }
                 }
-                for j in i..10 {
-                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") buf[j] as usize);
+                for &b in buf[i..].iter() {
+                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
                 }
             }
             console::puts(")\r\n");
@@ -612,12 +705,14 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
                 let mut i = 10;
                 loop {
                     i -= 1;
-                    buf[i] = b'0' + (n % 10) as u8;
+                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
                     n /= 10;
-                    if n == 0 { break; }
+                    if n == 0 {
+                        break;
+                    }
                 }
-                for j in i..10 {
-                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") buf[j] as usize);
+                for &b in buf[i..].iter() {
+                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
                 }
             }
             console::puts(")\r\n");
@@ -637,12 +732,14 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
                 let mut i = 10;
                 loop {
                     i -= 1;
-                    buf[i] = b'0' + (n % 10) as u8;
+                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
                     n /= 10;
-                    if n == 0 { break; }
+                    if n == 0 {
+                        break;
+                    }
                 }
-                for j in i..10 {
-                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") buf[j] as usize);
+                for &b in buf[i..].iter() {
+                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
                 }
             }
             console::puts(")\r\n");
@@ -661,12 +758,14 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
                 let mut i = 10;
                 loop {
                     i -= 1;
-                    buf[i] = b'0' + (n % 10) as u8;
+                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
                     n /= 10;
-                    if n == 0 { break; }
+                    if n == 0 {
+                        break;
+                    }
                 }
-                for j in i..10 {
-                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") buf[j] as usize);
+                for &b in buf[i..].iter() {
+                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
                 }
             }
             console::puts(")\r\n");
@@ -685,12 +784,14 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
                 let mut i = 10;
                 loop {
                     i -= 1;
-                    buf[i] = b'0' + (n % 10) as u8;
+                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
                     n /= 10;
-                    if n == 0 { break; }
+                    if n == 0 {
+                        break;
+                    }
                 }
-                for j in i..10 {
-                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") buf[j] as usize);
+                for &b in buf[i..].iter() {
+                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
                 }
             }
             console::puts(")\r\n");
@@ -711,12 +812,14 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
                 let mut i = 10;
                 loop {
                     i -= 1;
-                    buf[i] = b'0' + (n % 10) as u8;
+                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
                     n /= 10;
-                    if n == 0 { break; }
+                    if n == 0 {
+                        break;
+                    }
                 }
-                for j in i..10 {
-                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") buf[j] as usize);
+                for &b in buf[i..].iter() {
+                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
                 }
             }
             console::puts(")\r\n");
@@ -737,12 +840,14 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
                 let mut i = 10;
                 loop {
                     i -= 1;
-                    buf[i] = b'0' + (n % 10) as u8;
+                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
                     n /= 10;
-                    if n == 0 { break; }
+                    if n == 0 {
+                        break;
+                    }
                 }
-                for j in i..10 {
-                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") buf[j] as usize);
+                for &b in buf[i..].iter() {
+                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
                 }
             }
             console::puts(")\r\n");
@@ -761,12 +866,14 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
                 let mut i = 10;
                 loop {
                     i -= 1;
-                    buf[i] = b'0' + (n % 10) as u8;
+                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
                     n /= 10;
-                    if n == 0 { break; }
+                    if n == 0 {
+                        break;
+                    }
                 }
-                for j in i..10 {
-                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") buf[j] as usize);
+                for &b in buf[i..].iter() {
+                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
                 }
             }
             console::puts(")\r\n");
@@ -785,12 +892,14 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
                 let mut i = 10;
                 loop {
                     i -= 1;
-                    buf[i] = b'0' + (n % 10) as u8;
+                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
                     n /= 10;
-                    if n == 0 { break; }
+                    if n == 0 {
+                        break;
+                    }
                 }
-                for j in i..10 {
-                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") buf[j] as usize);
+                for &b in buf[i..].iter() {
+                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
                 }
             }
             console::puts(")\r\n");
@@ -809,12 +918,14 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
                 let mut i = 10;
                 loop {
                     i -= 1;
-                    buf[i] = b'0' + (n % 10) as u8;
+                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
                     n /= 10;
-                    if n == 0 { break; }
+                    if n == 0 {
+                        break;
+                    }
                 }
-                for j in i..10 {
-                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") buf[j] as usize);
+                for &b in buf[i..].iter() {
+                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
                 }
             }
             console::puts(")\r\n");
@@ -833,12 +944,14 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
                 let mut i = 10;
                 loop {
                     i -= 1;
-                    buf[i] = b'0' + (n % 10) as u8;
+                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
                     n /= 10;
-                    if n == 0 { break; }
+                    if n == 0 {
+                        break;
+                    }
                 }
-                for j in i..10 {
-                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") buf[j] as usize);
+                for &b in buf[i..].iter() {
+                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
                 }
             }
             console::puts(")\r\n");
@@ -859,12 +972,14 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
                 let mut i = 10;
                 loop {
                     i -= 1;
-                    buf[i] = b'0' + (n % 10) as u8;
+                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
                     n /= 10;
-                    if n == 0 { break; }
+                    if n == 0 {
+                        break;
+                    }
                 }
-                for j in i..10 {
-                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") buf[j] as usize);
+                for &b in buf[i..].iter() {
+                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
                 }
             }
             console::puts(")\r\n");
@@ -883,12 +998,14 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
                 let mut i = 10;
                 loop {
                     i -= 1;
-                    buf[i] = b'0' + (n % 10) as u8;
+                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
                     n /= 10;
-                    if n == 0 { break; }
+                    if n == 0 {
+                        break;
+                    }
                 }
-                for j in i..10 {
-                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") buf[j] as usize);
+                for &b in buf[i..].iter() {
+                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
                 }
             }
             console::puts(")\r\n");
@@ -908,12 +1025,14 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
                 let mut i = 10;
                 loop {
                     i -= 1;
-                    buf[i] = b'0' + (n % 10) as u8;
+                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
                     n /= 10;
-                    if n == 0 { break; }
+                    if n == 0 {
+                        break;
+                    }
                 }
-                for j in i..10 {
-                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") buf[j] as usize);
+                for &b in buf[i..].iter() {
+                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
                 }
             }
             console::puts(")\r\n");
@@ -932,17 +1051,45 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
                 let mut i = 10;
                 loop {
                     i -= 1;
-                    buf[i] = b'0' + (n % 10) as u8;
+                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
                     n /= 10;
-                    if n == 0 { break; }
+                    if n == 0 {
+                        break;
+                    }
                 }
-                for j in i..10 {
-                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") buf[j] as usize);
+                for &b in buf[i..].iter() {
+                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
                 }
             }
             console::puts(")\r\n");
         }
         None => console::puts("  WARNING: VETH spawn failed\r\n"),
+    }
+
+    // Spawn the PKG service (V9.0B package manager, priority 58)
+    static PKG_ELF: &[u8] = include_bytes!("pkg.elf");
+    match proc::spawn(PKG_ELF, 58) {
+        Some(pid) => {
+            console::puts("  PKG process spawned (pid=");
+            unsafe {
+                let mut n = pid;
+                let mut buf = [0u8; 10];
+                let mut i = 10;
+                loop {
+                    i -= 1;
+                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
+                    n /= 10;
+                    if n == 0 {
+                        break;
+                    }
+                }
+                for &b in buf[i..].iter() {
+                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
+                }
+            }
+            console::puts(")\r\n");
+        }
+        None => console::puts("  WARNING: PKG spawn failed\r\n"),
     }
 
     // Signal secondary HARTs that they can proceed
@@ -961,12 +1108,14 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
                 let mut i = 10;
                 loop {
                     i -= 1;
-                    buf[i] = b'0' + (n % 10) as u8;
+                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
                     n /= 10;
-                    if n == 0 { break; }
+                    if n == 0 {
+                        break;
+                    }
                 }
-                for j in i..10 {
-                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") buf[j] as usize);
+                for &b in buf[i..].iter() {
+                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
                 }
             }
             console::puts(")\r\n");
@@ -984,7 +1133,9 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
 #[cfg(not(test))]
 pub fn idle_loop() -> ! {
     loop {
-        unsafe { core::arch::asm!("wfi"); }
+        unsafe {
+            core::arch::asm!("wfi");
+        }
     }
 }
 

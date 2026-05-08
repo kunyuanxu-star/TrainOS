@@ -1,4 +1,4 @@
-use crate::mem::{buddy, sv39, layout::PAGE_SIZE};
+use crate::mem::{buddy, layout::PAGE_SIZE, sv39};
 
 /// ELF64 file header
 #[repr(C)]
@@ -69,8 +69,8 @@ pub(crate) unsafe fn walk_pt(root_pt: usize, va: usize, alloc: bool) -> Option<(
         }
         let new_page = buddy::alloc_page()?;
         let new_pt = pt_page_mut(new_page);
-        for i in 0..512 {
-            new_pt[i] = sv39::PTE::empty();
+        for pte in new_pt.iter_mut() {
+            *pte = sv39::PTE::empty();
         }
         let mut entry = sv39::PTE::empty();
         entry.set_ppn(new_page >> 12);
@@ -89,8 +89,8 @@ pub(crate) unsafe fn walk_pt(root_pt: usize, va: usize, alloc: bool) -> Option<(
         }
         let new_page = buddy::alloc_page()?;
         let new_pt = pt_page_mut(new_page);
-        for i in 0..512 {
-            new_pt[i] = sv39::PTE::empty();
+        for pte in new_pt.iter_mut() {
+            *pte = sv39::PTE::empty();
         }
         let mut entry = sv39::PTE::empty();
         entry.set_ppn(new_page >> 12);
@@ -177,7 +177,6 @@ pub fn load_elf(elf_data: &[u8], page_table_root: usize) -> Option<(usize, usize
 
     // Iterate over all program headers
     for i in 0..phnum {
-
         // SAFETY: bounds checked above.
         let phdr_ptr = unsafe { elf_data.as_ptr().add(phoff + i * phentsize) };
         let phdr = unsafe { &*(phdr_ptr as *const Elf64Phdr) };
@@ -234,7 +233,7 @@ pub fn load_elf(elf_data: &[u8], page_table_root: usize) -> Option<(usize, usize
                         .expect("ELF: virt_to_phys failed during load")
                 };
 
-                let dst = unsafe { sv39::pa_to_kva(phys) as *mut u8 };
+                let dst = sv39::pa_to_kva(phys) as *mut u8;
                 let src = unsafe { elf_data.as_ptr().add(offset + (copy_va - vaddr)) };
                 unsafe {
                     core::ptr::copy_nonoverlapping(src, dst, chunk);

@@ -1,5 +1,5 @@
 use super::types::*;
-use super::{RESOURCES, NEXT_RESOURCE_ID};
+use super::{NEXT_RESOURCE_ID, RESOURCES};
 use alloc::vec::Vec;
 use spin::Mutex;
 
@@ -15,7 +15,9 @@ pub fn alloc_resource(res_type: CapType, data: ResourceData) -> usize {
         data,
     };
     let mut resources = RESOURCES.lock();
-    while resources.len() <= id { resources.push(None); }
+    while resources.len() <= id {
+        resources.push(None);
+    }
     resources[id] = Some(resource);
     id
 }
@@ -57,18 +59,27 @@ pub fn mint(cnode_id: usize, src_slot_idx: usize, desired_rights: Rights) -> Opt
     let resources = RESOURCES.lock();
     // Extract the slot data within a narrow scope so borrows on `resources` are dropped
     // before we access `resources` again for derivation tracking.
-    let (src_cap_type, src_rights, src_resource_id) = {
+    let (src_cap_type, _src_rights, src_resource_id) = {
         let cnode = resources.get(cnode_id)?.as_ref()?;
         if let ResourceData::CNode { ref slots } = &cnode.data {
             let slots_guard = slots.lock();
             let src = slots_guard.get(src_slot_idx)?;
-            if src.cap_type == CapType::Null { return None; }
-            if (desired_rights & src.rights) != desired_rights { return None; }
+            if src.cap_type == CapType::Null {
+                return None;
+            }
+            if (desired_rights & src.rights) != desired_rights {
+                return None;
+            }
             (src.cap_type, src.rights, src.resource_id)
-        } else { return None; }
+        } else {
+            return None;
+        }
     };
 
-    let child_id = alloc_resource(src_cap_type, duplicate_resource_data_inner(src_resource_id)?);
+    let child_id = alloc_resource(
+        src_cap_type,
+        duplicate_resource_data_inner(src_resource_id)?,
+    );
 
     // Record derivation
     if let Some(ref parent) = resources[src_resource_id] {
@@ -78,7 +89,11 @@ pub fn mint(cnode_id: usize, src_slot_idx: usize, desired_rights: Rights) -> Opt
         *child.derivation_parent.lock() = Some(src_resource_id);
     }
 
-    Some(Slot { cap_type: src_cap_type, rights: desired_rights, resource_id: child_id })
+    Some(Slot {
+        cap_type: src_cap_type,
+        rights: desired_rights,
+        resource_id: child_id,
+    })
 }
 
 fn duplicate_resource_data_inner(resource_id: usize) -> Option<ResourceData> {
@@ -87,44 +102,70 @@ fn duplicate_resource_data_inner(resource_id: usize) -> Option<ResourceData> {
     inc_ref(resource_id);
     match &res.data {
         ResourceData::Null => Some(ResourceData::Null),
-        ResourceData::Mem { phys_addr, size } =>
-            Some(ResourceData::Mem { phys_addr: *phys_addr, size: *size }),
-        ResourceData::EP { ep_id } =>
-            Some(ResourceData::EP { ep_id: *ep_id }),
-        ResourceData::Proc { pid } =>
-            Some(ResourceData::Proc { pid: *pid }),
+        ResourceData::Mem { phys_addr, size } => Some(ResourceData::Mem {
+            phys_addr: *phys_addr,
+            size: *size,
+        }),
+        ResourceData::EP { ep_id } => Some(ResourceData::EP { ep_id: *ep_id }),
+        ResourceData::Proc { pid } => Some(ResourceData::Proc { pid: *pid }),
         ResourceData::CNode { slots } => {
             let new_slots = slots.lock().clone();
-            Some(ResourceData::CNode { slots: Mutex::new(new_slots) })
+            Some(ResourceData::CNode {
+                slots: Mutex::new(new_slots),
+            })
         }
     }
 }
 
-pub fn copy_cap(src_cnode: usize, src_idx: usize, dst_cnode: usize, dst_idx: usize) -> Result<(), &'static str> {
+pub fn copy_cap(
+    src_cnode: usize,
+    src_idx: usize,
+    dst_cnode: usize,
+    dst_idx: usize,
+) -> Result<(), &'static str> {
     let resources = RESOURCES.lock();
 
     let src_slot = {
-        let src_node = resources.get(src_cnode).ok_or("src cnode not found")?.as_ref().ok_or("src cnode freed")?;
+        let src_node = resources
+            .get(src_cnode)
+            .ok_or("src cnode not found")?
+            .as_ref()
+            .ok_or("src cnode freed")?;
         if let ResourceData::CNode { ref slots } = &src_node.data {
             slots.lock().get(src_idx).cloned().unwrap_or(Slot::null())
-        } else { return Err("src not a cnode"); }
+        } else {
+            return Err("src not a cnode");
+        }
     };
 
-    if src_slot.cap_type == CapType::Null { return Err("src slot null"); }
+    if src_slot.cap_type == CapType::Null {
+        return Err("src slot null");
+    }
 
     inc_ref(src_slot.resource_id);
 
-    let dst_node = resources.get(dst_cnode).ok_or("dst cnode not found")?.as_ref().ok_or("dst cnode freed")?;
+    let dst_node = resources
+        .get(dst_cnode)
+        .ok_or("dst cnode not found")?
+        .as_ref()
+        .ok_or("dst cnode freed")?;
     if let ResourceData::CNode { ref slots } = &dst_node.data {
         let mut slots = slots.lock();
-        while slots.len() <= dst_idx { slots.push(Slot::null()); }
+        while slots.len() <= dst_idx {
+            slots.push(Slot::null());
+        }
         slots[dst_idx] = src_slot;
     }
 
     Ok(())
 }
 
-pub fn move_cap(src_cnode: usize, src_idx: usize, dst_cnode: usize, dst_idx: usize) -> Result<(), &'static str> {
+pub fn move_cap(
+    src_cnode: usize,
+    src_idx: usize,
+    dst_cnode: usize,
+    dst_idx: usize,
+) -> Result<(), &'static str> {
     copy_cap(src_cnode, src_idx, dst_cnode, dst_idx)?;
 
     let resources = RESOURCES.lock();
@@ -150,7 +191,11 @@ pub fn revoke(resource_id: usize) {
 
 pub fn delete_cap(cnode_id: usize, slot_idx: usize) -> Result<(), &'static str> {
     let resources = RESOURCES.lock();
-    let cnode = resources.get(cnode_id).ok_or("cnode not found")?.as_ref().ok_or("cnode freed")?;
+    let cnode = resources
+        .get(cnode_id)
+        .ok_or("cnode not found")?
+        .as_ref()
+        .ok_or("cnode freed")?;
     if let ResourceData::CNode { ref slots } = &cnode.data {
         let mut slots = slots.lock();
         if slot_idx < slots.len() {
@@ -160,6 +205,10 @@ pub fn delete_cap(cnode_id: usize, slot_idx: usize) -> Result<(), &'static str> 
             drop(resources);
             dec_ref(rid);
             Ok(())
-        } else { Err("slot out of range") }
-    } else { Err("not a cnode") }
+        } else {
+            Err("slot out of range")
+        }
+    } else {
+        Err("not a cnode")
+    }
 }

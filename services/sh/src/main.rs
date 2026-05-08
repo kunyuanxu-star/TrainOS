@@ -19,7 +19,11 @@ extern "C" fn _start() -> ! {
         let c = tros::getchar();
         if c == usize::MAX || c == 0 {
             // No input, yield a bit
-            for _ in 0..1000 { unsafe { core::arch::asm!("nop"); } }
+            for _ in 0..1000 {
+                unsafe {
+                    core::arch::asm!("nop");
+                }
+            }
             continue;
         }
 
@@ -65,7 +69,9 @@ fn process_command(cmd: &[u8]) {
                 let reply_ep = tros::ep_create();
                 let mut buf = [0u8; 64];
                 buf[0] = len as u8;
-                for i in 0..len { buf[1 + i] = content[i]; }
+                for i in 0..len {
+                    buf[1 + i] = content[i];
+                }
                 buf[63] = reply_ep as u8;
                 tros::send(2, 4, &buf[..1 + len + 1]);
                 tros::print("  appended\r\n");
@@ -83,7 +89,9 @@ fn process_command(cmd: &[u8]) {
                 let reply_ep = tros::ep_create();
                 let mut buf = [0u8; 64];
                 buf[0] = len as u8;
-                for i in 0..len { buf[1 + i] = content[i]; }
+                for i in 0..len {
+                    buf[1 + i] = content[i];
+                }
                 buf[63] = reply_ep as u8;
                 tros::send(2, 3, &buf[..1 + len + 1]);
                 tros::print("  written\r\n");
@@ -113,7 +121,9 @@ fn process_command(cmd: &[u8]) {
     } else if cmd.starts_with(b"echo ") {
         let msg = &cmd[5..];
         tros::putchar(b' ');
-        for &b in msg { tros::putchar(b); }
+        for &b in msg {
+            tros::putchar(b);
+        }
         tros::print("\r\n");
     } else if cmd.starts_with(b"write ") {
         // write <text> to FS
@@ -122,7 +132,9 @@ fn process_command(cmd: &[u8]) {
         if len > 0 && len <= 62 {
             let mut buf = [0u8; 64];
             buf[0] = len as u8;
-            for i in 0..len { buf[1 + i] = text[i]; }
+            for i in 0..len {
+                buf[1 + i] = text[i];
+            }
 
             // Create reply EP
             let reply_ep = tros::ep_create();
@@ -143,7 +155,9 @@ fn process_command(cmd: &[u8]) {
 
         let (_sender, _op) = tros::recv(reply_ep, &mut rbuf);
         tros::print("  data: ");
-        for i in 0..11 { tros::putchar(rbuf[i]); }
+        for i in 0..11 {
+            tros::putchar(rbuf[i]);
+        }
         tros::print("\r\n");
     } else if cmd == b"ls" {
         tros::print("  init  ping  fs  sh  drv  net  echo  proc  reg\r\n");
@@ -154,7 +168,9 @@ fn process_command(cmd: &[u8]) {
     } else if cmd.starts_with(b"say ") {
         let msg = &cmd[4..];
         tros::print("  ");
-        for &b in msg { tros::putchar(b); }
+        for &b in msg {
+            tros::putchar(b);
+        }
         tros::print("\r\n");
     } else if cmd == b"ver" {
         tros::print("  TrainOS v5.0\r\n");
@@ -166,12 +182,18 @@ fn process_command(cmd: &[u8]) {
         tros::print("  pid=init (init)\r\n");
     } else {
         tros::print("  unknown: ");
-        for &b in cmd { tros::putchar(b); }
+        for &b in cmd {
+            tros::putchar(b);
+        }
         tros::print("\r\n");
     }
 }
 
 #[panic_handler]
 fn panic(_info: &PanicInfo) -> ! {
-    loop { unsafe { core::arch::asm!("wfi"); } }
+    loop {
+        unsafe {
+            core::arch::asm!("wfi");
+        }
+    }
 }

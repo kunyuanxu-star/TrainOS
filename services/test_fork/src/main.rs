@@ -19,9 +19,13 @@ extern "C" fn _start() -> ! {
             i -= 1;
             buf[i] = b'0' + (n - (n / 10) * 10) as u8;
             n = n / 10;
-            if n == 0 { break; }
+            if n == 0 {
+                break;
+            }
         }
-        for j in i..10 { tros::putchar(buf[j]); }
+        for j in i..10 {
+            tros::putchar(buf[j]);
+        }
         tros::print("\r\n");
     } else {
         tros::print("[FORK] failed!\r\n");
@@ -33,5 +37,9 @@ extern "C" fn _start() -> ! {
 
 #[panic_handler]
 fn panic(_info: &PanicInfo) -> ! {
-    loop { unsafe { core::arch::asm!("wfi"); } }
+    loop {
+        unsafe {
+            core::arch::asm!("wfi");
+        }
+    }
 }

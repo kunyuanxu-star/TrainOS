@@ -83,11 +83,7 @@ extern "C" fn _start() -> ! {
 fn print_hex2(b: u8) {
     for shift in [4u8, 0u8].iter() {
         let n = (b >> shift) & 0xF;
-        let c = if n < 10 {
-            b'0' + n
-        } else {
-            b'a' + (n - 10)
-        };
+        let c = if n < 10 { b'0' + n } else { b'a' + (n - 10) };
         tros::putchar(c);
     }
 }

@@ -31,7 +31,11 @@ static ALLOCATOR: BuddyAllocator = BuddyAllocator {
 unsafe fn node_next(page: usize, base: usize) -> Option<usize> {
     let ptr = (base + page * PAGE_SIZE) as *const usize;
     let val = ptr.read_volatile();
-    if val == 0 { None } else { Some(val) }
+    if val == 0 {
+        None
+    } else {
+        Some(val)
+    }
 }
 
 unsafe fn set_node_next(page: usize, next: Option<usize>, base: usize) {
@@ -110,7 +114,7 @@ impl BuddyInner {
             } else {
                 self.free_lists[order] = buddy_next;
             }
-            page = page & !(1 << order);
+            page &= !(1 << order);
             order += 1;
         }
         self.push_free(page, order);
@@ -173,7 +177,9 @@ pub fn init(base: usize, end: usize) {
     loop {
         let block_pages = 1 << order;
         if remaining >= block_pages {
-            unsafe { inner.push_free(offset, order); }
+            unsafe {
+                inner.push_free(offset, order);
+            }
             offset += block_pages;
             remaining -= block_pages;
         } else if order > 0 {
@@ -244,7 +250,9 @@ mod tests {
 
     #[test]
     fn test_alloc_multiple_pages() {
-        unsafe { test_init(); }
+        unsafe {
+            test_init();
+        }
         let p1 = alloc_page().unwrap();
         let p2 = alloc_page().unwrap();
         assert_ne!(p1, p2);
@@ -256,7 +264,9 @@ mod tests {
 
     #[test]
     fn test_alloc_order_2() {
-        unsafe { test_init(); }
+        unsafe {
+            test_init();
+        }
         let block = alloc_pages(2).expect("should allocate 4 pages");
         assert_eq!(block % (PAGE_SIZE * 4), 0);
         free_page(block, 2);
@@ -265,7 +275,9 @@ mod tests {
 
     #[test]
     fn test_exhaust_then_free() {
-        unsafe { test_init(); }
+        unsafe {
+            test_init();
+        }
         let total = total_pages();
         // total pages for 1MB test memory = 256, use a fixed-size array
         let mut pages = [0usize; 256];
@@ -284,7 +296,9 @@ mod tests {
 
     #[test]
     fn test_merge_after_free() {
-        unsafe { test_init(); }
+        unsafe {
+            test_init();
+        }
         let p1 = alloc_page().unwrap();
         let p2 = alloc_page().unwrap();
         free_page(p1, 0);

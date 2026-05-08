@@ -1,7 +1,7 @@
 use core::alloc::{GlobalAlloc, Layout};
 
-/// Minimal kernel heap using a bump allocator with a fixed region.
-/// The region starts at _kernel_end and extends for KERNEL_HEAP_SIZE bytes.
+// Minimal kernel heap using a bump allocator with a fixed region.
+// The region starts at _kernel_end and extends for KERNEL_HEAP_SIZE bytes.
 
 use spin::Mutex;
 
@@ -13,7 +13,11 @@ struct BumpAllocator {
 
 impl BumpAllocator {
     const fn new() -> Self {
-        BumpAllocator { next: 0, end: 0, allocations: 0 }
+        BumpAllocator {
+            next: 0,
+            end: 0,
+            allocations: 0,
+        }
     }
 }
 
@@ -47,4 +51,3 @@ pub fn init_range(start: usize, end: usize) {
     bump.next = start;
     bump.end = end;
 }
-

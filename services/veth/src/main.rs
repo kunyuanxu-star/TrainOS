@@ -29,9 +29,12 @@ extern "C" fn _start() -> ! {
     loop {
         let (_sender, opcode) = tros::recv(ep, &mut buf);
         match opcode {
-            0 => { // ARP_QUERY(ip: u32 LE)
-                let ip = (buf[0] as u32) | ((buf[1] as u32) << 8)
-                    | ((buf[2] as u32) << 16) | ((buf[3] as u32) << 24);
+            0 => {
+                // ARP_QUERY(ip: u32 LE)
+                let ip = (buf[0] as u32)
+                    | ((buf[1] as u32) << 8)
+                    | ((buf[2] as u32) << 16)
+                    | ((buf[3] as u32) << 24);
                 tros::print("VETH: ARP who-has ");
                 print_ip(ip);
                 tros::print("\r\n");
@@ -55,9 +58,12 @@ extern "C" fn _start() -> ! {
                     tros::print("VETH: ARP not found\r\n");
                 }
             }
-            1 => { // UDP_SEND(dst_ip, dst_port, data...)
-                let dst_ip = (buf[0] as u32) | ((buf[1] as u32) << 8)
-                    | ((buf[2] as u32) << 16) | ((buf[3] as u32) << 24);
+            1 => {
+                // UDP_SEND(dst_ip, dst_port, data...)
+                let dst_ip = (buf[0] as u32)
+                    | ((buf[1] as u32) << 8)
+                    | ((buf[2] as u32) << 16)
+                    | ((buf[3] as u32) << 24);
                 let dst_port = ((buf[4] as u16) << 8) | (buf[5] as u16);
                 tros::print("VETH: UDP to ");
                 print_ip(dst_ip);
@@ -105,7 +111,9 @@ fn print_octet(n: usize) {
         i -= 1;
         buf[i] = b'0' + (m - (m / 10) * 10) as u8;
         m = m / 10;
-        if m == 0 { break; }
+        if m == 0 {
+            break;
+        }
     }
     for j in i..4 {
         tros::putchar(buf[j]);
@@ -114,22 +122,36 @@ fn print_octet(n: usize) {
 
 fn print_small(n: usize) {
     let mut m = n;
-    if m == 0 { tros::putchar(b'0'); return; }
+    if m == 0 {
+        tros::putchar(b'0');
+        return;
+    }
     let mut buf = [0u8; 10];
     let mut i = 10;
     loop {
-        i -= 1; buf[i] = b'0' + (m - (m / 10) * 10) as u8;
-        m = m / 10; if m == 0 { break; }
+        i -= 1;
+        buf[i] = b'0' + (m - (m / 10) * 10) as u8;
+        m = m / 10;
+        if m == 0 {
+            break;
+        }
     }
-    for j in i..10 { tros::putchar(buf[j]); }
+    for j in i..10 {
+        tros::putchar(buf[j]);
+    }
 }
 
 fn print_mac(mac: &[u8; 6]) {
-    print_hex2(mac[0]); tros::putchar(b':');
-    print_hex2(mac[1]); tros::putchar(b':');
-    print_hex2(mac[2]); tros::putchar(b':');
-    print_hex2(mac[3]); tros::putchar(b':');
-    print_hex2(mac[4]); tros::putchar(b':');
+    print_hex2(mac[0]);
+    tros::putchar(b':');
+    print_hex2(mac[1]);
+    tros::putchar(b':');
+    print_hex2(mac[2]);
+    tros::putchar(b':');
+    print_hex2(mac[3]);
+    tros::putchar(b':');
+    print_hex2(mac[4]);
+    tros::putchar(b':');
     print_hex2(mac[5]);
 }
 
@@ -142,5 +164,9 @@ fn print_hex2(b: u8) {
 
 #[panic_handler]
 fn panic(_info: &PanicInfo) -> ! {
-    loop { unsafe { core::arch::asm!("wfi"); } }
+    loop {
+        unsafe {
+            core::arch::asm!("wfi");
+        }
+    }
 }

@@ -94,10 +94,13 @@ core::arch::global_asm!(
     "    ld t5, 28*8(sp)",
     "    ld t6, 29*8(sp)",
     "    addi sp, sp, 280",
-    "    mv sp, t0",              // sp = user_sp
+    "    mv sp, t0", // sp = user_sp
     "    sret",
 );
 
 extern "C" {
-    pub fn context_switch(old: *mut super::thread::TaskContext, new: *const super::thread::TaskContext);
+    pub fn context_switch(
+        old: *mut super::thread::TaskContext,
+        new: *const super::thread::TaskContext,
+    );
 }

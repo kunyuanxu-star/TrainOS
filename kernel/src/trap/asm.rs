@@ -8,12 +8,12 @@ core::arch::global_asm!(
     // If sp == 0, we were in kernel mode (sscratch was 0)
     "    bnez sp, 1f",
     // Kernel-mode trap: sscratch holds old kernel_sp, sp=0
-    "    csrrw sp, sscratch, sp",  // sp=kernel_sp, sscratch=0
+    "    csrrw sp, sscratch, sp", // sp=kernel_sp, sscratch=0
     "    j 2f",
     // User-mode trap: sp=kernel_sp, sscratch=user_sp
     "1:",
-    "    csrr t0, sscratch",       // t0 = user_sp
-    "    csrw sscratch, zero",     // mark in-kernel
+    "    csrr t0, sscratch",   // t0 = user_sp
+    "    csrw sscratch, zero", // mark in-kernel
     "2:",
     // Allocate trap frame on kernel stack: 35 * 8 = 280 bytes
     "    addi sp, sp, -280",
@@ -21,7 +21,7 @@ core::arch::global_asm!(
     "    sd ra, 0*8(sp)",
     "    sd gp, 1*8(sp)",
     "    sd tp, 2*8(sp)",
-    "    sd t0, 3*8(sp)",   // user_sp (or junk for kernel trap)
+    "    sd t0, 3*8(sp)", // user_sp (or junk for kernel trap)
     "    sd t1, 4*8(sp)",
     "    sd t2, 5*8(sp)",
     "    sd s0, 6*8(sp)",
@@ -63,8 +63,8 @@ core::arch::global_asm!(
     "    mv a0, sp",
     "    call handle_trap",
     // Restore path
-    "    addi t3, sp, 280",       // t3 = original kernel_sp
-    "    csrw sscratch, t3",      // sscratch = kernel_sp for next trap
+    "    addi t3, sp, 280",  // t3 = original kernel_sp
+    "    csrw sscratch, t3", // sscratch = kernel_sp for next trap
     // Load user_sp
     "    ld t0, 33*8(sp)",
     // Restore sepc
@@ -107,7 +107,7 @@ core::arch::global_asm!(
     "    addi sp, sp, 280",
     // Restore user_sp for user-mode return
     "    bnez t0, 5f",
-    "    sret",                    // kernel return
-    "5:  mv sp, t0",              // user return: sp = user_sp
+    "    sret",      // kernel return
+    "5:  mv sp, t0", // user return: sp = user_sp
     "    sret",
 );

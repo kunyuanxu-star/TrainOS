@@ -143,6 +143,12 @@ TrainOS/
 
 Full reference: [docs/syscalls.md](docs/syscalls.md)
 
+## Documentation
+- [Architecture Guide](docs/architecture.md)
+- [Service Development Tutorial](docs/service-dev.md)  
+- [System Call Reference](docs/syscalls.md)
+- [Design Specifications](docs/specs/)
+
 ## Demo Output
 
 ```

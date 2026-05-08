@@ -1,0 +1,10 @@
+[package]
+name = "pci"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "pci"
+
+[dependencies]
+tros = { path = "../../lib/tros" }

@@ -673,6 +673,32 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
         None => console::puts("  WARNING: test_tfs spawn failed\r\n"),
     }
 
+    // Spawn the TFS journal demo (V7.0C write-ahead log, priority 62)
+    // Priority 62 matches EDIT/TEST_EDIT/TEST_CLIB so it runs before
+    // those services enter wfi loops and hog the scheduler at that level.
+    static TFS_JRNL_ELF: &[u8] = include_bytes!("tfs_jrnl.elf");
+    match proc::spawn(TFS_JRNL_ELF, 62) {
+        Some(pid) => {
+            console::puts("  TFS_JRNL process spawned (pid=");
+            unsafe {
+                let mut n = pid;
+                let mut buf = [0u8; 10];
+                let mut i = 10;
+                loop {
+                    i -= 1;
+                    buf[i] = b'0' + (n % 10) as u8;
+                    n /= 10;
+                    if n == 0 { break; }
+                }
+                for j in i..10 {
+                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") buf[j] as usize);
+                }
+            }
+            console::puts(")\r\n");
+        }
+        None => console::puts("  WARNING: tfs_jrnl spawn failed\r\n"),
+    }
+
     // Spawn the C/ASM test program (V3.0 Route B — Standard C program support demo)
     static TEST_C_ELF: &[u8] = include_bytes!("test_c.elf");
     match proc::spawn(TEST_C_ELF, 50) {
@@ -791,6 +817,105 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
             console::puts(")\r\n");
         }
         None => console::puts("  WARNING: TEST_PERF spawn failed\r\n"),
+    }
+
+    // Spawn the BB service (V7.0B BusyBox-like multi-command utility, priority 63)
+    // High priority to run before JRNL(62) which crashes with an unhandled trap.
+    // Demonstrates the BusyBox concept: single binary dispatching multiple commands.
+    static BB_ELF: &[u8] = include_bytes!("bb.elf");
+    match proc::spawn(BB_ELF, 63) {
+        Some(pid) => {
+            console::puts("  BB process spawned (pid=");
+            unsafe {
+                let mut n = pid;
+                let mut buf = [0u8; 10];
+                let mut i = 10;
+                loop {
+                    i -= 1;
+                    buf[i] = b'0' + (n % 10) as u8;
+                    n /= 10;
+                    if n == 0 { break; }
+                }
+                for j in i..10 {
+                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") buf[j] as usize);
+                }
+            }
+            console::puts(")\r\n");
+        }
+        None => console::puts("  WARNING: BB spawn failed\r\n"),
+    }
+
+    // Spawn the TEST_ARP service (V7.0A ARP query test for virtual Ethernet, priority 28)
+    static TEST_ARP_ELF: &[u8] = include_bytes!("test_arp.elf");
+    match proc::spawn(TEST_ARP_ELF, 28) {
+        Some(pid) => {
+            console::puts("  TEST_ARP process spawned (pid=");
+            unsafe {
+                let mut n = pid;
+                let mut buf = [0u8; 10];
+                let mut i = 10;
+                loop {
+                    i -= 1;
+                    buf[i] = b'0' + (n % 10) as u8;
+                    n /= 10;
+                    if n == 0 { break; }
+                }
+                for j in i..10 {
+                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") buf[j] as usize);
+                }
+            }
+            console::puts(")\r\n");
+        }
+        None => console::puts("  WARNING: TEST_ARP spawn failed\r\n"),
+    }
+
+    // Spawn the PCI service (V7.0D PCI bus enumeration, priority 59)
+    // Scans PCI configuration space via ECAM to discover devices.
+    static PCI_ELF: &[u8] = include_bytes!("pci.elf");
+    match proc::spawn(PCI_ELF, 59) {
+        Some(pid) => {
+            console::puts("  PCI process spawned (pid=");
+            unsafe {
+                let mut n = pid;
+                let mut buf = [0u8; 10];
+                let mut i = 10;
+                loop {
+                    i -= 1;
+                    buf[i] = b'0' + (n % 10) as u8;
+                    n /= 10;
+                    if n == 0 { break; }
+                }
+                for j in i..10 {
+                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") buf[j] as usize);
+                }
+            }
+            console::puts(")\r\n");
+        }
+        None => console::puts("  WARNING: PCI spawn failed\r\n"),
+    }
+
+    // Spawn the VETH virtual ethernet service (V7.0A virtual Ethernet over IPC, priority 58)
+    static VETH_ELF: &[u8] = include_bytes!("veth.elf");
+    match proc::spawn(VETH_ELF, 58) {
+        Some(pid) => {
+            console::puts("  VETH process spawned (pid=");
+            unsafe {
+                let mut n = pid;
+                let mut buf = [0u8; 10];
+                let mut i = 10;
+                loop {
+                    i -= 1;
+                    buf[i] = b'0' + (n % 10) as u8;
+                    n /= 10;
+                    if n == 0 { break; }
+                }
+                for j in i..10 {
+                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") buf[j] as usize);
+                }
+            }
+            console::puts(")\r\n");
+        }
+        None => console::puts("  WARNING: VETH spawn failed\r\n"),
     }
 
     // Signal secondary HARTs that they can proceed

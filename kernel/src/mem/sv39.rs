@@ -352,4 +352,15 @@ pub unsafe fn setup_kernel_mapping() {
     mmio_pte.set_accessed(true);
     mmio_pte.set_dirty(true);
     l1_mmio[mmio_l1_idx] = mmio_pte;
+
+    // Identity-map the PCI ECAM region at [0x30000000, 0x30200000) for
+    // V7.0D PCI bus enumeration via kernel proxy syscalls.
+    // 2MB superpage, L1 index = vpn1(0x30000000) = 384.
+    let ecam_l1_idx = vpn1(0x30000000);
+    let mut ecam_pte = PTE::empty();
+    ecam_pte.set_ppn(0x30000000 >> 12);
+    ecam_pte.set_flags(true, true, false, false); // R+W, kernel-only
+    ecam_pte.set_accessed(true);
+    ecam_pte.set_dirty(true);
+    l1_mmio[ecam_l1_idx] = ecam_pte;
 }

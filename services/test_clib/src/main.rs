@@ -40,7 +40,7 @@ extern "C" fn _start() -> ! {
         tros::print("CLIB: PASS\r\n");
     }
 
-    loop { unsafe { core::arch::asm!("wfi"); } }
+    tros::exit(0);
 }
 
 #[panic_handler]

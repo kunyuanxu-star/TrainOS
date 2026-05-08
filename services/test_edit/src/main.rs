@@ -18,7 +18,7 @@ extern "C" fn _start() -> ! {
     tros::print("TEST_EDIT: editor test done\r\n");
     tros::print("TEST_EDIT: PASS\r\n");
 
-    loop { unsafe { core::arch::asm!("wfi"); } }
+    tros::exit(0);
 }
 
 #[panic_handler]

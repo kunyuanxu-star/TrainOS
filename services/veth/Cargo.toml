@@ -1,0 +1,10 @@
+[package]
+name = "veth"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "veth"
+
+[dependencies]
+tros = { path = "../../lib/tros" }

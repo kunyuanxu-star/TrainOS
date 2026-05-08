@@ -318,6 +318,20 @@ pub fn kill(pid: u32) -> usize {
     result
 }
 
+/// Query memory allocation info (syscall 43).
+/// Returns the number of allocated pages.
+pub fn meminfo() -> usize {
+    let result: usize;
+    unsafe {
+        core::arch::asm!(
+            "ecall",
+            in("a7") 43usize,
+            lateout("a0") result,
+        );
+    }
+    result
+}
+
 /// Delete a capability from the calling process's CNode (syscall 33).
 /// slot: index of the capability slot to delete.
 /// Returns 0 on success.
@@ -350,4 +364,20 @@ pub fn cap_stats() -> (usize, usize, usize, usize) {
     let ep = (result >> 32) & 0xFFFF;
     let mem = (result >> 48) & 0xFFFF;
     (total, used, ep, mem)
+}
+
+/// Returns performance counters: (send_count, recv_count, ctx_switch_count) (syscall 44).
+pub fn perf_stats() -> (usize, usize, usize) {
+    let result: usize;
+    unsafe {
+        core::arch::asm!(
+            "ecall",
+            in("a7") 44usize,
+            lateout("a0") result,
+        );
+    }
+    let sends = result & 0xFFFFF;
+    let recvs = (result >> 20) & 0xFFFFF;
+    let ctx = (result >> 40) & 0xFFFFFF;
+    (sends, recvs, ctx)
 }

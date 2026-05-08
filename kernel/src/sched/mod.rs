@@ -2,6 +2,9 @@ use crate::proc::thread::{Thread, ThreadState};
 use crate::proc::switch::context_switch;
 use crate::sync::SpinLock;
 use alloc::vec::Vec;
+use core::sync::atomic::{AtomicU64, Ordering};
+
+pub static CTX_SWITCH_COUNT: AtomicU64 = AtomicU64::new(0);
 
 const NUM_PRIORITIES: usize = 64;
 
@@ -122,8 +125,10 @@ pub fn schedule() {
         match (current_ptr, next) {
             (Some(old), Some(new)) => {
                 context_switch(&mut (*old).task_ctx, &(*new).task_ctx);
+                CTX_SWITCH_COUNT.fetch_add(1, Ordering::Relaxed);
             }
             (None, Some(new)) => {
+                CTX_SWITCH_COUNT.fetch_add(1, Ordering::Relaxed);
                 let ra = (*new).task_ctx.ra;
                 let sp = (*new).task_ctx.sp;
                 core::arch::asm!(

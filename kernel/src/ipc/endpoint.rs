@@ -1,6 +1,10 @@
 use super::message::Message;
 use crate::proc::thread::Thread;
 use alloc::vec::Vec;
+use core::sync::atomic::{AtomicU64, Ordering};
+
+pub static SEND_COUNT: AtomicU64 = AtomicU64::new(0);
+pub static RECV_COUNT: AtomicU64 = AtomicU64::new(0);
 
 /// Simple FIFO queue for pending messages, backed by Vec with head index.
 /// Avoids need for alloc::collections::VecDeque which requires nightly features.
@@ -68,6 +72,7 @@ pub fn send(ep_id: usize, sender_pid: u32, msg: Message) -> Result<(), &'static 
 
     // Always queue the message first, so the receiver can find it when it wakes
     ep.pending_senders.push_back(sender_pid, msg);
+    SEND_COUNT.fetch_add(1, Ordering::Relaxed);
 
     if let Some(receiver) = ep.waiting_receiver.take() {
         unsafe {
@@ -105,6 +110,7 @@ pub fn recv(ep_id: usize, _receiver_pid: u32) -> Result<Message, &'static str> {
         unsafe {
             (*current).effective_priority = (*current).base_priority;
         }
+        RECV_COUNT.fetch_add(1, Ordering::Relaxed);
         Ok(msg)
     } else {
         // Block current thread

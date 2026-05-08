@@ -41,6 +41,9 @@ mod ipc;
 #[cfg(not(test))]
 mod syscall;
 
+#[cfg(not(test))]
+mod invariant;
+
 #[cfg(test)]
 mod mem;
 
@@ -281,6 +284,31 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
         None => console::puts("  WARNING: TEST_NET spawn failed\r\n"),
     }
 
+    // Spawn the REG service (V5.0A service registry, priority 57)
+    // Runs after test_cap(63), proc(60); creates EP 3 (EP 1=test_cap, EP 2=proc)
+    static REG_ELF: &[u8] = include_bytes!("reg.elf");
+    match proc::spawn(REG_ELF, 57) {
+        Some(pid) => {
+            console::puts("  REG process spawned (pid=");
+            unsafe {
+                let mut n = pid;
+                let mut buf = [0u8; 10];
+                let mut i = 10;
+                loop {
+                    i -= 1;
+                    buf[i] = b'0' + (n % 10) as u8;
+                    n /= 10;
+                    if n == 0 { break; }
+                }
+                for j in i..10 {
+                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") buf[j] as usize);
+                }
+            }
+            console::puts(")\r\n");
+        }
+        None => console::puts("  WARNING: REG spawn failed\r\n"),
+    }
+
     // Spawn the test_fs service
     static TEST_FS_ELF: &[u8] = include_bytes!("test_fs.elf");
     match proc::spawn(TEST_FS_ELF, 24) {
@@ -354,6 +382,54 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
         None => console::puts("  WARNING: sh spawn failed\r\n"),
     }
 
+    // Spawn the CAT service (V5.0B user-space utility, priority 25)
+    static CAT_ELF: &[u8] = include_bytes!("cat.elf");
+    match proc::spawn(CAT_ELF, 25) {
+        Some(pid) => {
+            console::puts("  CAT process spawned (pid=");
+            unsafe {
+                let mut n = pid;
+                let mut buf = [0u8; 10];
+                let mut i = 10;
+                loop {
+                    i -= 1;
+                    buf[i] = b'0' + (n % 10) as u8;
+                    n /= 10;
+                    if n == 0 { break; }
+                }
+                for j in i..10 {
+                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") buf[j] as usize);
+                }
+            }
+            console::puts(")\r\n");
+        }
+        None => console::puts("  WARNING: cat spawn failed\r\n"),
+    }
+
+    // Spawn the test_inv service (V5.0C kernel invariant test, priority 26)
+    static TEST_INV_ELF: &[u8] = include_bytes!("test_inv.elf");
+    match proc::spawn(TEST_INV_ELF, 26) {
+        Some(pid) => {
+            console::puts("  TEST_INV process spawned (pid=");
+            unsafe {
+                let mut n = pid;
+                let mut buf = [0u8; 10];
+                let mut i = 10;
+                loop {
+                    i -= 1;
+                    buf[i] = b'0' + (n % 10) as u8;
+                    n /= 10;
+                    if n == 0 { break; }
+                }
+                for j in i..10 {
+                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") buf[j] as usize);
+                }
+            }
+            console::puts(")\r\n");
+        }
+        None => console::puts("  WARNING: test_inv spawn failed\r\n"),
+    }
+
     // Spawn the test_fork service (V2.0 demo)
     static TEST_FORK_ELF: &[u8] = include_bytes!("test_fork.elf");
     match proc::spawn(TEST_FORK_ELF, 30) {
@@ -376,6 +452,31 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
             console::puts(")\r\n");
         }
         None => console::puts("  WARNING: test_fork spawn failed\r\n"),
+    }
+
+    // Spawn the test_sdp service (V5.0A service discovery test, priority 56)
+    // Runs after REG(57); sends to REG's EP for service lookup
+    static TEST_SDP_ELF: &[u8] = include_bytes!("test_sdp.elf");
+    match proc::spawn(TEST_SDP_ELF, 56) {
+        Some(pid) => {
+            console::puts("  TEST_SDP process spawned (pid=");
+            unsafe {
+                let mut n = pid;
+                let mut buf = [0u8; 10];
+                let mut i = 10;
+                loop {
+                    i -= 1;
+                    buf[i] = b'0' + (n % 10) as u8;
+                    n /= 10;
+                    if n == 0 { break; }
+                }
+                for j in i..10 {
+                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") buf[j] as usize);
+                }
+            }
+            console::puts(")\r\n");
+        }
+        None => console::puts("  WARNING: test_sdp spawn failed\r\n"),
     }
 
     // Spawn the UART user-space driver (lowest priority, runs last)
@@ -569,6 +670,30 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
             console::puts(")\r\n");
         }
         None => console::puts("  WARNING: TEST_CAP spawn failed\r\n"),
+    }
+
+    // Spawn the TEST_PERF service (V5.0D performance benchmark, priority 27)
+    static TEST_PERF_ELF: &[u8] = include_bytes!("test_perf.elf");
+    match proc::spawn(TEST_PERF_ELF, 56) {
+        Some(pid) => {
+            console::puts("  TEST_PERF process spawned (pid=");
+            unsafe {
+                let mut n = pid;
+                let mut buf = [0u8; 10];
+                let mut i = 10;
+                loop {
+                    i -= 1;
+                    buf[i] = b'0' + (n % 10) as u8;
+                    n /= 10;
+                    if n == 0 { break; }
+                }
+                for j in i..10 {
+                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") buf[j] as usize);
+                }
+            }
+            console::puts(")\r\n");
+        }
+        None => console::puts("  WARNING: TEST_PERF spawn failed\r\n"),
     }
 
     // Signal secondary HARTs that they can proceed

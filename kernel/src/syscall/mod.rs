@@ -29,6 +29,8 @@ pub const SYS_BLK_READ:  usize = 40;
 pub const SYS_BLK_WRITE: usize = 45;
 pub const SYS_PROCLIST:  usize = 41;
 pub const SYS_KILL:      usize = 42;
+pub const SYS_MEMINFO:   usize = 43;
+pub const SYS_PERF_STATS: usize = 44;
 // POSIX compatibility syscalls
 pub const SYS_OPEN:      usize = 50;
 pub const SYS_READ:      usize = 51;
@@ -98,6 +100,17 @@ pub fn syscall_dispatch(tf: &mut TrapFrame) {
         SYS_BLK_WRITE => proc::sys_blk_write(arg0, arg1, arg2),
         SYS_PROCLIST => proc::sys_proclist(arg0, arg1),
         SYS_KILL     => proc::sys_kill(arg0 as u32),
+        SYS_MEMINFO  => Ok(crate::mem::buddy::allocated_pages()),
+        SYS_PERF_STATS => {
+            let sends = crate::ipc::endpoint::SEND_COUNT.load(core::sync::atomic::Ordering::Relaxed);
+            let recvs = crate::ipc::endpoint::RECV_COUNT.load(core::sync::atomic::Ordering::Relaxed);
+            let ctx = crate::sched::CTX_SWITCH_COUNT.load(core::sync::atomic::Ordering::Relaxed);
+            // Pack into u64: [ctx:24][recv:20][send:20]
+            let result = (sends & 0xFFFFF)
+                | ((recvs & 0xFFFFF) << 20)
+                | ((ctx & 0xFFFFFF) << 40);
+            Ok(result as usize)
+        }
         _ => Err("unknown syscall"),
     };
 

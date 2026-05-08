@@ -90,6 +90,21 @@ fn process_command(cmd: &[u8]) {
         tros::print("  data: ");
         for i in 0..11 { tros::putchar(rbuf[i]); }
         tros::print("\r\n");
+    } else if cmd == b"ls" {
+        tros::print("  init  ping  fs  sh  drv  net  echo  proc  reg\r\n");
+    } else if cmd == b"cat" {
+        tros::print("  (type 'exec cat' to run cat service)\r\n");
+    } else if cmd == b"exec" {
+        tros::print("  exec not yet implemented\r\n");
+    } else if cmd.starts_with(b"say ") {
+        let msg = &cmd[4..];
+        tros::print("  ");
+        for &b in msg { tros::putchar(b); }
+        tros::print("\r\n");
+    } else if cmd == b"ver" {
+        tros::print("  TrainOS v5.0\r\n");
+    } else if cmd == b"date" {
+        tros::print("  2026-05-07\r\n");
     } else if cmd == b"ps" {
         tros::print("  pid=sh (shell)\r\n");
         tros::print("  pid=fs (filesystem)\r\n");

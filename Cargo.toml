@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["kernel", "services/init", "services/ping", "services/fs", "services/test_fs", "services/sh", "services/uart", "services/test_fork", "services/test_posix", "services/drv", "services/net", "services/netdrv", "services/echo", "services/test_net", "services/proc", "services/test_proc", "services/test_cap", "services/test_tfs", "lib/tros"]
+members = ["kernel", "services/init", "services/ping", "services/fs", "services/test_fs", "services/sh", "services/uart", "services/test_fork", "services/test_posix", "services/drv", "services/net", "services/netdrv", "services/echo", "services/test_net", "services/proc", "services/test_proc", "services/test_cap", "services/test_tfs", "services/cat", "services/test_inv", "services/test_perf", "services/reg", "services/test_sdp", "lib/tros"]
 
 [workspace.package]
 version = "0.1.0"

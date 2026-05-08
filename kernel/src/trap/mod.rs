@@ -137,10 +137,21 @@ fn software_interrupt(_tf: &mut TrapFrame) {
     crate::sched::schedule();
 }
 
+static mut TICK_COUNT: usize = 0;
+
 fn timer_interrupt(_tf: &mut TrapFrame) {
     clint_set_next_timer();
     // Clear pending supervisor timer interrupt (STIP) in sip.
     unsafe { core::arch::asm!("csrc sip, {}", in(reg) 1usize << 5); }
+
+    // Run invariant checks every 100 ticks (~1 second)
+    unsafe {
+        TICK_COUNT += 1;
+        if TICK_COUNT % 100 == 0 {
+            crate::invariant::run_checks();
+        }
+    }
+
     crate::sched::schedule();
 }
 

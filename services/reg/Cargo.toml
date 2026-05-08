@@ -1,0 +1,10 @@
+[package]
+name = "reg"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "reg"
+
+[dependencies]
+tros = { path = "../../lib/tros" }

@@ -200,6 +200,17 @@ pub fn getpid() -> usize {
     result
 }
 
+/// Voluntarily yield the CPU (syscall 6).
+/// The thread stays ready but lets other threads run.
+pub fn yield_cpu() {
+    unsafe {
+        core::arch::asm!(
+            "ecall",
+            in("a7") 6usize,
+        );
+    }
+}
+
 /// Map a physical MMIO region into process address space (syscall 22).
 /// Returns virtual address, or 0 on error.
 pub fn map_mmio(phys: usize, size: usize) -> usize {
@@ -463,6 +474,20 @@ pub fn cap_stats() -> (usize, usize, usize, usize) {
     let ep = (result >> 32) & 0xFFFF;
     let mem = (result >> 48) & 0xFFFF;
     (total, used, ep, mem)
+}
+
+/// Returns system uptime in milliseconds (syscall 46).
+/// Each tick is 10ms, so we multiply ticks by 10.
+pub fn uptime_ms() -> usize {
+    let result: usize;
+    unsafe {
+        core::arch::asm!(
+            "ecall",
+            in("a7") 46usize,
+            lateout("a0") result,
+        );
+    }
+    result * 10  // ticks * 10ms per tick
 }
 
 /// Returns performance counters: (send_count, recv_count, ctx_switch_count) (syscall 44).

@@ -20,7 +20,7 @@ extern "C" fn _start() -> ! {
     for i in 0..32 { if buf[i] == 0 { break; } tros::putchar(buf[i]); }
     tros::print("\r\n");
 
-    loop { unsafe { core::arch::asm!("wfi"); } }
+    tros::exit(0);
 }
 
 #[panic_handler]

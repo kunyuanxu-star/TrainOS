@@ -137,7 +137,7 @@ fn software_interrupt(_tf: &mut TrapFrame) {
     crate::sched::schedule();
 }
 
-static mut TICK_COUNT: usize = 0;
+pub(crate) static mut TICK_COUNT: usize = 0;
 
 fn timer_interrupt(_tf: &mut TrapFrame) {
     clint_set_next_timer();

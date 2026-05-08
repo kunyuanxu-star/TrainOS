@@ -119,7 +119,7 @@ cd TrainOS && cargo build --release -p kernel
 - PMP blocks user-mode MMIO access below 0x80000000 (needs firmware update)
 - VecDeque unavailable (nightly `no_global_oom_handling`): use custom Vec+head queue
 - spin::Mutex not SMP-safe for scheduler: replaced with custom SpinLock
-- test_fork wfi loop starves lower-priority services (pre-existing scheduler quirk)
+- (FIXED V8.0A) WFI starvation: completed services now call `tros::exit(0)` instead of `loop { wfi }`. Added `sys_yield()` syscall (nr=6) and `tros::yield_cpu()` for voluntary yielding.
 
 ## Commit Convention
 Format: `type: description` (conventional commits)

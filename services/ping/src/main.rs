@@ -24,7 +24,7 @@ extern "C" fn _start() -> ! {
     }
 
     // Done
-    loop { unsafe { core::arch::asm!("wfi"); } }
+    tros::exit(0);
 }
 
 #[panic_handler]

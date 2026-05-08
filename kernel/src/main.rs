@@ -455,6 +455,31 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
         None => console::puts("  WARNING: cat spawn failed\r\n"),
     }
 
+    // Spawn the STRESS service (V8.0C multi-core benchmark, priority 31, below FS at 32)
+    // Low priority so it does not prevent FS from processing IPC requests.
+    static STRESS_ELF: &[u8] = include_bytes!("stress.elf");
+    match proc::spawn(STRESS_ELF, 31) {
+        Some(pid) => {
+            console::puts("  STRESS process spawned (pid=");
+            unsafe {
+                let mut n = pid;
+                let mut buf = [0u8; 10];
+                let mut i = 10;
+                loop {
+                    i -= 1;
+                    buf[i] = b'0' + (n % 10) as u8;
+                    n /= 10;
+                    if n == 0 { break; }
+                }
+                for j in i..10 {
+                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") buf[j] as usize);
+                }
+            }
+            console::puts(")\r\n");
+        }
+        None => console::puts("  WARNING: stress spawn failed\r\n"),
+    }
+
     // Spawn the test_inv service (V5.0C kernel invariant test, priority 26)
     static TEST_INV_ELF: &[u8] = include_bytes!("test_inv.elf");
     match proc::spawn(TEST_INV_ELF, 26) {
@@ -699,9 +724,11 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
         None => console::puts("  WARNING: tfs_jrnl spawn failed\r\n"),
     }
 
-    // Spawn the C/ASM test program (V3.0 Route B — Standard C program support demo)
+    // Spawn the C/ASM test program (V3.0 Route B — Standard C program support demo, prio 10)
+    // Low priority since it enters a wfi-timer-reschedule loop that would
+    // starve any service below it. Demo at 55 and FS at 32 must run above it.
     static TEST_C_ELF: &[u8] = include_bytes!("test_c.elf");
-    match proc::spawn(TEST_C_ELF, 50) {
+    match proc::spawn(TEST_C_ELF, 10) {
         Some(pid) => {
             console::puts("  C program spawned (pid=");
             unsafe {
@@ -921,6 +948,31 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
     // Signal secondary HARTs that they can proceed
     BOOT_READY.store(true, Ordering::Release);
     console::puts("  Secondary HARTs released\r\n");
+
+    // Spawn the DEMO service (V8.0B integrated system demo, priority 55)
+    // Exercises all subsystems in sequence.
+    static DEMO_ELF: &[u8] = include_bytes!("demo.elf");
+    match proc::spawn(DEMO_ELF, 55) {
+        Some(pid) => {
+            console::puts("  DEMO process spawned (pid=");
+            unsafe {
+                let mut n = pid;
+                let mut buf = [0u8; 10];
+                let mut i = 10;
+                loop {
+                    i -= 1;
+                    buf[i] = b'0' + (n % 10) as u8;
+                    n /= 10;
+                    if n == 0 { break; }
+                }
+                for j in i..10 {
+                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") buf[j] as usize);
+                }
+            }
+            console::puts(")\r\n");
+        }
+        None => console::puts("  WARNING: DEMO spawn failed\r\n"),
+    }
 
     // Create idle thread and start scheduler
     let idle = Box::new(crate::proc::thread::Thread::new_idle());

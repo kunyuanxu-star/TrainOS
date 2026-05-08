@@ -57,9 +57,7 @@ extern "C" fn _start() -> ! {
     tros::print("TEST_FS: PASS\r\n");
 
     // Done
-    loop {
-        unsafe { core::arch::asm!("wfi"); }
-    }
+    tros::exit(0);
 }
 
 #[panic_handler]

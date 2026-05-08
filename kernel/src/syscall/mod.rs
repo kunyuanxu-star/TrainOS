@@ -10,6 +10,7 @@ pub const SYS_EXIT:      usize = 0;
 pub const SYS_SPAWN:     usize = 3;
 pub const SYS_FORK:      usize = 4;
 pub const SYS_GETPID:    usize = 5;
+pub const SYS_YIELD:     usize = 6;
 pub const SYS_EP_CREATE: usize = 10;
 pub const SYS_SEND:      usize = 11;
 pub const SYS_RECV:      usize = 12;
@@ -31,6 +32,7 @@ pub const SYS_PROCLIST:  usize = 41;
 pub const SYS_KILL:      usize = 42;
 pub const SYS_MEMINFO:   usize = 43;
 pub const SYS_PERF_STATS: usize = 44;
+pub const SYS_UPTIME: usize = 46;
 // POSIX compatibility syscalls
 pub const SYS_OPEN:      usize = 50;
 pub const SYS_READ:      usize = 51;
@@ -90,6 +92,7 @@ pub fn syscall_dispatch(tf: &mut TrapFrame) {
         SYS_FORK => proc::sys_fork(tf.sepc),
         SYS_GETPID => Ok(crate::sched::current_thread()
             .map(|t| unsafe { (*t).owner as usize }).unwrap_or(0)),
+        SYS_YIELD => { crate::sched::schedule(); Ok(0) }
         SYS_OPEN  => posix::sys_open(arg0, arg1, arg2),
         SYS_READ  => posix::sys_read(arg0, arg1, arg2),
         SYS_WRITE => posix::sys_write(arg0, arg1, arg2),
@@ -110,6 +113,10 @@ pub fn syscall_dispatch(tf: &mut TrapFrame) {
                 | ((recvs & 0xFFFFF) << 20)
                 | ((ctx & 0xFFFFFF) << 40);
             Ok(result as usize)
+        }
+        SYS_UPTIME => {
+            let ticks = unsafe { crate::trap::TICK_COUNT };
+            Ok(ticks)
         }
         _ => Err("unknown syscall"),
     };

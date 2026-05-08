@@ -20,7 +20,7 @@ extern "C" fn _start() -> ! {
     tros::print("TEST_ARP: queries sent\r\n");
     tros::print("TEST_ARP: PASS\r\n");
 
-    loop { unsafe { core::arch::asm!("wfi"); } }
+    tros::exit(0);
 }
 
 // VETH at priority 58 gets EP 4 (test_cap->1, edit->2, proc->3, veth->4)

@@ -11,17 +11,9 @@ static mut STORAGE_LEN: usize = 0;
 
 #[no_mangle]
 extern "C" fn _start() -> ! {
-    // Create our IPC endpoint. Since init created EP 1, we get EP 2.
-    let my_ep = tros::ep_create();
-    // Print EP number (avoid % operator due to release-mode codegen quirk)
-    tros::print("FS: ep=");
-    let mut n = my_ep;
-    let tens = b'0' + (n / 10) as u8;
-    tros::putchar(tens);
-    while n >= 10 { n -= 10; }
-    let ones = b'0' + n as u8;
-    tros::putchar(ones);
-    tros::print(" listening\r\n");
+    // Use well-known EP 2 (pre-created by kernel ipc::init()).
+    let my_ep = 2;
+    tros::print("FS: ep=2 listening\r\n");
 
     let mut buf = [0u8; 64];
 

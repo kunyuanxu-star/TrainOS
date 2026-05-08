@@ -31,7 +31,7 @@ extern "C" fn _start() -> ! {
         tros::print("PERF: PASS\r\n");
     }
 
-    loop { unsafe { core::arch::asm!("wfi"); } }
+    tros::exit(0);
 }
 
 fn print_small(n: usize) {

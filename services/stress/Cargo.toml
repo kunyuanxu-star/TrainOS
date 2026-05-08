@@ -1,0 +1,10 @@
+[package]
+name = "stress"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "stress"
+
+[dependencies]
+tros = { path = "../../lib/tros" }

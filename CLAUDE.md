@@ -11,13 +11,19 @@ Uses RustSBI as boot firmware, runs on machina emulator.
 2. Architecture: RISC-V 64-bit (rv64gc), Sv39 virtual memory, MIT license.
 3. Language: Rust nightly (`no_std` kernel + user-space, no heap in services).
 
-## Current Status (2026-05-07) — V3.2
+## Current Status (2026-05-08) — V8.0
 
 ### Completed
 - SMP 2.0: Active IPI on IPC wakeup, per-CPU pick counts
-- 15 user-space services: init, ping, fs, test_fs, sh, test_fork, uart, test_posix, drv, net, echo, test_net, test_c, proc, test_proc
+- 24 user-space services: init, ping, fs, test_fs, sh, test_fork, uart, test_posix, drv, net, echo, test_net, test_c, proc, test_proc, demo, stress, bb, pci, veth, tfs, tfs_jrnl, edit, cat
 - VirtIO block I/O: Full virtqueue management, sector read/write via kernel proxy
 - Proc service: Process listing (pid, prio, state) and kill capability
+- Demo service: System health check (IPC, FS, MEM, CAP, PERF)
+- Block I/O stress/benchmark: stress and bb services for storage testing
+- PCI enumeration: pci service for device discovery
+- Virtual Ethernet: veth service for network device access
+- TFS journaling file system: tfs + tfs_jrnl services for persistent storage
+- Text utilities: edit (editor) and cat (file viewer) services
 - Per-process CNode capability enforcement
 - POSIX open/read/write/close syscalls (IPC→FS translation)
 - COW fork with full page table deep-copy and page fault handler
@@ -76,17 +82,17 @@ cd TrainOS && cargo build --release -p kernel
 | `ipc/message.rs` | Message, CapTransfer, TransferMode |
 | `ipc/endpoint.rs` | Endpoint, send/recv with priority inheritance |
 | `ipc/mod.rs` | Global ENDPOINTS table |
-| `syscall/mod.rs` | Syscall dispatch table (18 syscalls) |
+| `syscall/mod.rs` | Syscall dispatch table (31 syscalls) |
 | `syscall/ipc.rs` | ep_create, send, recv with cap checks |
-| `syscall/proc.rs` | spawn, exit, mmio_map, fork helpers |
-| `syscall/cap.rs` | mint, copy, move, delete with caller CNode |
+| `syscall/proc.rs` | spawn, exit, yield, mmio_map, fork, proclist, kill, blk_read, blk_write |
+| `syscall/cap.rs` | mint, copy, move, delete, cap_stats with caller CNode |
 | `syscall/posix.rs` | open, read, write, close (IPC→FS translation) |
 
 ### User-space
 
 | Directory | Purpose |
 |-----------|---------|
-| `lib/tros/` | User-space syscall library (15+ wrappers) |
+| `lib/tros/` | User-space syscall library (25+ wrappers) |
 | `services/init/` | System init, IPC receiver (EP 1) |
 | `services/ping/` | IPC send demo |
 | `services/fs/` | File system service (EP 2, READ/WRITE ops) |
@@ -98,6 +104,15 @@ cd TrainOS && cargo build --release -p kernel
 | `services/net/` | Network stack (EP 3, port routing) |
 | `services/echo/` | Echo service (port 7) |
 | `services/test_net/` | Network stack test client |
+| `services/demo/` | System demo (IPC, FS, MEM, CAP, PERF checks) |
+| `services/stress/` | Block I/O stress test |
+| `services/bb/` | Block I/O benchmark |
+| `services/pci/` | PCI device enumeration |
+| `services/veth/` | Virtual Ethernet driver |
+| `services/tfs/` | TFS file system service |
+| `services/tfs_jrnl/` | TFS journaling layer |
+| `services/edit/` | Text editor |
+| `services/cat/` | File viewer |
 
 ## Known Issues
 - `%` operator broken on RISC-V release mode: use `n - (n/10)*10` instead

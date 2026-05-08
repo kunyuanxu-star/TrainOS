@@ -24,19 +24,21 @@ All device drivers, filesystems, network stacks, and POSIX compatibility run as 
 3. **Architecture**: RISC-V 64-bit (rv64gc), Sv39 virtual memory.
 4. **License**: MIT.
 
-## Current Status (2026-05-07)
+## Current Status (2026-05-08)
 
-### V3.0 — Full-Featured Microkernel
+### V8.0 — Microkernel with Full Service Ecosystem
 
-- **SMP 2.0**: Active IPI on IPC wakeup, per-CPU pick counts, scheduler stats
-- **13 user-space services**: init, ping, fs, test_fs, sh, test_fork, uart, test_posix, drv, net, echo, test_net, test_c
-- **Capability enforcement**: Per-process CNode with auto-stored EP caps
+- **35+ system calls**: Process, IPC, capability, MMIO, block I/O, POSIX, debug
+- **24 user-space services**: init, ping, fs, test_fs, sh, test_fork, uart, test_posix, drv, net, echo, test_net, test_c, proc, test_proc, demo, stress, bb, pci, veth, tfs, tfs_jrnl, edit, cat
+- **Capability system**: Full CNode with Mint/Copy/Move/Revoke/Delete
 - **POSIX compatibility**: open/read/write/close translated to IPC→FS service
 - **COW fork + page fault handler**: Full deep-copy with COW breaking
 - **IPC priority inheritance**: Receiver inherits sender priority
 - **Network stack**: Port-based datagram routing (UDP-like, NET: PASS)
-- **VirtIO MMIO proxy**: Kernel-mediated read32/write32, block device detected
-- **C/ASM program support**: ELF64 binary via Python generator, runs on bare metal
+- **VirtIO block I/O**: Full sector read/write via kernel proxy
+- **File system**: TFS journaling file system, persistent storage
+- **PCI/MMIO device support**: PCI enumeration, VirtIO transport, network driver
+- **System utilities**: Shell, process manager, demo, edit, cat, block I/O stress test
 
 ## Build & Run
 
@@ -76,7 +78,7 @@ TrainOS/
 │   ├── sync.rs               # SpinLock primitive
 │   ├── per_cpu.rs            # Per-CPU data structures
 │   └── main.rs               # Boot sequence
-├── services/                 # 11 user-space services
+├── services/                 # 24 user-space services
 │   ├── init/ (pid=1)         # IPC receiver
 │   ├── ping/ (pid=2)         # IPC sender demo
 │   ├── fs/   (pid=3)         # File system service
@@ -88,6 +90,15 @@ TrainOS/
 │   ├── drv/                  # VirtIO MMIO driver
 │   ├── net/                  # Network stack (port routing)
 │   ├── echo/                 # Echo service (port 7)
+│   ├── demo/                 # System demo (V8.0 banner, IPC/FS/MEM/CAP/PERF)
+│   ├── stress/               # Block I/O stress test
+│   ├── bb/                   # Block I/O benchmark
+│   ├── pci/                  # PCI device enumeration
+│   ├── veth/                 # Virtual Ethernet driver
+│   ├── tfs/                  # TFS file system service
+│   ├── tfs_jrnl/             # TFS journaling layer
+│   ├── edit/                 # Text editor
+│   ├── cat/                  # File viewer
 │   └── test_net/             # Network stack test
 ├── lib/tros/                 # User-space syscall library
 ├── docs/
@@ -96,7 +107,7 @@ TrainOS/
 └── Cargo.toml                # Workspace root
 ```
 
-## System Calls
+## System Calls (35+)
 
 | Number | Name | Description |
 |--------|------|-------------|
@@ -106,15 +117,50 @@ TrainOS/
 | 3 | spawn | Spawn new process from ELF |
 | 4 | fork | COW fork current process |
 | 5 | getpid | Get current process ID |
+| 6 | yield | Yield CPU (stays ready) |
 | 10 | ep_create | Create IPC endpoint |
 | 11 | send | Send message to endpoint |
 | 12 | recv | Receive message from endpoint (blocking) |
 | 20 | mmio_map | Map physical MMIO into process address space |
+| 21 | mmio_read32 | Read 32-bit MMIO (kernel proxy) |
+| 22 | mmio_write32 | Write 32-bit MMIO (kernel proxy) |
 | 30 | mint | Derive capability with reduced rights |
 | 31 | copy | Copy capability to another CNode |
 | 32 | move | Move capability between CNodes |
 | 33 | delete | Delete capability from slot |
-| 50-53 | open/read/write/close | POSIX compatibility (IPC→FS) |
+| 34 | cap_stats | Query capability counts |
+| 40 | proclist | List processes |
+| 41 | kill | Kill process by PID |
+| 42 | meminfo | Query allocated page count |
+| 43 | perf_stats | IPC/context-switch counters |
+| 44 | uptime | System uptime in ticks |
+| 45 | blk_write | Write block via VirtIO |
+| 46 | blk_read | Read block via VirtIO |
+| 50 | open | POSIX open (IPC→FS) |
+| 51 | read | POSIX read (IPC→FS) |
+| 52 | write | POSIX write (IPC→FS) |
+| 53 | close | POSIX close (IPC→FS) |
+
+Full reference: [docs/syscalls.md](docs/syscalls.md)
+
+## Demo Output
+
+```
+========================================
+  TrainOS V8.0 System Demo
+========================================
+
+[1/5] IPC: ping -> init ... OK
+[2/5] FS: write -> read ... OK
+[3/5] MEM: allocated pages = 1234 OK
+[4/5] CAP: capability system ... OK
+[5/5] PERF: IPC counters ... OK
+
+========================================
+  All systems operational
+  TrainOS V8.0 — READY
+========================================
+```
 
 ## IPC Protocol
 
@@ -143,8 +189,10 @@ TrainOS/
 - [x] V1.2-V1.4: IPC demo, FS service, Shell
 - [x] V1.5-V2.0: MMIO, COW fork, priority inheritance
 - [x] V2.1-V2.5: SMP, Cap enforcement, POSIX, VirtIO, Network
-- [x] V3.0: Active IPI, C program support, MMIO proxy, VirtIO detection
-- [ ] V3.1: VirtIO block I/O, disk read/write, file system persistence
+- [x] V3.0-V3.2: Active IPI, C program support, VirtIO block, Proc service
+- [x] V4.0-V6.0: PCI, VETH networking, TFS journaling file system
+- [x] V7.0-V8.0: Demo suite, block stress, text utilities, full doc
+- [ ] V8.1: SMP load balancing, prioritised IPC, async I/O
 
 ## License
 

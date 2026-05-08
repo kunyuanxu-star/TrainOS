@@ -14,7 +14,7 @@ extern "C" fn _start() -> ! {
     tros::print("TEST_PROC: PROC list request sent\r\n");
     tros::print("TEST_PROC: PASS\r\n");
 
-    loop { unsafe { core::arch::asm!("wfi"); } }
+    tros::exit(0);
 }
 
 #[panic_handler]

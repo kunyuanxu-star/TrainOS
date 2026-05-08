@@ -1,0 +1,10 @@
+[package]
+name = "netdrv"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "netdrv"
+
+[dependencies]
+tros = { path = "../../lib/tros" }

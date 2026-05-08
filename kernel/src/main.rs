@@ -426,6 +426,55 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
         None => console::puts("  WARNING: drv spawn failed\r\n"),
     }
 
+    // Spawn the NETDRV service (V4.0B VirtIO network driver, priority 63)
+    // Prio 63 = highest, matches TEST_CAP. NETDRV enqueued first so runs first, then exits.
+    static NETDRV_ELF: &[u8] = include_bytes!("netdrv.elf");
+    match proc::spawn(NETDRV_ELF, 63) {
+        Some(pid) => {
+            console::puts("  NETDRV process spawned (pid=");
+            unsafe {
+                let mut n = pid;
+                let mut buf = [0u8; 10];
+                let mut i = 10;
+                loop {
+                    i -= 1;
+                    buf[i] = b'0' + (n % 10) as u8;
+                    n /= 10;
+                    if n == 0 { break; }
+                }
+                for j in i..10 {
+                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") buf[j] as usize);
+                }
+            }
+            console::puts(")\r\n");
+        }
+        None => console::puts("  WARNING: netdrv spawn failed\r\n"),
+    }
+
+    // Spawn the TFS test service (V4.0A persistent disk FS, priority 55)
+    static TEST_TFS_ELF: &[u8] = include_bytes!("test_tfs.elf");
+    match proc::spawn(TEST_TFS_ELF, 55) {
+        Some(pid) => {
+            console::puts("  TEST_TFS process spawned (pid=");
+            unsafe {
+                let mut n = pid;
+                let mut buf = [0u8; 10];
+                let mut i = 10;
+                loop {
+                    i -= 1;
+                    buf[i] = b'0' + (n % 10) as u8;
+                    n /= 10;
+                    if n == 0 { break; }
+                }
+                for j in i..10 {
+                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") buf[j] as usize);
+                }
+            }
+            console::puts(")\r\n");
+        }
+        None => console::puts("  WARNING: test_tfs spawn failed\r\n"),
+    }
+
     // Spawn the C/ASM test program (V3.0 Route B — Standard C program support demo)
     static TEST_C_ELF: &[u8] = include_bytes!("test_c.elf");
     match proc::spawn(TEST_C_ELF, 50) {
@@ -496,6 +545,30 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
             console::puts(")\r\n");
         }
         None => console::puts("  WARNING: TEST_PROC spawn failed\r\n"),
+    }
+
+    // Spawn the TEST_CAP service (V4.0C capability security test, priority 63)
+    static TEST_CAP_ELF: &[u8] = include_bytes!("test_cap.elf");
+    match proc::spawn(TEST_CAP_ELF, 63) {
+        Some(pid) => {
+            console::puts("  TEST_CAP process spawned (pid=");
+            unsafe {
+                let mut n = pid;
+                let mut buf = [0u8; 10];
+                let mut i = 10;
+                loop {
+                    i -= 1;
+                    buf[i] = b'0' + (n % 10) as u8;
+                    n /= 10;
+                    if n == 0 { break; }
+                }
+                for j in i..10 {
+                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") buf[j] as usize);
+                }
+            }
+            console::puts(")\r\n");
+        }
+        None => console::puts("  WARNING: TEST_CAP spawn failed\r\n"),
     }
 
     // Signal secondary HARTs that they can proceed

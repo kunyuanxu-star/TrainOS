@@ -24,7 +24,9 @@ pub const SYS_MINT:      usize = 30;
 pub const SYS_COPY:      usize = 31;
 pub const SYS_MOVE:      usize = 32;
 pub const SYS_DELETE:    usize = 33;
+pub const SYS_CAP_STATS: usize = 34;
 pub const SYS_BLK_READ:  usize = 40;
+pub const SYS_BLK_WRITE: usize = 45;
 pub const SYS_PROCLIST:  usize = 41;
 pub const SYS_KILL:      usize = 42;
 // POSIX compatibility syscalls
@@ -70,6 +72,7 @@ pub fn syscall_dispatch(tf: &mut TrapFrame) {
         SYS_COPY => cap::sys_copy(arg0, arg1 as u32, arg2),
         SYS_MOVE => cap::sys_move(arg0, arg1 as u32, arg2),
         SYS_DELETE => cap::sys_delete(arg0),
+        SYS_CAP_STATS => cap::sys_cap_stats(),
         SYS_MAP_MMIO => {
             let phys = arg0;
             let size = arg1;
@@ -92,6 +95,7 @@ pub fn syscall_dispatch(tf: &mut TrapFrame) {
         SYS_MMIO_READ32  => sys_mmio_read32(arg0),
         SYS_MMIO_WRITE32 => sys_mmio_write32(arg0, arg1),
         SYS_BLK_READ => proc::sys_blk_read(arg0, arg1, arg2),
+        SYS_BLK_WRITE => proc::sys_blk_write(arg0, arg1, arg2),
         SYS_PROCLIST => proc::sys_proclist(arg0, arg1),
         SYS_KILL     => proc::sys_kill(arg0 as u32),
         _ => Err("unknown syscall"),
@@ -152,18 +156,64 @@ fn sys_map_mmio(phys: usize, size: usize) -> Result<usize, &'static str> {
 /// Read a 32-bit value from a physical MMIO address.
 /// The kernel (S-mode) accesses the address directly via the identity mapping
 /// set up in setup_kernel_mapping().
+///
+/// Uses a temporary fault handler to catch load access faults on non-existent
+/// physical addresses, returning an error instead of crashing.
 fn sys_mmio_read32(phys: usize) -> Result<usize, &'static str> {
     if phys & 0x3 != 0 {
         return Err("unaligned mmio read");
     }
-    // The kernel page table has an identity mapping for the lower 2GB
-    // (L2[0] → L1 page) which includes the MMIO region at 0x10000000.
-    // Access using physical address directly through the identity mapping.
+
     unsafe {
+        // Reset fault flag (defined in global_asm below)
+        extern "C" {
+            static __mmio_fault_happened: core::cell::UnsafeCell<usize>;
+            fn __mmio_fault_recover();
+        }
+        core::ptr::write_volatile((&__mmio_fault_happened).get(), 0);
+
+        // Install temporary fault handler
+        let old_stvec: usize;
+        core::arch::asm!("csrr {}, stvec", out(reg) old_stvec);
+        core::arch::asm!("csrw stvec, {}", in(reg) __mmio_fault_recover as *const () as usize);
+
+        // Do the volatile read
         let val = (phys as *const u32).read_volatile();
-        Ok(val as usize)
+
+        // Restore original handler
+        core::arch::asm!("csrw stvec, {}", in(reg) old_stvec);
+
+        if core::ptr::read_volatile((&__mmio_fault_happened).get()) != 0 {
+            Err("mmio load access fault")
+        } else {
+            Ok(val as usize)
+        }
     }
 }
+
+/// Temporary fault handler for sys_mmio_read32 / sys_mmio_write32.
+/// On a load/store access fault:
+///   1. Sets __mmio_fault_happened = 1
+///   2. Skips past the faulting instruction (assumes 4-byte lw/sw)
+///   3. Returns via sret
+core::arch::global_asm!(
+    ".data",
+    ".align 3",
+    ".globl __mmio_fault_happened",
+    "__mmio_fault_happened:",
+    "    .quad 0",
+    ".text",
+    ".globl __mmio_fault_recover",
+    ".align 2",
+    "__mmio_fault_recover:",
+    "    li t0, 1",
+    "    la t1, __mmio_fault_happened",
+    "    sd t0, 0(t1)",
+    "    csrr t0, sepc",
+    "    addi t0, t0, 4",
+    "    csrw sepc, t0",
+    "    sret",
+);
 
 /// Write a 32-bit value to a physical MMIO address.
 fn sys_mmio_write32(phys: usize, val: usize) -> Result<usize, &'static str> {

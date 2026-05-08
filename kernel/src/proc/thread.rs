@@ -43,6 +43,7 @@ impl TaskContext {
 
 pub const KERNEL_STACK_SIZE: usize = 8192;
 
+#[repr(C)]
 pub struct Thread {
     pub tid: u32,
     pub owner: u32,         // pid

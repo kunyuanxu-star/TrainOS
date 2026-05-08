@@ -58,3 +58,41 @@ pub fn sys_delete(slot_idx: usize) -> Result<usize, &'static str> {
     ops::delete_cap(cnode, slot_idx)?;
     Ok(0)
 }
+
+/// Return capability statistics for the calling process.
+/// Format: [total_slots:16][used_slots:16][ep_caps:16][mem_caps:16] packed into usize
+pub fn sys_cap_stats() -> Result<usize, &'static str> {
+    let pid = crate::sched::current_thread().map(|t| unsafe { (*t).owner }).unwrap_or(0);
+    let procs = crate::proc::PROCESSES.lock();
+    let proc = procs.iter().find(|p| p.pid == pid).ok_or("no process")?;
+    let cnode_id = proc.cnode_id;
+    drop(procs);
+
+    let res = ops::get_resource(cnode_id).ok_or("no cnode")?;
+    if let types::ResourceData::CNode { ref slots } = &res.data {
+        let slots = slots.lock();
+        let total = slots.len();
+        let mut used: usize = 0;
+        let mut ep_count: usize = 0;
+        let mut mem_count: usize = 0;
+
+        for slot in slots.iter() {
+            match slot.cap_type {
+                types::CapType::Null => {}
+                types::CapType::EP => { used += 1; ep_count += 1; }
+                types::CapType::Mem => { used += 1; mem_count += 1; }
+                _ => { used += 1; }
+            }
+        }
+
+        // Pack into a usize: [total:16][used:16][ep:16][mem:16]
+        let result = (total & 0xFFFF)
+            | ((used & 0xFFFF) << 16)
+            | ((ep_count & 0xFFFF) << 32)
+            | ((mem_count & 0xFFFF) << 48);
+
+        Ok(result)
+    } else {
+        Err("not a cnode")
+    }
+}

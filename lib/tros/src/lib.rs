@@ -269,6 +269,25 @@ pub fn blk_read(sector: usize, buf: &mut [u8]) -> usize {
     result
 }
 
+/// Write a disk sector to the VirtIO block device (syscall 45).
+/// sector: logical block address (512-byte units)
+/// data: buffer with data to write (must be >= 512 bytes)
+/// Returns: number of bytes written
+pub fn blk_write(sector: usize, data: &[u8]) -> usize {
+    let result: usize;
+    unsafe {
+        core::arch::asm!(
+            "ecall",
+            in("a7") 45usize,
+            in("a0") sector,
+            in("a1") data.as_ptr() as usize,
+            in("a2") data.len(),
+            lateout("a0") result,
+        );
+    }
+    result
+}
+
 /// Query process list (syscall 41).
 /// Fills buf with process info. Returns number of processes written.
 pub fn proclist(buf: &mut [u8]) -> usize {
@@ -297,4 +316,38 @@ pub fn kill(pid: u32) -> usize {
         );
     }
     result
+}
+
+/// Delete a capability from the calling process's CNode (syscall 33).
+/// slot: index of the capability slot to delete.
+/// Returns 0 on success.
+pub fn cap_delete(slot: usize) -> usize {
+    let result: usize;
+    unsafe {
+        core::arch::asm!(
+            "ecall",
+            in("a7") 33usize,
+            in("a0") slot,
+            lateout("a0") result,
+        );
+    }
+    result
+}
+
+/// Returns capability statistics for the calling process (syscall 34).
+/// Returns (total_slots, used_slots, ep_caps, mem_caps).
+pub fn cap_stats() -> (usize, usize, usize, usize) {
+    let result: usize;
+    unsafe {
+        core::arch::asm!(
+            "ecall",
+            in("a7") 34usize,
+            lateout("a0") result,
+        );
+    }
+    let total = result & 0xFFFF;
+    let used = (result >> 16) & 0xFFFF;
+    let ep = (result >> 32) & 0xFFFF;
+    let mem = (result >> 48) & 0xFFFF;
+    (total, used, ep, mem)
 }

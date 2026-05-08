@@ -11,17 +11,20 @@ Uses RustSBI as boot firmware, runs on machina emulator.
 2. Architecture: RISC-V 64-bit (rv64gc), Sv39 virtual memory, MIT license.
 3. Language: Rust nightly (`no_std` kernel + user-space, no heap in services).
 
-## Current Status (2026-05-07) — V2.5
+## Current Status (2026-05-07) — V3.2
 
 ### Completed
-- SMP multi-core (2 HARTs, spinlock scheduler, per-CPU data, per-HART CLINT)
+- SMP 2.0: Active IPI on IPC wakeup, per-CPU pick counts
+- 15 user-space services: init, ping, fs, test_fs, sh, test_fork, uart, test_posix, drv, net, echo, test_net, test_c, proc, test_proc
+- VirtIO block I/O: Full virtqueue management, sector read/write via kernel proxy
+- Proc service: Process listing (pid, prio, state) and kill capability
 - Per-process CNode capability enforcement
 - POSIX open/read/write/close syscalls (IPC→FS translation)
 - COW fork with full page table deep-copy and page fault handler
-- IPC priority inheritance (receiver inherits sender priority)
-- Network stack service with port-based datagram routing
-- VirtIO MMIO mapping framework (PMP blocks actual MMIO in user-mode)
-- 11 user-space services running concurrently
+- IPC priority inheritance
+- Network stack with port-based datagram routing
+- C/ASM program support via Python ELF64 generator
+- VirtIO MMIO kernel proxy (read32/write32), block device detected
 
 ### Architecture
 **Microkernel** — kernel provides:

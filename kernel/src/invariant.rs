@@ -21,7 +21,7 @@ pub fn check_memory_invariants() {
     let allocated = crate::mem::buddy::allocated_pages();
     let total = crate::mem::buddy::total_pages();
     if allocated > total {
-        crate::console::puts("INVARIANT VIOLATION: allocated > total pages\r\n");
+        crate::println!("INVARIANT VIOLATION: allocated {} > total {} pages", allocated, total);
     }
 }
 

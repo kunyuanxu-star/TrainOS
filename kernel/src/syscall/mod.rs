@@ -49,7 +49,7 @@ pub const SYS_SETUID:  usize = 61;
 pub const SYS_CHMOD:   usize = 62;
 pub const SYS_SIGNAL:  usize = 63;
 pub const SYS_WAITPID: usize = 64;
-// SBI forwarding (note: SYS_SPAWN and SYS_PUTCHAR both use nr=1, differentiated by context)
+// SBI forwarding
 pub const SYS_PUTCHAR: usize = 1;
 pub const SYS_GETCHAR: usize = 2;
 
@@ -62,14 +62,12 @@ pub fn syscall_dispatch(tf: &mut TrapFrame) {
 
     let result = match nr {
         SYS_PUTCHAR => {
-            // Forward SBI console putchar to M-mode
             unsafe {
                 core::arch::asm!("ecall", in("a7") 1usize, in("a0") tf.a0);
             }
             Ok(0)
         }
         SYS_GETCHAR => {
-            // Forward SBI console getchar to M-mode
             let c: usize;
             unsafe {
                 core::arch::asm!(
@@ -129,7 +127,6 @@ pub fn syscall_dispatch(tf: &mut TrapFrame) {
             let recvs =
                 crate::ipc::endpoint::RECV_COUNT.load(core::sync::atomic::Ordering::Relaxed);
             let ctx = crate::sched::CTX_SWITCH_COUNT.load(core::sync::atomic::Ordering::Relaxed);
-            // Pack into u64: [ctx:24][recv:20][send:20]
             let result = (sends & 0xFFFFF) | ((recvs & 0xFFFFF) << 20) | ((ctx & 0xFFFFFF) << 40);
             Ok(result as usize)
         }
@@ -152,7 +149,7 @@ pub fn syscall_dispatch(tf: &mut TrapFrame) {
         }
         Err(_e) => {
             tf.a0 = usize::MAX;
-        } // error
+        }
     }
 
     tf.sepc += 4;
@@ -161,22 +158,6 @@ pub fn syscall_dispatch(tf: &mut TrapFrame) {
 fn sys_map_mmio(phys: usize, size: usize) -> Result<usize, &'static str> {
     let thread = crate::sched::current_thread().ok_or("no thread")?;
     let pid = unsafe { (*thread).owner };
-    crate::console::puts("  MMIO: pid=");
-    let mut n = pid as usize;
-    let mut buf = [0u8; 10];
-    let mut i = 10;
-    loop {
-        i -= 1;
-        buf[i] = b'0' + (n - (n / 10) * 10) as u8;
-        n /= 10;
-        if n == 0 {
-            break;
-        }
-    }
-    for &b in buf[i..].iter() {
-        unsafe { core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize); }
-    }
-    crate::console::puts("\r\n");
 
     let procs = crate::proc::PROCESSES.lock();
     let mut root_pt = 0;
@@ -187,46 +168,19 @@ fn sys_map_mmio(phys: usize, size: usize) -> Result<usize, &'static str> {
         }
     }
     if root_pt == 0 {
-        crate::console::puts("  MMIO: process not found!\r\n");
+        crate::println!("  MMIO: process pid={} not found!", pid);
         return Err("process not found");
     }
     drop(procs);
 
-    crate::console::puts("  MMIO: root_pt=0x");
-    for i in (0..8).rev() {
-        let nibble = (root_pt >> (i * 4)) & 0xF;
-        let c = if nibble < 10 {
-            b'0' + nibble as u8
-        } else {
-            b'a' + (nibble - 10) as u8
-        };
-        unsafe {
-            core::arch::asm!("ecall", in("a7") 1usize, in("a0") c as usize);
-        }
-    }
-    crate::console::puts("\r\n");
+    crate::println!("  MMIO: pid={} root_pt=0x{:x}", pid, root_pt);
 
     let va = crate::proc::elf::map_phys_to_user(root_pt, phys, size);
-    crate::console::puts("  MMIO: mapped at va=0x");
-    for i in (0..8).rev() {
-        let nibble = (va >> (i * 4)) & 0xF;
-        let c = if nibble < 10 {
-            b'0' + nibble as u8
-        } else {
-            b'a' + (nibble - 10) as u8
-        };
-        unsafe {
-            core::arch::asm!("ecall", in("a7") 1usize, in("a0") c as usize);
-        }
-    }
-    crate::console::puts("\r\n");
+    crate::println!("  MMIO: mapped at va=0x{:x}", va);
     Ok(va)
 }
 
 /// Read a 32-bit value from a physical MMIO address.
-/// The kernel (S-mode) accesses the address directly via the identity mapping
-/// set up in setup_kernel_mapping().
-///
 /// Uses a temporary fault handler to catch load access faults on non-existent
 /// physical addresses, returning an error instead of crashing.
 fn sys_mmio_read32(phys: usize) -> Result<usize, &'static str> {
@@ -235,22 +189,18 @@ fn sys_mmio_read32(phys: usize) -> Result<usize, &'static str> {
     }
 
     unsafe {
-        // Reset fault flag (defined in global_asm below)
         extern "C" {
             static __mmio_fault_happened: core::cell::UnsafeCell<usize>;
             fn __mmio_fault_recover();
         }
         core::ptr::write_volatile(__mmio_fault_happened.get(), 0);
 
-        // Install temporary fault handler
         let old_stvec: usize;
         core::arch::asm!("csrr {}, stvec", out(reg) old_stvec);
         core::arch::asm!("csrw stvec, {}", in(reg) __mmio_fault_recover as *const () as usize);
 
-        // Do the volatile read
         let val = (phys as *const u32).read_volatile();
 
-        // Restore original handler
         core::arch::asm!("csrw stvec, {}", in(reg) old_stvec);
 
         if core::ptr::read_volatile(__mmio_fault_happened.get()) != 0 {
@@ -262,10 +212,6 @@ fn sys_mmio_read32(phys: usize) -> Result<usize, &'static str> {
 }
 
 // Temporary fault handler for sys_mmio_read32 / sys_mmio_write32.
-// On a load/store access fault:
-//   1. Sets __mmio_fault_happened = 1
-//   2. Skips past the faulting instruction (assumes 4-byte lw/sw)
-//   3. Returns via sret
 core::arch::global_asm!(
     ".data",
     ".align 3",

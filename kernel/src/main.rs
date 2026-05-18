@@ -49,7 +49,7 @@ mod mem;
 
 #[alloc_error_handler]
 fn alloc_error(_: core::alloc::Layout) -> ! {
-    crate::console::puts("KERNEL: allocation error\r\n");
+    crate::println!("KERNEL: allocation error");
     crate::idle_loop();
 }
 
@@ -62,44 +62,47 @@ core::arch::global_asm!(
     ".globl _start",
     "_start:",
     "    csrw sie, zero",
-    // Read HART ID from tp register (set by RustSBI)
     "    mv t0, tp",
-    // Load per-HART boot stack: _boot_stacks + hart_id * 65536
-    "    slli t1, t0, 16", // t1 = hart_id * 65536
+    "    slli t1, t0, 16",
     "    la t2, _boot_stacks",
     "    add t2, t2, t1",
     "    mv sp, t2",
-    // If HART 0, jump to rust_main. Otherwise, rust_secondary.
     "    bnez t0, 1f",
     "    tail rust_main",
     "1:  tail rust_secondary",
     ".section .bss",
-    ".align 12", // 4096-byte aligned
+    ".align 12",
     "_boot_stacks:",
-    "    .space 65536 * 4, 0", // 4 HARTs x 64KB each
+    "    .space 65536 * 4, 0",
 );
 
 #[cfg(not(test))]
 #[no_mangle]
 extern "C" fn rust_secondary() -> ! {
-    // Park until primary HART signals ready
     while !BOOT_READY.load(Ordering::Acquire) {
         unsafe {
             core::arch::asm!("wfi");
         }
     }
 
-    // Same setup as primary (minus BSS clear and memory init)
     crate::trap::enable_timer_interrupt();
     crate::trap::init();
     crate::mem::sv39::enable_mmu();
 
-    // Init per-CPU and enter scheduler
     crate::per_cpu::init_secondary();
     crate::sched::schedule();
-
-    // Should never reach here
     crate::idle_loop();
+}
+
+/// Spawn a service and print the result — eliminates ~500 lines of repetitive code.
+macro_rules! spawn_service {
+    ($name:ident, $prio:expr) => {{
+        static ELF: &[u8] = include_bytes!(concat!(stringify!($name), ".elf"));
+        match crate::proc::spawn(ELF, $prio) {
+            Some(pid) => crate::println!("  {} spawned (pid={})", stringify!($name).to_uppercase(), pid),
+            None => crate::println!("  WARNING: {} spawn failed", stringify!($name)),
+        }
+    }};
 }
 
 #[cfg(not(test))]
@@ -113,1343 +116,165 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
         core::ptr::write_bytes(bss_start as *mut u8, 0, size);
     }
 
-    console::puts("TrainOS booting...\r\n");
+    println!("TrainOS booting...");
 
     mem::init();
-    console::puts("  Memory subsystem initialized\r\n");
+    println!("  Memory subsystem initialized");
 
-    // MMIO and trap init BEFORE enabling MMU.
-    // After sv39 enable, only the identity-mapped DRAM range
-    // [0x80000000, 0x88000000) via L2[2] and the kernel virtual
-    // range via L2[256] are accessible.  MMIO at low addresses
-    // (e.g. CLINT at 0x2000000) would fault without a mapping,
-    // so we set up CLINT and stvec while the CPU is still in
-    // BARE translation mode.
     trap::clint_init();
-    console::puts("  CLINT timer initialized\r\n");
+    println!("  CLINT timer initialized");
 
     trap::enable_timer_interrupt();
     trap::init();
-    console::puts("  Trap handling initialized\r\n");
+    println!("  Trap handling initialized");
 
     cap::init();
-    console::puts("  Capability system initialized\r\n");
+    println!("  Capability system initialized");
 
     ipc::init();
-    console::puts("  IPC subsystem initialized\r\n");
+    println!("  IPC subsystem initialized");
 
     mem::sv39::enable_mmu();
-    console::puts("  MMU enabled (Sv39)\r\n");
+    println!("  MMU enabled (Sv39)");
 
-    // Spawn the init user-space process (highest priority so it creates EP 1 first)
-    static INIT_ELF: &[u8] = include_bytes!("init.elf");
-    match proc::spawn(INIT_ELF, 48) {
-        Some(pid) => {
-            console::puts("  Init process spawned (pid=");
-            // Simple digit-by-digit print for pid (avoid format)
-            unsafe {
-                let mut n = pid;
-                let mut buf = [0u8; 10];
-                let mut i = 10;
-                loop {
-                    i -= 1;
-                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
-                    n /= 10;
-                    if n == 0 {
-                        break;
-                    }
-                }
-                for &b in buf[i..].iter() {
-                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
-                }
-            }
-            console::puts(")\r\n");
-        }
-        None => console::puts("  WARNING: init spawn failed\r\n"),
-    }
+    // Spawn all services in priority order.
+    //
+    // Priority allocation rationale:
+    //  63 — Must-run-first services (test_cap, netdrv, bb, test_shm, test_exec, test_sig, test_clib)
+    //  62 — High-priority services (edit, test_edit, tfs_jrnl, test_user)
+    //  61 — Core services (tfs, test_smp)
+    //  60 — System management (proc, rustdemo)
+    //  59 — Device enumeration (pci, bench)
+    //  58 — Network infra (veth, pkg, http, test_http)
+    //  57 — Service registry (reg, mkfs)
+    //  56 — Discovery (test_sdp)
+    //  55 — Demo (demo)
+    //  54 — Storage tests (test_net2)
+    //  53 — Package tests (test_pkg)
+    //  50 — Persistence tests (test_mount)
+    //  48 — Init (highest non-test)
+    //  43 — Network (net)
+    //  42 — Network echo (echo)
+    //  41 — Network tests (test_net)
+    //  32 — File system (fs)
+    //  31 — FS tests (test_posix, stress)
+    //  30 — Process tests (test_fork)
+    //  24-27 — Low-priority misc tests
+    //  10 — C program
+    //  5  — Block driver (drv, runs last)
 
-    // Spawn the ping user-space process
-    static PING_ELF: &[u8] = include_bytes!("ping.elf");
-    match proc::spawn(PING_ELF, 16) {
-        Some(pid) => {
-            console::puts("  Ping process spawned (pid=");
-            unsafe {
-                let mut n = pid;
-                let mut buf = [0u8; 10];
-                let mut i = 10;
-                loop {
-                    i -= 1;
-                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
-                    n /= 10;
-                    if n == 0 {
-                        break;
-                    }
-                }
-                for &b in buf[i..].iter() {
-                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
-                }
-            }
-            console::puts(")\r\n");
-        }
-        None => console::puts("  WARNING: ping spawn failed\r\n"),
-    }
+    // Priority 63 group: must-run-first services
+    spawn_service!(test_cap, 63);
+    spawn_service!(netdrv, 63);
+    spawn_service!(bb, 63);
+    spawn_service!(test_shm, 63);
+    spawn_service!(test_exec, 63);
 
-    // Spawn the FS service
-    static FS_ELF: &[u8] = include_bytes!("fs.elf");
-    match proc::spawn(FS_ELF, 32) {
-        Some(pid) => {
-            console::puts("  FS process spawned (pid=");
-            unsafe {
-                let mut n = pid;
-                let mut buf = [0u8; 10];
-                let mut i = 10;
-                loop {
-                    i -= 1;
-                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
-                    n /= 10;
-                    if n == 0 {
-                        break;
-                    }
-                }
-                for &b in buf[i..].iter() {
-                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
-                }
-            }
-            console::puts(")\r\n");
-        }
-        None => console::puts("  WARNING: FS spawn failed\r\n"),
-    }
+    // Priority 62 group
+    spawn_service!(edit, 62);
+    spawn_service!(test_edit, 62);
+    spawn_service!(test_clib, 62);
+    spawn_service!(test_user, 62);
+    spawn_service!(test_sig, 62);
+    spawn_service!(tfs_jrnl, 62);
 
-    // Spawn the NET service (V2.5 network stack, prio 43, above DRV(40))
-    static NET_ELF: &[u8] = include_bytes!("net.elf");
-    match proc::spawn(NET_ELF, 43) {
-        Some(pid) => {
-            console::puts("  NET process spawned (pid=");
-            unsafe {
-                let mut n = pid;
-                let mut buf = [0u8; 10];
-                let mut i = 10;
-                loop {
-                    i -= 1;
-                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
-                    n /= 10;
-                    if n == 0 {
-                        break;
-                    }
-                }
-                for &b in buf[i..].iter() {
-                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
-                }
-            }
-            console::puts(")\r\n");
-        }
-        None => console::puts("  WARNING: NET spawn failed\r\n"),
-    }
+    // Priority 61
+    spawn_service!(tfs, 61);
+    spawn_service!(test_smp, 61);
 
-    // Spawn the EDIT service (V6.0D line editor, prio 62, EP 2 after test_cap takes EP 1)
-    // High priority to run before wfi-loop services that starve lower priorities.
-    static EDIT_ELF: &[u8] = include_bytes!("edit.elf");
-    match proc::spawn(EDIT_ELF, 62) {
-        Some(pid) => {
-            console::puts("  EDIT process spawned (pid=");
-            unsafe {
-                let mut n = pid;
-                let mut buf = [0u8; 10];
-                let mut i = 10;
-                loop {
-                    i -= 1;
-                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
-                    n /= 10;
-                    if n == 0 {
-                        break;
-                    }
-                }
-                for &b in buf[i..].iter() {
-                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
-                }
-            }
-            console::puts(")\r\n");
-        }
-        None => console::puts("  WARNING: edit spawn failed\r\n"),
-    }
+    // Priority 60
+    spawn_service!(proc, 60);
+    spawn_service!(rustdemo, 60);
 
-    // Spawn the TEST_EDIT service (V6.0D editor test client, same prio 62 to avoid starvation)
-    static TEST_EDIT_ELF: &[u8] = include_bytes!("test_edit.elf");
-    match proc::spawn(TEST_EDIT_ELF, 62) {
-        Some(pid) => {
-            console::puts("  TEST_EDIT process spawned (pid=");
-            unsafe {
-                let mut n = pid;
-                let mut buf = [0u8; 10];
-                let mut i = 10;
-                loop {
-                    i -= 1;
-                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
-                    n /= 10;
-                    if n == 0 {
-                        break;
-                    }
-                }
-                for &b in buf[i..].iter() {
-                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
-                }
-            }
-            console::puts(")\r\n");
-        }
-        None => console::puts("  WARNING: test_edit spawn failed\r\n"),
-    }
+    // Priority 59
+    spawn_service!(pci, 59);
+    spawn_service!(bench, 59);
 
-    // Spawn the ECHO service (V2.5 network echo, prio 42)
-    static ECHO_ELF: &[u8] = include_bytes!("echo.elf");
-    match proc::spawn(ECHO_ELF, 42) {
-        Some(pid) => {
-            console::puts("  ECHO process spawned (pid=");
-            unsafe {
-                let mut n = pid;
-                let mut buf = [0u8; 10];
-                let mut i = 10;
-                loop {
-                    i -= 1;
-                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
-                    n /= 10;
-                    if n == 0 {
-                        break;
-                    }
-                }
-                for &b in buf[i..].iter() {
-                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
-                }
-            }
-            console::puts(")\r\n");
-        }
-        None => console::puts("  WARNING: ECHO spawn failed\r\n"),
-    }
+    // Priority 58 — Network infrastructure
+    spawn_service!(veth, 58);
+    spawn_service!(pkg, 58);
+    spawn_service!(http, 58);
+    spawn_service!(test_http, 58);
 
-    // Spawn the HTTP service (V11.0D TCP server on EP 8, prio 58)
-    // Same priority as VETH/PKG so it runs in the 58 group, before MKFS(57).
-    static HTTP_ELF: &[u8] = include_bytes!("http.elf");
-    match proc::spawn(HTTP_ELF, 58) {
-        Some(pid) => {
-            console::puts("  HTTP process spawned (pid=");
-            unsafe {
-                let mut n = pid;
-                let mut buf = [0u8; 10];
-                let mut i = 10;
-                loop {
-                    i -= 1;
-                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
-                    n /= 10;
-                    if n == 0 {
-                        break;
-                    }
-                }
-                for &b in buf[i..].iter() {
-                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
-                }
-            }
-            console::puts(")\r\n");
-        }
-        None => console::puts("  WARNING: HTTP spawn failed\r\n"),
-    }
+    // Priority 57
+    spawn_service!(reg, 57);
+    spawn_service!(mkfs, 57);
 
-    // Spawn the TEST_NET service (V2.5 network test, prio 41)
-    static TEST_NET_ELF: &[u8] = include_bytes!("test_net.elf");
-    match proc::spawn(TEST_NET_ELF, 41) {
-        Some(pid) => {
-            console::puts("  TEST_NET process spawned (pid=");
-            unsafe {
-                let mut n = pid;
-                let mut buf = [0u8; 10];
-                let mut i = 10;
-                loop {
-                    i -= 1;
-                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
-                    n /= 10;
-                    if n == 0 {
-                        break;
-                    }
-                }
-                for &b in buf[i..].iter() {
-                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
-                }
-            }
-            console::puts(")\r\n");
-        }
-        None => console::puts("  WARNING: TEST_NET spawn failed\r\n"),
-    }
+    // Priority 56
+    spawn_service!(test_sdp, 56);
 
-    // Spawn the REG service (V5.0A service registry, priority 57)
-    // Runs after test_cap(63), proc(60); creates EP 3 (EP 1=test_cap, EP 2=proc)
-    static REG_ELF: &[u8] = include_bytes!("reg.elf");
-    match proc::spawn(REG_ELF, 57) {
-        Some(pid) => {
-            console::puts("  REG process spawned (pid=");
-            unsafe {
-                let mut n = pid;
-                let mut buf = [0u8; 10];
-                let mut i = 10;
-                loop {
-                    i -= 1;
-                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
-                    n /= 10;
-                    if n == 0 {
-                        break;
-                    }
-                }
-                for &b in buf[i..].iter() {
-                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
-                }
-            }
-            console::puts(")\r\n");
-        }
-        None => console::puts("  WARNING: REG spawn failed\r\n"),
-    }
+    // Priority 55
+    spawn_service!(test_tfs, 55);
 
-    // Spawn the MKFS service (V11.0B persistent disk format, priority 57)
-    // Formats the disk with TFS superblock, bitmap, root dir, journal, and welcome file.
-    static MKFS_ELF: &[u8] = include_bytes!("mkfs.elf");
-    match proc::spawn(MKFS_ELF, 57) {
-        Some(pid) => {
-            console::puts("  MKFS process spawned (pid=");
-            unsafe {
-                let mut n = pid;
-                let mut buf = [0u8; 10];
-                let mut i = 10;
-                loop {
-                    i -= 1;
-                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
-                    n /= 10;
-                    if n == 0 {
-                        break;
-                    }
-                }
-                for &b in buf[i..].iter() {
-                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
-                }
-            }
-            console::puts(")\r\n");
-        }
-        None => console::puts("  WARNING: mkfs spawn failed\r\n"),
-    }
+    // Priority 54
+    spawn_service!(test_net2, 54);
 
-    // Spawn the TEST_MOUNT service (V11.0B cross-reboot persistence test, priority 50)
-    // Verifies that the TFS filesystem and welcome file persist on the disk.
-    // NOTE: priority > 24 because SH(24) busy-waits and would starve lower prios.
-    static TEST_MOUNT_ELF: &[u8] = include_bytes!("test_mount.elf");
-    match proc::spawn(TEST_MOUNT_ELF, 50) {
-        Some(pid) => {
-            console::puts("  TEST_MOUNT process spawned (pid=");
-            unsafe {
-                let mut n = pid;
-                let mut buf = [0u8; 10];
-                let mut i = 10;
-                loop {
-                    i -= 1;
-                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
-                    n /= 10;
-                    if n == 0 {
-                        break;
-                    }
-                }
-                for &b in buf[i..].iter() {
-                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
-                }
-            }
-            console::puts(")\r\n");
-        }
-        None => console::puts("  WARNING: test_mount spawn failed\r\n"),
-    }
+    // Priority 53
+    spawn_service!(test_pkg, 53);
 
-    // Spawn the TEST_NET2 service (V9.0C network integration test, priority 54)
-    // Runs after VETH(58) registers EP 7, before demo(55).
-    static TEST_NET2_ELF: &[u8] = include_bytes!("test_net2.elf");
-    match proc::spawn(TEST_NET2_ELF, 54) {
-        Some(pid) => {
-            console::puts("  TEST_NET2 process spawned (pid=");
-            unsafe {
-                let mut n = pid;
-                let mut buf = [0u8; 10];
-                let mut i = 10;
-                loop {
-                    i -= 1;
-                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
-                    n /= 10;
-                    if n == 0 {
-                        break;
-                    }
-                }
-                for &b in buf[i..].iter() {
-                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
-                }
-            }
-            console::puts(")\r\n");
-        }
-        None => console::puts("  WARNING: test_net2 spawn failed\r\n"),
-    }
+    // Priority 50
+    spawn_service!(test_mount, 50);
 
-    // Spawn the test_fs service
-    static TEST_FS_ELF: &[u8] = include_bytes!("test_fs.elf");
-    match proc::spawn(TEST_FS_ELF, 24) {
-        Some(pid) => {
-            console::puts("  TEST_FS process spawned (pid=");
-            unsafe {
-                let mut n = pid;
-                let mut buf = [0u8; 10];
-                let mut i = 10;
-                loop {
-                    i -= 1;
-                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
-                    n /= 10;
-                    if n == 0 {
-                        break;
-                    }
-                }
-                for &b in buf[i..].iter() {
-                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
-                }
-            }
-            console::puts(")\r\n");
-        }
-        None => console::puts("  WARNING: test_fs spawn failed\r\n"),
-    }
+    // Priority 48 — Init (creates EP 1)
+    spawn_service!(init, 48);
 
-    // Spawn the test_posix service (V2.3 POSIX compatibility demo)
-    // Priority 31 (< FS=32 so FS starts first; > test_fork=30 so we run before fork hogs CPU)
-    static TEST_POSIX_ELF: &[u8] = include_bytes!("test_posix.elf");
-    match proc::spawn(TEST_POSIX_ELF, 31) {
-        Some(pid) => {
-            console::puts("  test_posix process spawned (pid=");
-            unsafe {
-                let mut n = pid;
-                let mut buf = [0u8; 10];
-                let mut i = 10;
-                loop {
-                    i -= 1;
-                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
-                    n /= 10;
-                    if n == 0 {
-                        break;
-                    }
-                }
-                for &b in buf[i..].iter() {
-                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
-                }
-            }
-            console::puts(")\r\n");
-        }
-        None => console::puts("  WARNING: test_posix spawn failed\r\n"),
-    }
+    // Priority 44 — TCP protocol service (runs after net at 43)
+    spawn_service!(tcp, 44);
 
-    // Spawn the shell service (same priority as test_fs for round-robin)
-    static SH_ELF: &[u8] = include_bytes!("sh.elf");
-    match proc::spawn(SH_ELF, 24) {
-        Some(pid) => {
-            console::puts("  Shell process spawned (pid=");
-            unsafe {
-                let mut n = pid;
-                let mut buf = [0u8; 10];
-                let mut i = 10;
-                loop {
-                    i -= 1;
-                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
-                    n /= 10;
-                    if n == 0 {
-                        break;
-                    }
-                }
-                for &b in buf[i..].iter() {
-                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
-                }
-            }
-            console::puts(")\r\n");
-        }
-        None => console::puts("  WARNING: sh spawn failed\r\n"),
-    }
+    // Priority 43 — Network stack
+    spawn_service!(net, 43);
 
-    // Spawn the CAT service (V5.0B user-space utility, priority 25)
-    static CAT_ELF: &[u8] = include_bytes!("cat.elf");
-    match proc::spawn(CAT_ELF, 25) {
-        Some(pid) => {
-            console::puts("  CAT process spawned (pid=");
-            unsafe {
-                let mut n = pid;
-                let mut buf = [0u8; 10];
-                let mut i = 10;
-                loop {
-                    i -= 1;
-                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
-                    n /= 10;
-                    if n == 0 {
-                        break;
-                    }
-                }
-                for &b in buf[i..].iter() {
-                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
-                }
-            }
-            console::puts(")\r\n");
-        }
-        None => console::puts("  WARNING: cat spawn failed\r\n"),
-    }
+    // Priority 42 — Echo service
+    spawn_service!(echo, 42);
 
-    // Spawn the STRESS service (V8.0C multi-core benchmark, priority 31, below FS at 32)
-    // Low priority so it does not prevent FS from processing IPC requests.
-    static STRESS_ELF: &[u8] = include_bytes!("stress.elf");
-    match proc::spawn(STRESS_ELF, 31) {
-        Some(pid) => {
-            console::puts("  STRESS process spawned (pid=");
-            unsafe {
-                let mut n = pid;
-                let mut buf = [0u8; 10];
-                let mut i = 10;
-                loop {
-                    i -= 1;
-                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
-                    n /= 10;
-                    if n == 0 {
-                        break;
-                    }
-                }
-                for &b in buf[i..].iter() {
-                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
-                }
-            }
-            console::puts(")\r\n");
-        }
-        None => console::puts("  WARNING: stress spawn failed\r\n"),
-    }
+    // Priority 41 — Network test
+    spawn_service!(test_net, 41);
 
-    // Spawn the test_inv service (V5.0C kernel invariant test, priority 26)
-    static TEST_INV_ELF: &[u8] = include_bytes!("test_inv.elf");
-    match proc::spawn(TEST_INV_ELF, 26) {
-        Some(pid) => {
-            console::puts("  TEST_INV process spawned (pid=");
-            unsafe {
-                let mut n = pid;
-                let mut buf = [0u8; 10];
-                let mut i = 10;
-                loop {
-                    i -= 1;
-                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
-                    n /= 10;
-                    if n == 0 {
-                        break;
-                    }
-                }
-                for &b in buf[i..].iter() {
-                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
-                }
-            }
-            console::puts(")\r\n");
-        }
-        None => console::puts("  WARNING: test_inv spawn failed\r\n"),
-    }
+    // Priority 32 — File system service
+    spawn_service!(fs, 32);
 
-    // Spawn the TEST_PKG service (V9.0B package manager test client, priority 53)
-    // Runs after PKG(58) creates EP 6, before NET(43) and FS-related services.
-    static TEST_PKG_ELF: &[u8] = include_bytes!("test_pkg.elf");
-    match proc::spawn(TEST_PKG_ELF, 53) {
-        Some(pid) => {
-            console::puts("  TEST_PKG process spawned (pid=");
-            unsafe {
-                let mut n = pid;
-                let mut buf = [0u8; 10];
-                let mut i = 10;
-                loop {
-                    i -= 1;
-                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
-                    n /= 10;
-                    if n == 0 {
-                        break;
-                    }
-                }
-                for &b in buf[i..].iter() {
-                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
-                }
-            }
-            console::puts(")\r\n");
-        }
-        None => console::puts("  WARNING: TEST_PKG spawn failed\r\n"),
-    }
+    // Priority 31 — POSIX/Filesystem tests
+    spawn_service!(test_posix, 31);
+    spawn_service!(stress, 31);
 
-    // Spawn the test_clib service (V6.0A mini C library test, priority 62)
-    static TEST_CLIB_ELF: &[u8] = include_bytes!("test_clib.elf");
-    match proc::spawn(TEST_CLIB_ELF, 62) {
-        Some(pid) => {
-            console::puts("  TEST_CLIB process spawned (pid=");
-            unsafe {
-                let mut n = pid;
-                let mut buf = [0u8; 10];
-                let mut i = 10;
-                loop {
-                    i -= 1;
-                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
-                    n /= 10;
-                    if n == 0 {
-                        break;
-                    }
-                }
-                for &b in buf[i..].iter() {
-                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
-                }
-            }
-            console::puts(")\r\n");
-        }
-        None => console::puts("  WARNING: test_clib spawn failed\r\n"),
-    }
+    // Priority 30 — Fork test
+    spawn_service!(test_fork, 30);
 
-    // Spawn the TEST_USER service (V12.0C multi-user support test, priority 62)
-    // High priority to run before wfi-loop services.
-    static TEST_USER_ELF: &[u8] = include_bytes!("test_user.elf");
-    match proc::spawn(TEST_USER_ELF, 62) {
-        Some(pid) => {
-            console::puts("  TEST_USER process spawned (pid=");
-            unsafe {
-                let mut n = pid;
-                let mut buf = [0u8; 10];
-                let mut i = 10;
-                loop {
-                    i -= 1;
-                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
-                    n /= 10;
-                    if n == 0 {
-                        break;
-                    }
-                }
-                for &b in buf[i..].iter() {
-                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
-                }
-            }
-            console::puts(")\r\n");
-        }
-        None => console::puts("  WARNING: TEST_USER spawn failed\r\n"),
-    }
+    // Priority 28
+    spawn_service!(test_arp, 28);
 
-    // Spawn the test_fork service (V2.0 demo)
-    static TEST_FORK_ELF: &[u8] = include_bytes!("test_fork.elf");
-    match proc::spawn(TEST_FORK_ELF, 30) {
-        Some(pid) => {
-            console::puts("  test_fork process spawned (pid=");
-            unsafe {
-                let mut n = pid;
-                let mut buf = [0u8; 10];
-                let mut i = 10;
-                loop {
-                    i -= 1;
-                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
-                    n /= 10;
-                    if n == 0 {
-                        break;
-                    }
-                }
-                for &b in buf[i..].iter() {
-                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
-                }
-            }
-            console::puts(")\r\n");
-        }
-        None => console::puts("  WARNING: test_fork spawn failed\r\n"),
-    }
+    // Priority 27 — Low-priority test services
+    spawn_service!(test_posix2, 27);
+    spawn_service!(test_perf, 27);
 
-    // Spawn the test_exec service (V12.0A dynamic ELF loading demo, priority 63)
-    // High priority so it runs before services like MKFS(57) that may crash.
-    static TEST_EXEC_ELF: &[u8] = include_bytes!("test_exec.elf");
-    match proc::spawn(TEST_EXEC_ELF, 63) {
-        Some(pid) => {
-            console::puts("  TEST_EXEC process spawned (pid=");
-            unsafe {
-                let mut n = pid;
-                let mut buf = [0u8; 10];
-                let mut i = 10;
-                loop {
-                    i -= 1;
-                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
-                    n /= 10;
-                    if n == 0 {
-                        break;
-                    }
-                }
-                for &b in buf[i..].iter() {
-                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
-                }
-            }
-            console::puts(")\r\n");
-        }
-        None => console::puts("  WARNING: test_exec spawn failed\r\n"),
-    }
+    // Priority 26
+    spawn_service!(test_inv, 26);
 
-    // Spawn the test_sdp service (V5.0A service discovery test, priority 56)
-    // Runs after REG(57); sends to REG's EP for service lookup
-    static TEST_SDP_ELF: &[u8] = include_bytes!("test_sdp.elf");
-    match proc::spawn(TEST_SDP_ELF, 56) {
-        Some(pid) => {
-            console::puts("  TEST_SDP process spawned (pid=");
-            unsafe {
-                let mut n = pid;
-                let mut buf = [0u8; 10];
-                let mut i = 10;
-                loop {
-                    i -= 1;
-                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
-                    n /= 10;
-                    if n == 0 {
-                        break;
-                    }
-                }
-                for &b in buf[i..].iter() {
-                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
-                }
-            }
-            console::puts(")\r\n");
-        }
-        None => console::puts("  WARNING: test_sdp spawn failed\r\n"),
-    }
+    // Priority 25
+    spawn_service!(cat, 25);
 
-    // Spawn the UART user-space driver (lowest priority, runs last)
-    static UART_ELF: &[u8] = include_bytes!("uart.elf");
-    match proc::spawn(UART_ELF, 24) {
-        Some(pid) => {
-            console::puts("  UART process spawned (pid=");
-            unsafe {
-                let mut n = pid;
-                let mut buf = [0u8; 10];
-                let mut i = 10;
-                loop {
-                    i -= 1;
-                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
-                    n /= 10;
-                    if n == 0 {
-                        break;
-                    }
-                }
-                for &b in buf[i..].iter() {
-                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
-                }
-            }
-            console::puts(")\r\n");
-        }
-        None => console::puts("  WARNING: uart spawn failed\r\n"),
-    }
+    // Priority 24 — Shell and filesystem test
+    spawn_service!(test_fs, 24);
+    spawn_service!(sh, 24);
+    spawn_service!(uart, 24);
 
-    // Spawn the drv service (VirtIO block driver, priority 5 so it runs last)
-    static DRV_ELF: &[u8] = include_bytes!("drv.elf");
-    match proc::spawn(DRV_ELF, 5) {
-        Some(pid) => {
-            console::puts("  DRV process spawned (pid=");
-            unsafe {
-                let mut n = pid;
-                let mut buf = [0u8; 10];
-                let mut i = 10;
-                loop {
-                    i -= 1;
-                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
-                    n /= 10;
-                    if n == 0 {
-                        break;
-                    }
-                }
-                for &b in buf[i..].iter() {
-                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
-                }
-            }
-            console::puts(")\r\n");
-        }
-        None => console::puts("  WARNING: drv spawn failed\r\n"),
-    }
+    // Priority 10 — C program
+    spawn_service!(test_c, 10);
 
-    // Spawn the NETDRV service (V4.0B VirtIO network driver, priority 27)
-    // Prio 63 = highest, matches TEST_CAP. NETDRV enqueued first so runs first, then exits.
-    static NETDRV_ELF: &[u8] = include_bytes!("netdrv.elf");
-    match proc::spawn(NETDRV_ELF, 63) {
-        Some(pid) => {
-            console::puts("  NETDRV process spawned (pid=");
-            unsafe {
-                let mut n = pid;
-                let mut buf = [0u8; 10];
-                let mut i = 10;
-                loop {
-                    i -= 1;
-                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
-                    n /= 10;
-                    if n == 0 {
-                        break;
-                    }
-                }
-                for &b in buf[i..].iter() {
-                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
-                }
-            }
-            console::puts(")\r\n");
-        }
-        None => console::puts("  WARNING: netdrv spawn failed\r\n"),
-    }
+    // Priority 5 — Block driver (runs last)
+    spawn_service!(drv, 5);
 
-    // Spawn the TFS rich filesystem service (V6.0C directory tree, priority 54)
-    static TFS_ELF: &[u8] = include_bytes!("tfs.elf");
-    match proc::spawn(TFS_ELF, 61) {
-        Some(pid) => {
-            console::puts("  TFS process spawned (pid=");
-            unsafe {
-                let mut n = pid;
-                let mut buf = [0u8; 10];
-                let mut i = 10;
-                loop {
-                    i -= 1;
-                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
-                    n /= 10;
-                    if n == 0 {
-                        break;
-                    }
-                }
-                for &b in buf[i..].iter() {
-                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
-                }
-            }
-            console::puts(")\r\n");
-        }
-        None => console::puts("  WARNING: tfs spawn failed\r\n"),
-    }
+    // Priority 55 — Demo (runs after all services are spawned)
+    spawn_service!(demo, 55);
 
-    // Spawn the SMP verification test (V11.0A concurrent IPC, priority 61)
-    static SMP_ELF: &[u8] = include_bytes!("test_smp.elf");
-    match proc::spawn(SMP_ELF, 61) {
-        Some(pid) => {
-            console::puts("  SMP_TEST process spawned (pid=");
-            unsafe {
-                let mut n = pid;
-                let mut buf = [0u8; 10];
-                let mut i = 10;
-                loop {
-                    i -= 1;
-                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
-                    n /= 10;
-                    if n == 0 {
-                        break;
-                    }
-                }
-                for &b in buf[i..].iter() {
-                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
-                }
-            }
-            console::puts(")\r\n");
-        }
-        None => console::puts("  WARNING: smp spawn failed\r\n"),
-    }
-
-    // Spawn the TFS test service (V4.0A persistent disk FS, priority 55)
-    static TEST_TFS_ELF: &[u8] = include_bytes!("test_tfs.elf");
-    match proc::spawn(TEST_TFS_ELF, 55) {
-        Some(pid) => {
-            console::puts("  TEST_TFS process spawned (pid=");
-            unsafe {
-                let mut n = pid;
-                let mut buf = [0u8; 10];
-                let mut i = 10;
-                loop {
-                    i -= 1;
-                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
-                    n /= 10;
-                    if n == 0 {
-                        break;
-                    }
-                }
-                for &b in buf[i..].iter() {
-                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
-                }
-            }
-            console::puts(")\r\n");
-        }
-        None => console::puts("  WARNING: test_tfs spawn failed\r\n"),
-    }
-
-    // Spawn the TFS journal demo (V7.0C write-ahead log, priority 62)
-    // Priority 62 matches EDIT/TEST_EDIT/TEST_CLIB so it runs before
-    // those services enter wfi loops and hog the scheduler at that level.
-    static TFS_JRNL_ELF: &[u8] = include_bytes!("tfs_jrnl.elf");
-    match proc::spawn(TFS_JRNL_ELF, 62) {
-        Some(pid) => {
-            console::puts("  TFS_JRNL process spawned (pid=");
-            unsafe {
-                let mut n = pid;
-                let mut buf = [0u8; 10];
-                let mut i = 10;
-                loop {
-                    i -= 1;
-                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
-                    n /= 10;
-                    if n == 0 {
-                        break;
-                    }
-                }
-                for &b in buf[i..].iter() {
-                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
-                }
-            }
-            console::puts(")\r\n");
-        }
-        None => console::puts("  WARNING: tfs_jrnl spawn failed\r\n"),
-    }
-
-    // Spawn the C/ASM test program (V3.0 Route B — Standard C program support demo, prio 10)
-    // Low priority since it enters a wfi-timer-reschedule loop that would
-    // starve any service below it. Demo at 55 and FS at 32 must run above it.
-    static TEST_C_ELF: &[u8] = include_bytes!("test_c.elf");
-    match proc::spawn(TEST_C_ELF, 10) {
-        Some(pid) => {
-            console::puts("  C program spawned (pid=");
-            unsafe {
-                let mut n = pid;
-                let mut buf = [0u8; 10];
-                let mut i = 10;
-                loop {
-                    i -= 1;
-                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
-                    n /= 10;
-                    if n == 0 {
-                        break;
-                    }
-                }
-                for &b in buf[i..].iter() {
-                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
-                }
-            }
-            console::puts(")\r\n");
-        }
-        None => console::puts("  WARNING: C program spawn failed\r\n"),
-    }
-
-    // Spawn the PROC service (V3.2 namespace isolation — process listing/management)
-    static PROC_ELF: &[u8] = include_bytes!("proc.elf");
-    match proc::spawn(PROC_ELF, 60) {
-        Some(pid) => {
-            console::puts("  PROC process spawned (pid=");
-            unsafe {
-                let mut n = pid;
-                let mut buf = [0u8; 10];
-                let mut i = 10;
-                loop {
-                    i -= 1;
-                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
-                    n /= 10;
-                    if n == 0 {
-                        break;
-                    }
-                }
-                for &b in buf[i..].iter() {
-                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
-                }
-            }
-            console::puts(")\r\n");
-        }
-        None => console::puts("  WARNING: PROC spawn failed\r\n"),
-    }
-
-    // Spawn the TEST_PROC service (V3.2 test client)
-    static TEST_PROC_ELF: &[u8] = include_bytes!("test_proc.elf");
-    match proc::spawn(TEST_PROC_ELF, 59) {
-        Some(pid) => {
-            console::puts("  TEST_PROC process spawned (pid=");
-            unsafe {
-                let mut n = pid;
-                let mut buf = [0u8; 10];
-                let mut i = 10;
-                loop {
-                    i -= 1;
-                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
-                    n /= 10;
-                    if n == 0 {
-                        break;
-                    }
-                }
-                for &b in buf[i..].iter() {
-                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
-                }
-            }
-            console::puts(")\r\n");
-        }
-        None => console::puts("  WARNING: TEST_PROC spawn failed\r\n"),
-    }
-
-    // Spawn the TEST_CAP service (V4.0C capability security test, priority 27)
-    static TEST_CAP_ELF: &[u8] = include_bytes!("test_cap.elf");
-    match proc::spawn(TEST_CAP_ELF, 63) {
-        Some(pid) => {
-            console::puts("  TEST_CAP process spawned (pid=");
-            unsafe {
-                let mut n = pid;
-                let mut buf = [0u8; 10];
-                let mut i = 10;
-                loop {
-                    i -= 1;
-                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
-                    n /= 10;
-                    if n == 0 {
-                        break;
-                    }
-                }
-                for &b in buf[i..].iter() {
-                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
-                }
-            }
-            console::puts(")\r\n");
-        }
-        None => console::puts("  WARNING: TEST_CAP spawn failed\r\n"),
-    }
-
-    // Spawn the TEST_POSIX2 service (V11.0C extended POSIX syscalls test, priority 27)
-    static TEST_POSIX2_ELF: &[u8] = include_bytes!("test_posix2.elf");
-    match proc::spawn(TEST_POSIX2_ELF, 27) {
-        Some(pid) => {
-            console::puts("  TEST_POSIX2 process spawned (pid=");
-            unsafe {
-                let mut n = pid;
-                let mut buf = [0u8; 10];
-                let mut i = 10;
-                loop {
-                    i -= 1;
-                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
-                    n /= 10;
-                    if n == 0 {
-                        break;
-                    }
-                }
-                for &b in buf[i..].iter() {
-                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
-                }
-            }
-            console::puts(")\r\n");
-        }
-        None => console::puts("  WARNING: test_posix2 spawn failed\r\n"),
-    }
-
-    // Spawn the TEST_PERF service (V5.0D performance benchmark, priority 27)
-    static TEST_PERF_ELF: &[u8] = include_bytes!("test_perf.elf");
-    match proc::spawn(TEST_PERF_ELF, 27) {
-        Some(pid) => {
-            console::puts("  TEST_PERF process spawned (pid=");
-            unsafe {
-                let mut n = pid;
-                let mut buf = [0u8; 10];
-                let mut i = 10;
-                loop {
-                    i -= 1;
-                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
-                    n /= 10;
-                    if n == 0 {
-                        break;
-                    }
-                }
-                for &b in buf[i..].iter() {
-                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
-                }
-            }
-            console::puts(")\r\n");
-        }
-        None => console::puts("  WARNING: TEST_PERF spawn failed\r\n"),
-    }
-
-    // Spawn the BB service (V7.0B BusyBox-like multi-command utility, priority 27)
-    // High priority to run before JRNL(62) which crashes with an unhandled trap.
-    // Demonstrates the BusyBox concept: single binary dispatching multiple commands.
-    static BB_ELF: &[u8] = include_bytes!("bb.elf");
-    match proc::spawn(BB_ELF, 63) {
-        Some(pid) => {
-            console::puts("  BB process spawned (pid=");
-            unsafe {
-                let mut n = pid;
-                let mut buf = [0u8; 10];
-                let mut i = 10;
-                loop {
-                    i -= 1;
-                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
-                    n /= 10;
-                    if n == 0 {
-                        break;
-                    }
-                }
-                for &b in buf[i..].iter() {
-                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
-                }
-            }
-            console::puts(")\r\n");
-        }
-        None => console::puts("  WARNING: BB spawn failed\r\n"),
-    }
-
-    // Spawn the TEST_ARP service (V7.0A ARP query test for virtual Ethernet, priority 28)
-    static TEST_ARP_ELF: &[u8] = include_bytes!("test_arp.elf");
-    match proc::spawn(TEST_ARP_ELF, 28) {
-        Some(pid) => {
-            console::puts("  TEST_ARP process spawned (pid=");
-            unsafe {
-                let mut n = pid;
-                let mut buf = [0u8; 10];
-                let mut i = 10;
-                loop {
-                    i -= 1;
-                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
-                    n /= 10;
-                    if n == 0 {
-                        break;
-                    }
-                }
-                for &b in buf[i..].iter() {
-                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
-                }
-            }
-            console::puts(")\r\n");
-        }
-        None => console::puts("  WARNING: TEST_ARP spawn failed\r\n"),
-    }
-
-    // Spawn the SHM test service (V12.0B shared memory IPC demo, priority 63)
-    // Highest priority to ensure it runs before other services.
-    static TEST_SHM_ELF: &[u8] = include_bytes!("test_shm.elf");
-    match proc::spawn(TEST_SHM_ELF, 63) {
-        Some(pid) => {
-            console::puts("  SHM_TEST process spawned (pid=");
-            unsafe {
-                let mut n = pid;
-                let mut buf = [0u8; 10];
-                let mut i = 10;
-                loop {
-                    i -= 1;
-                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
-                    n /= 10;
-                    if n == 0 {
-                        break;
-                    }
-                }
-                for &b in buf[i..].iter() {
-                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
-                }
-            }
-            console::puts(")\r\n");
-        }
-        None => console::puts("  WARNING: test_shm spawn failed\r\n"),
-    }
-
-    // Spawn the PCI service (V7.0D PCI bus enumeration, priority 59)
-    // Scans PCI configuration space via ECAM to discover devices.
-    static PCI_ELF: &[u8] = include_bytes!("pci.elf");
-    match proc::spawn(PCI_ELF, 59) {
-        Some(pid) => {
-            console::puts("  PCI process spawned (pid=");
-            unsafe {
-                let mut n = pid;
-                let mut buf = [0u8; 10];
-                let mut i = 10;
-                loop {
-                    i -= 1;
-                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
-                    n /= 10;
-                    if n == 0 {
-                        break;
-                    }
-                }
-                for &b in buf[i..].iter() {
-                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
-                }
-            }
-            console::puts(")\r\n");
-        }
-        None => console::puts("  WARNING: PCI spawn failed\r\n"),
-    }
-
-    // Spawn the BENCH service (V10.0D performance benchmark suite, priority 59)
-    static BENCH_ELF: &[u8] = include_bytes!("bench.elf");
-    match proc::spawn(BENCH_ELF, 59) {
-        Some(pid) => {
-            console::puts("  BENCH process spawned (pid=");
-            unsafe {
-                let mut n = pid;
-                let mut buf = [0u8; 10];
-                let mut i = 10;
-                loop {
-                    i -= 1;
-                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
-                    n /= 10;
-                    if n == 0 {
-                        break;
-                    }
-                }
-                for &b in buf[i..].iter() {
-                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
-                }
-            }
-            console::puts(")\r\n");
-        }
-        None => console::puts("  WARNING: BENCH spawn failed\r\n"),
-    }
-
-    // Spawn the VETH virtual ethernet service (V7.0A virtual Ethernet over IPC, priority 58)
-    static VETH_ELF: &[u8] = include_bytes!("veth.elf");
-    match proc::spawn(VETH_ELF, 58) {
-        Some(pid) => {
-            console::puts("  VETH process spawned (pid=");
-            unsafe {
-                let mut n = pid;
-                let mut buf = [0u8; 10];
-                let mut i = 10;
-                loop {
-                    i -= 1;
-                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
-                    n /= 10;
-                    if n == 0 {
-                        break;
-                    }
-                }
-                for &b in buf[i..].iter() {
-                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
-                }
-            }
-            console::puts(")\r\n");
-        }
-        None => console::puts("  WARNING: VETH spawn failed\r\n"),
-    }
-
-    // Spawn the PKG service (V9.0B package manager, priority 58)
-    static PKG_ELF: &[u8] = include_bytes!("pkg.elf");
-    match proc::spawn(PKG_ELF, 58) {
-        Some(pid) => {
-            console::puts("  PKG process spawned (pid=");
-            unsafe {
-                let mut n = pid;
-                let mut buf = [0u8; 10];
-                let mut i = 10;
-                loop {
-                    i -= 1;
-                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
-                    n /= 10;
-                    if n == 0 {
-                        break;
-                    }
-                }
-                for &b in buf[i..].iter() {
-                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
-                }
-            }
-            console::puts(")\r\n");
-        }
-        None => console::puts("  WARNING: PKG spawn failed\r\n"),
-    }
-
-    // Signal secondary HARTs that they can proceed
+    // Signal secondary HARTs
     BOOT_READY.store(true, Ordering::Release);
-    console::puts("  Secondary HARTs released\r\n");
-
-    // Spawn the DEMO service (V8.0B integrated system demo, priority 55)
-    // Exercises all subsystems in sequence.
-    static DEMO_ELF: &[u8] = include_bytes!("demo.elf");
-    match proc::spawn(DEMO_ELF, 55) {
-        Some(pid) => {
-            console::puts("  DEMO process spawned (pid=");
-            unsafe {
-                let mut n = pid;
-                let mut buf = [0u8; 10];
-                let mut i = 10;
-                loop {
-                    i -= 1;
-                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
-                    n /= 10;
-                    if n == 0 {
-                        break;
-                    }
-                }
-                for &b in buf[i..].iter() {
-                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
-                }
-            }
-            console::puts(")\r\n");
-        }
-        None => console::puts("  WARNING: DEMO spawn failed\r\n"),
-    }
-
-    // Spawn the RUSTDEMO service (V10.0A Rust user-space program, priority 60)
-    // Exercises all libtros syscalls: IPC, FS, MEM, CAP, PERF
-    static RUSTDEMO_ELF: &[u8] = include_bytes!("rustdemo.elf");
-    match proc::spawn(RUSTDEMO_ELF, 60) {
-        Some(pid) => {
-            console::puts("  RUSTDEMO process spawned (pid=");
-            unsafe {
-                let mut n = pid;
-                let mut buf = [0u8; 10];
-                let mut i = 10;
-                loop {
-                    i -= 1;
-                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
-                    n /= 10;
-                    if n == 0 {
-                        break;
-                    }
-                }
-                for &b in buf[i..].iter() {
-                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
-                }
-            }
-            console::puts(")\r\n");
-        }
-        None => console::puts("  WARNING: RUSTDEMO spawn failed\r\n"),
-    }
-
-    // Spawn the TEST_HTTP service (V11.0D HTTP client test, prio 58)
-    // Runs in the same priority group as HTTP(58) so HTTP starts first, then test_http sends.
-    static TEST_HTTP_ELF: &[u8] = include_bytes!("test_http.elf");
-    match proc::spawn(TEST_HTTP_ELF, 58) {
-        Some(pid) => {
-            console::puts("  TEST_HTTP process spawned (pid=");
-            unsafe {
-                let mut n = pid;
-                let mut buf = [0u8; 10];
-                let mut i = 10;
-                loop {
-                    i -= 1;
-                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
-                    n /= 10;
-                    if n == 0 {
-                        break;
-                    }
-                }
-                for &b in buf[i..].iter() {
-                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
-                }
-            }
-            console::puts(")\r\n");
-        }
-        None => console::puts("  WARNING: TEST_HTTP spawn failed\r\n"),
-    }
-
-    // Spawn the TEST_SIG service (V12.0D signal handling test, priority 62)
-    // Tests SIGCHLD registration, fork, and waitpid.
-    static TEST_SIG_ELF: &[u8] = include_bytes!("test_sig.elf");
-    match proc::spawn(TEST_SIG_ELF, 62) {
-        Some(pid) => {
-            console::puts("  TEST_SIG process spawned (pid=");
-            unsafe {
-                let mut n = pid;
-                let mut buf = [0u8; 10];
-                let mut i = 10;
-                loop {
-                    i -= 1;
-                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
-                    n /= 10;
-                    if n == 0 {
-                        break;
-                    }
-                }
-                for &b in buf[i..].iter() {
-                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
-                }
-            }
-            console::puts(")\r\n");
-        }
-        None => console::puts("  WARNING: TEST_SIG spawn failed\r\n"),
-    }
+    println!("  Secondary HARTs released");
 
     // Create idle thread and start scheduler
     let idle = Box::new(crate::proc::thread::Thread::new_idle());
     let idle_ptr: *mut crate::proc::thread::Thread = Box::into_raw(idle);
-    console::puts("  Starting scheduler...\r\n");
+    println!("  Starting scheduler...");
     crate::sched::start_scheduler(idle_ptr);
 }
 
@@ -1465,12 +290,7 @@ pub fn idle_loop() -> ! {
 #[cfg(not(test))]
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
-    console::puts("KERNEL PANIC: ");
-    if let Some(loc) = info.location() {
-        console::puts(loc.file());
-        console::puts(":");
-    }
-    console::puts("\r\n");
+    println!("KERNEL PANIC: {}", info);
     idle_loop();
 }
 

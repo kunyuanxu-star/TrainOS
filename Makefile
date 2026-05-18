@@ -16,7 +16,7 @@ services:
 	  -p reg -p netdrv -p test_sdp -p test_inv -p test_perf \
 	  -p test_clib -p test_edit -p test_arp -p test_cap \
 	  -p uart -p test_tfs -p rustdemo -p pkg -p test_pkg -p test_net2 \
-	  -p mkfs -p test_mount -p test_sig -p test_exec
+	  -p mkfs -p test_mount -p test_sig -p test_exec -p tcp
 	@for elf in target/riscv64gc-unknown-none-elf/release/*; do \
 		base=$$(basename "$$elf"); \
 		if [ -f "$$elf" ] && file "$$elf" | grep -q ELF && [ ! -d "kernel/src/$$base" ]; then \

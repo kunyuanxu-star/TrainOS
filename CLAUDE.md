@@ -11,41 +11,38 @@ Uses RustSBI as boot firmware, runs on machina emulator.
 2. Architecture: RISC-V 64-bit (rv64gc), Sv39 virtual memory, MIT license.
 3. Language: Rust nightly (`no_std` kernel + user-space, no heap in services).
 
-## Current Status (2026-05-08) — V8.0
+## Current Status (2026-05-18) — V13.0
 
 ### Completed
+- **Kernel print macros**: `println!()` and `print!()` using `core::fmt::Write` — eliminates manual digit-by-digit printing throughout the kernel
+- **Process crash isolation**: Unknown traps now kill the offending process instead of hanging the kernel
+- **main.rs refactored**: 1482 lines → ~260 lines using `spawn_service!` macro, services organized by priority group
+- **TCP Service**: User-space TCP protocol handler with full state machine (LISTEN/SYN-SENT/SYN-RECEIVED/ESTABLISHED/FIN-WAIT/CLOSE-WAIT/LAST-ACK/TIME-WAIT), 3-way handshake, reliable data transfer with sequence numbers and ACKs
+- **VFS Service**: Enhanced FS service at EP 2 with directory tree, 16 file slots, CREATE/READ/WRITE/APPEND/DELETE/LIST/STAT operations
+- **procfs**: Virtual /proc filesystem with /proc/uptime, /proc/meminfo, /proc/perf, /proc/version, /proc/proc, /proc/self
 - SMP 2.0: Active IPI on IPC wakeup, per-CPU pick counts
-- 24 user-space services: init, ping, fs, test_fs, sh, test_fork, uart, test_posix, drv, net, echo, test_net, test_c, proc, test_proc, demo, stress, bb, pci, veth, tfs, tfs_jrnl, edit, cat
-- VirtIO block I/O: Full virtqueue management, sector read/write via kernel proxy
-- Proc service: Process listing (pid, prio, state) and kill capability
-- Demo service: System health check (IPC, FS, MEM, CAP, PERF)
-- Block I/O stress/benchmark: stress and bb services for storage testing
-- PCI enumeration: pci service for device discovery
-- Virtual Ethernet: veth service for network device access
-- TFS journaling file system: tfs + tfs_jrnl services for persistent storage
-- Text utilities: edit (editor) and cat (file viewer) services
-- Per-process CNode capability enforcement
-- POSIX open/read/write/close syscalls (IPC→FS translation)
-- COW fork with full page table deep-copy and page fault handler
-- IPC priority inheritance
-- Network stack with port-based datagram routing
-- C/ASM program support via Python ELF64 generator
-- VirtIO MMIO kernel proxy (read32/write32), block device detected
+- 35+ user-space services including TCP, procfs, HTTP server
+- VirtIO block I/O, PCI enumeration, TFS journaling FS
+- Capability system, 39+ syscalls, COW fork, POSIX compatibility
+- Network stack with port-based datagram routing + TCP reliable streams
 
 ### Architecture
 **Microkernel** — kernel provides:
 - Capability system (CNode, Mint/Copy/Move/Revoke/Delete)
 - Synchronous IPC (endpoint send/recv, 64-byte payload, cap transfer)
 - 64-priority SMP scheduler (spinlock, bitmap O(1), soft affinity)
-- Buddy allocator + Sv39 page tables + COW
+- Buddy allocator + Sv39 page tables + COW + process crash isolation
 
-User-space services communicate via IPC. Well-known endpoints: EP 1 (init), EP 2 (FS), EP 3 (NET).
+User-space services communicate via IPC. Well-known endpoints: EP 1 (init), EP 2 (VFS), EP 3 (NET).
 
 ## Build & Run
 
 ```bash
+# Build all services
+cd TrainOS && make services
+
 # Build kernel (includes embedded service binaries)
-cd TrainOS && cargo build --release -p kernel
+cargo build --release -p kernel
 
 # Run on machina (from testOS/)
 ./machina/target/release/machina \
@@ -61,7 +58,8 @@ cd TrainOS && cargo build --release -p kernel
 
 | File | Purpose |
 |------|---------|
-| `main.rs` | Entry point, boot sequence, service spawning |
+| `main.rs` | Entry point, boot sequence, `spawn_service!` macro, service spawning |
+| `console.rs` | KernelWriter, `println!`/`print!` macros via SBI console |
 | `sync.rs` | SpinLock primitive (atomic CAS with pause) |
 | `per_cpu.rs` | Per-CPU data (hart_id, current, idle) |
 | `mem/buddy.rs` | Buddy allocator (orders 0-12) |
@@ -69,59 +67,67 @@ cd TrainOS && cargo build --release -p kernel
 | `mem/layout.rs` | Physical/virtual address constants |
 | `mem/heap.rs` | Kernel heap bump allocator (KernelAllocator wrapper) |
 | `trap/asm.rs` | Trap entry/exit assembly (35-field frame, 280 bytes) |
-| `trap/mod.rs` | TrapFrame, dispatch, CLINT timer, page fault, IPI |
-| `proc/process.rs` | Process (pid, state, PT root, CNode id, thread) |
+| `trap/mod.rs` | TrapFrame, dispatch, CLINT timer, page fault with COW, process kill on crash |
+| `proc/process.rs` | Process (pid, state, PT root, CNode id, thread, uid/gid) |
 | `proc/thread.rs` | Thread, TaskContext (with satp), WaitTarget |
 | `proc/switch.rs` | context_switch + user_trap_return assembly |
 | `proc/elf.rs` | ELF64 loader with process-private PT helpers |
 | `proc/mod.rs` | Process manager (spawn, fork_child, PROCESSES table) |
-| `sched/mod.rs` | 64-priority scheduler (SpinLock, bitmap, ThreadQueue) |
+| `sched/mod.rs` | 64-priority SMP scheduler (SpinLock, bitmap, ThreadQueue) |
 | `cap/types.rs` | CapType, Rights, Resource, Slot, ResourceData |
 | `cap/ops.rs` | alloc_resource, mint, copy_cap, move_cap, delete_cap, revoke |
 | `cap/mod.rs` | Global RESOURCES table |
 | `ipc/message.rs` | Message, CapTransfer, TransferMode |
-| `ipc/endpoint.rs` | Endpoint, send/recv with priority inheritance |
+| `ipc/endpoint.rs` | Endpoint, send/recv with priority inheritance, IPI wakeup |
 | `ipc/mod.rs` | Global ENDPOINTS table |
-| `syscall/mod.rs` | Syscall dispatch table (31 syscalls) |
+| `syscall/mod.rs` | Syscall dispatch table (40+ syscalls), MMIO proxy |
 | `syscall/ipc.rs` | ep_create, send, recv with cap checks |
-| `syscall/proc.rs` | spawn, exit, yield, mmio_map, fork, proclist, kill, blk_read, blk_write |
+| `syscall/proc.rs` | spawn, exit, yield, mmio_map, fork, proclist, kill, blk_read/write, shm_map, signal, waitpid |
 | `syscall/cap.rs` | mint, copy, move, delete, cap_stats with caller CNode |
-| `syscall/posix.rs` | open, read, write, close (IPC→FS translation) |
+| `syscall/posix.rs` | open, read, write, close, stat, lseek, dup, getcwd |
 
-### User-space
+### User-space Services
 
-| Directory | Purpose |
-|-----------|---------|
-| `lib/tros/` | User-space syscall library (25+ wrappers) |
-| `services/init/` | System init, IPC receiver (EP 1) |
-| `services/ping/` | IPC send demo |
-| `services/fs/` | File system service (EP 2, READ/WRITE ops) |
-| `services/test_fs/` | FS RPC test client |
-| `services/sh/` | Interactive shell (help, echo, read, write, ps) |
-| `services/test_fork/` | COW fork test |
-| `services/test_posix/` | POSIX API test |
-| `services/drv/` | VirtIO MMIO driver framework |
-| `services/net/` | Network stack (EP 3, port routing) |
-| `services/echo/` | Echo service (port 7) |
-| `services/test_net/` | Network stack test client |
-| `services/demo/` | System demo (IPC, FS, MEM, CAP, PERF checks) |
-| `services/stress/` | Block I/O stress test |
-| `services/bb/` | Block I/O benchmark |
-| `services/pci/` | PCI device enumeration |
-| `services/veth/` | Virtual Ethernet driver |
-| `services/tfs/` | TFS file system service |
-| `services/tfs_jrnl/` | TFS journaling layer |
-| `services/edit/` | Text editor |
-| `services/cat/` | File viewer |
+| Service | EP | Purpose |
+|---------|-----|---------|
+| `init/` | 1 | System init, IPC receiver |
+| `fs/` | 2 | VFS: directories, files, procfs virtual files |
+| `net/` | 3 | Network stack: port registration, datagram routing |
+| `tcp/` | dynamic | TCP reliable stream protocol (3-way handshake, seq/ack, teardown) |
+| `echo/` | dynamic | Echo service (port 7) |
+| `http/` | 8 | HTTP server |
+| `sh/` | dynamic | Interactive shell |
+| `proc/` | dynamic | Process listing and management |
+| `pci/` | dynamic | PCI device enumeration |
+| `veth/` | dynamic | Virtual Ethernet driver |
+| `tfs/` | dynamic | TFS file system service |
+| `tfs_jrnl/` | dynamic | TFS journaling layer |
+| `drv/` | dynamic | VirtIO block/network driver |
+| `demo/` | dynamic | System demo (IPC/FS/MEM/CAP/PERF checks) |
+| `stress/` | dynamic | Block I/O stress test |
+| `bench/` | dynamic | Performance benchmark suite |
 
-## Known Issues
-- `%` operator broken on RISC-V release mode: use `n - (n/10)*10` instead
-- PMP blocks user-mode MMIO access below 0x80000000 (needs firmware update)
-- VecDeque unavailable (nightly `no_global_oom_handling`): use custom Vec+head queue
-- spin::Mutex not SMP-safe for scheduler: replaced with custom SpinLock
-- (FIXED V8.0A) WFI starvation: completed services now call `tros::exit(0)` instead of `loop { wfi }`. Added `sys_yield()` syscall (nr=6) and `tros::yield_cpu()` for voluntary yielding.
+## V13.0 Changes (2026-05-18)
+
+### Kernel Improvements
+- **`println!()` / `print!()` macros**: `core::fmt::Write`-based kernel printing eliminates ~500 lines of manual digit-by-digit printing
+- **Process crash isolation**: `kill_current_process()` in trap handler kills offending process instead of hanging the kernel on unknown traps. Null pointer dereferences and unhandled page faults now gracefully terminate the process.
+- **Refactored main.rs**: `spawn_service!` macro reduces ~1200 lines of repetitive spawn+print code to ~35 concise invocations. Services organized by priority group with rationale comments.
+
+### TCP Service (new)
+- User-space service implementing TCP state machine
+- 3-way handshake (SYN → SYN-ACK → ACK)
+- Reliable in-order data delivery with sequence numbers and ACKs
+- Connection teardown (FIN → FIN-ACK)
+- Allocated statically (no heap), supporting up to 8 concurrent connections
+
+### VFS Service (rewritten)
+- Directory tree support (/, /proc, /home, /etc, /tmp)
+- 16 file slots with path-based lookup
+- Operations: READ, WRITE, APPEND, DELETE, LIST, STAT
+- procfs virtual files: /proc/uptime, /proc/meminfo, /proc/perf, /proc/version, /proc/proc, /proc/self
 
 ## Commit Convention
 Format: `type: description` (conventional commits)
 Types: feat, fix, docs, refactor, test
-Example: `feat: add SMP multi-core support (V2.1)`
+Example: `feat: add TCP service with reliable stream protocol`

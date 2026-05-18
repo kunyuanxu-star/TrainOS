@@ -104,9 +104,12 @@ extern "C" fn handle_trap(tf: &mut TrapFrame) {
 
     if is_interrupt {
         match cause {
-            1 => software_interrupt(tf), // S-mode Software Interrupt (IPI)
-            5 => timer_interrupt(tf),    // Supervisor Timer
-            _ => unknown_trap(scause),
+            1 => software_interrupt(tf),
+            5 => timer_interrupt(tf),
+            _ => {
+                crate::println!("Unhandled interrupt: scause=0x{:x}", scause);
+                crate::sched::schedule(); // try to recover
+            }
         }
     } else {
         match cause {
@@ -114,17 +117,15 @@ extern "C" fn handle_trap(tf: &mut TrapFrame) {
             12 => page_fault(tf), // Instruction page fault
             13 => page_fault(tf), // Load page fault
             15 => page_fault(tf), // Store/AMO page fault
-            _ => unknown_trap(scause),
+            _ => kill_current_process(scause, tf), // Kill process, don't hang kernel
         }
     }
 }
 
 fn software_interrupt(_tf: &mut TrapFrame) {
-    // Acknowledge SSIP by clearing the sip.SSIP bit
     unsafe {
         core::arch::asm!("csrc sip, {}", in(reg) 1usize << 1);
     }
-    // Reschedule — may pick up a thread that was woken by another HART
     crate::sched::schedule();
 }
 
@@ -132,12 +133,10 @@ pub(crate) static mut TICK_COUNT: usize = 0;
 
 fn timer_interrupt(_tf: &mut TrapFrame) {
     clint_set_next_timer();
-    // Clear pending supervisor timer interrupt (STIP) in sip.
     unsafe {
         core::arch::asm!("csrc sip, {}", in(reg) 1usize << 5);
     }
 
-    // Run invariant checks every 100 ticks (~1 second)
     unsafe {
         TICK_COUNT += 1;
         if TICK_COUNT - (TICK_COUNT / 100) * 100 == 0 {
@@ -152,12 +151,23 @@ fn syscall(tf: &mut TrapFrame) {
     crate::syscall::syscall_dispatch(tf);
 }
 
-fn page_fault(_tf: &mut TrapFrame) {
+fn page_fault(tf: &mut TrapFrame) {
     let stval: usize;
     unsafe {
         core::arch::asm!("csrr {}, stval", out(reg) stval);
     }
     let va = stval;
+
+    if va == 0 {
+        // Null pointer dereference — kill process
+        let pid = crate::sched::current_thread()
+            .map(|t| unsafe { (*t).owner })
+            .unwrap_or(0);
+        crate::println!("  KILL: pid={} null pointer dereference", pid);
+        kill_process(pid);
+        crate::sched::schedule();
+        return;
+    }
 
     // Read current satp to find the current page table root
     let satp_val: usize;
@@ -174,13 +184,23 @@ fn page_fault(_tf: &mut TrapFrame) {
         let pte = l0[idx];
         if pte.is_cow() {
             // COW break: allocate new page, copy, update PTE
-            let new_page = crate::mem::buddy::alloc_page().expect("OOM in COW");
+            let new_page = match crate::mem::buddy::alloc_page() {
+                Some(p) => p,
+                None => {
+                    let pid = crate::sched::current_thread()
+                        .map(|t| unsafe { (*t).owner })
+                        .unwrap_or(0);
+                    crate::println!("  KILL: pid={} OOM during COW", pid);
+                    kill_process(pid);
+                    crate::sched::schedule();
+                    return;
+                }
+            };
             let old_kva = crate::mem::sv39::pa_to_kva(pte.phys_addr());
             let new_kva = crate::mem::sv39::pa_to_kva(new_page);
             unsafe {
                 core::ptr::copy_nonoverlapping(old_kva as *const u8, new_kva as *mut u8, 4096);
             }
-            // Update PTE
             let l0_mut = unsafe {
                 &mut *(crate::mem::sv39::pa_to_kva(l0_phys) as *mut [crate::mem::sv39::PTE; 512])
             };
@@ -190,61 +210,42 @@ fn page_fault(_tf: &mut TrapFrame) {
             new_pte.set_accessed(true);
             new_pte.set_dirty(true);
             l0_mut[idx] = new_pte;
-            // Flush TLB for this VA
             unsafe {
                 core::arch::asm!("sfence.vma {}", in(reg) va);
             }
-            return; // successfully handled
+            return;
         }
     }
 
-    // Not a COW page — log and hang
-    crate::console::puts("Page fault at va=0x");
-    for i in (0..16).rev() {
-        let nibble = (va >> (i * 4)) & 0xF;
-        let c = if nibble < 10 {
-            b'0' + nibble as u8
-        } else {
-            b'a' + (nibble - 10) as u8
-        };
-        unsafe {
-            core::arch::asm!("ecall", in("a7") 1usize, in("a0") c as usize);
-        }
-    }
-    crate::console::puts("\r\n");
-    crate::idle_loop();
+    // Not a COW page — kill the process
+    let pid = crate::sched::current_thread()
+        .map(|t| unsafe { (*t).owner })
+        .unwrap_or(0);
+    crate::println!("  KILL: pid={} page fault at va=0x{:x}", pid, va);
+    kill_process(pid);
+    crate::sched::schedule();
 }
 
-fn unknown_trap(scause: usize) {
-    let stval: usize;
-    unsafe {
-        core::arch::asm!("csrr {}, stval", out(reg) stval);
+/// Kill a process by PID — marks it as Dead and removes its thread.
+fn kill_process(pid: u32) {
+    let mut procs = crate::proc::PROCESSES.lock();
+    if let Some(proc) = procs.iter_mut().find(|p| p.pid == pid) {
+        proc.state = crate::proc::process::ProcessState::Dead;
+        if let Some(ref mut thread) = proc.thread {
+            thread.state = crate::proc::thread::ThreadState::Dead;
+        }
     }
+}
 
-    crate::console::puts("Unhandled trap: scause=0x");
-    for i in (0..16).rev() {
-        let nibble = (scause >> (i * 4)) & 0xF;
-        let c = if nibble < 10 {
-            b'0' + nibble as u8
-        } else {
-            b'a' + (nibble - 10) as u8
-        };
-        unsafe {
-            core::arch::asm!("ecall", in("a7") 1usize, in("a0") c as usize);
-        }
-    }
-    crate::console::puts(" stval=0x");
-    for i in (0..16).rev() {
-        let nibble = (stval >> (i * 4)) & 0xF;
-        let c = if nibble < 10 {
-            b'0' + nibble as u8
-        } else {
-            b'a' + (nibble - 10) as u8
-        };
-        unsafe {
-            core::arch::asm!("ecall", in("a7") 1usize, in("a0") c as usize);
-        }
-    }
-    crate::console::puts("\r\n");
-    crate::idle_loop();
+/// Kill the current process due to an unhandled trap.
+fn kill_current_process(scause: usize, tf: &TrapFrame) {
+    let pid = crate::sched::current_thread()
+        .map(|t| unsafe { (*t).owner })
+        .unwrap_or(0);
+    let stval = tf.stval;
+    crate::println!(
+        "  KILL: pid={} unhandled trap scause=0x{:x} sepc=0x{:x} stval=0x{:x}",
+        pid, scause, tf.sepc, stval
+    );
+    kill_process(pid);
 }

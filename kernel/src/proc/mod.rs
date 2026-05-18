@@ -23,22 +23,7 @@ pub fn spawn(elf_data: &[u8], priority: u8) -> Option<u32> {
         pid
     };
 
-    crate::console::puts("  spawn pid=");
-    let mut n = pid as usize;
-    let mut buf = [0u8; 10];
-    let mut i = 10;
-    loop {
-        i -= 1;
-        buf[i] = b'0' + (n - (n / 10) * 10) as u8;
-        n /= 10;
-        if n == 0 {
-            break;
-        }
-    }
-    for &b in buf[i..].iter() {
-        unsafe { core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize); }
-    }
-    crate::console::puts("\r\n");
+    crate::println!("  spawn pid={}", pid);
 
     // Allocate page table root for the process
     let root_pt = buddy::alloc_page()?;
@@ -165,21 +150,6 @@ pub fn fork_child(
     procs.push(proc);
 
     crate::sched::enqueue_thread(thread_ptr);
-    crate::console::puts("fork_child ok pid=");
-    let mut n = child_pid as usize;
-    let mut buf = [0u8; 10];
-    let mut i = 10;
-    loop {
-        i -= 1;
-        buf[i] = b'0' + (n - (n / 10) * 10) as u8;
-        n /= 10;
-        if n == 0 {
-            break;
-        }
-    }
-    for &b in buf[i..].iter() {
-        unsafe { core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize); }
-    }
-    crate::console::puts("\r\n");
+    crate::println!("fork_child ok pid={}", child_pid);
     Some(child_pid)
 }

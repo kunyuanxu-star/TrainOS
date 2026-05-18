@@ -24,22 +24,28 @@ All device drivers, filesystems, network stacks, and POSIX compatibility run as 
 3. **Architecture**: RISC-V 64-bit (rv64gc), Sv39 virtual memory.
 4. **License**: MIT.
 
-## Current Status (2026-05-08)
+## Current Status (2026-05-18)
 
-### V11.0 — SMP-Verified Microkernel with Persistent FS and HTTP Server
+### V13.0 — TCP + VFS + Process Isolation + Kernel Macros
 
-- **39+ system calls**: Process, IPC, capability, MMIO, block I/O, POSIX (stat/lseek/dup/getcwd), debug
-- **34+ user-space services**: init, ping, fs, test_fs, sh, test_fork, uart, test_posix, drv, net, echo, test_net, test_c, proc, test_proc, demo, stress, bb, pci, veth, tfs, tfs_jrnl, edit, cat, bench, rustdemo, mkfs, http, test_smp, test_posix2, test_mount, test_http
+- **40+ system calls**: Process, IPC, capability, MMIO, block I/O, POSIX (stat/lseek/dup/getcwd), signal, waitpid, shm_map
+- **36+ user-space services**: init, ping, fs(VFS), test_fs, sh, test_fork, uart, test_posix, drv, net, tcp(NEW), echo, test_net, test_c, proc, test_proc, demo, stress, bb, pci, veth, tfs, tfs_jrnl, edit, cat, bench, rustdemo, mkfs, http, test_smp, test_posix2, test_mount, test_http, reg, test_sdp, pkg
+- **TCP reliable stream protocol**: 3-way handshake, sequence numbers, ACKs, connection teardown
+- **VFS with procfs**: Directory tree, 16-file slots, virtual /proc files (uptime, meminfo, perf, version, proc)
+- **Process crash isolation**: Kernel kills offending process instead of hanging on unhandled traps
+- **Kernel print macros**: `println!()` / `print!()` using `core::fmt::Write` engine
+- **Refactored main.rs**: ~260 lines (down from 1482), `spawn_service!` macro
 - **SMP verified**: 2 HARTs with concurrent IPC, fork under SMP
 - **Capability system**: Full CNode with Mint/Copy/Move/Revoke/Delete
-- **POSIX compatibility**: open/read/write/close translated to IPC→FS service
+- **POSIX compatibility**: open/read/write/close/stat/lseek/dup/getcwd
 - **COW fork + page fault handler**: Full deep-copy with COW breaking
 - **IPC priority inheritance**: Receiver inherits sender priority
-- **Network stack**: Port-based datagram routing (UDP-like, NET: PASS)
+- **Network stack**: Port-based datagram routing (UDP) + TCP reliable streams
 - **VirtIO block I/O**: Full sector read/write via kernel proxy
 - **File system**: TFS journaling file system, persistent storage
 - **PCI/MMIO device support**: PCI enumeration, VirtIO transport, network driver
-- **System utilities**: Shell, process manager, demo, edit, cat, block I/O stress test
+- **System utilities**: Shell, process manager, demo, edit, cat, block I/O stress/bench
+- **Multi-user support**: UID/GID, chmod, setuid/getuid
 
 ## Build & Run
 
@@ -199,7 +205,9 @@ Full reference: [docs/syscalls.md](docs/syscalls.md)
 - [x] V3.0-V3.2: Active IPI, C program support, VirtIO block, Proc service
 - [x] V4.0-V6.0: PCI, VETH networking, TFS journaling file system
 - [x] V7.0-V8.0: Demo suite, block stress, text utilities, full doc
-- [ ] V8.1: SMP load balancing, prioritised IPC, async I/O
+- [x] V9.0-V12.0: Package manager, HTTP server, multi-user, shared memory, signals
+- [x] V13.0: TCP protocol, VFS+procfs, process crash isolation, kernel print macros
+- [ ] V14.0: Epoll/kqueue async I/O, socket API, container namespaces
 
 ## License
 

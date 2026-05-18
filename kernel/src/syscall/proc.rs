@@ -1,11 +1,104 @@
 use crate::mem::{buddy, sv39};
 use crate::proc::process::ProcessState;
 
-pub fn sys_spawn(_elf_ptr: usize, _elf_len: usize) -> Result<usize, &'static str> {
-    // In a real implementation, copy ELF from user space
-    // For now, this is a placeholder
-    Err("spawn not implemented via syscall")
+pub fn sys_spawn(elf_ptr: usize, elf_len: usize) -> Result<usize, &'static str> {
+    if elf_ptr == 0 || elf_len == 0 || elf_len > 0x10_0000 {
+        return Err("invalid elf args");
+    }
+    // Read ELF data from user space (SUM=1 allows S-mode to access U pages)
+    let elf_data = unsafe { core::slice::from_raw_parts(elf_ptr as *const u8, elf_len) };
+    // Spawn the process from the ELF data (default priority 32)
+    let pid = crate::proc::spawn(elf_data, 32).ok_or("spawn failed")?;
+    Ok(pid as usize)
 }
+pub fn sys_exec(path_ptr: usize) -> Result<usize, &'static str> {
+    // Read path from user space
+    if path_ptr == 0 { return Err("null path"); }
+    let mut path_buf = [0u8; 32];
+    let plen = unsafe {
+        let mut len = 0;
+        let src = path_ptr as *const u8;
+        while len < 31 {
+            let c = src.add(len).read_volatile();
+            if c == 0 { break; }
+            path_buf[len] = c;
+            len += 1;
+        }
+        if len == 0 { return Err("empty path"); }
+        len
+    };
+
+    // Read ELF from VFS
+    let sender_pid = crate::sched::current_thread()
+        .map(|t| unsafe { (*t).owner })
+        .unwrap_or(0);
+    let reply_ep = crate::ipc::create_endpoint();
+    use crate::ipc::message::Message;
+    let mut msg = Message::new(sender_pid, 2); // READ
+    msg.payload[0] = reply_ep as u8;
+    msg.payload[1] = (reply_ep >> 8) as u8;
+    msg.payload[2] = plen as u8;
+    for i in 0..plen { msg.payload[3 + i] = path_buf[i]; }
+    msg.payload_len = 3 + plen;
+    crate::ipc::endpoint::send(2, sender_pid, msg).ok().ok_or("vfs send failed")?;
+
+    // Receive ELF data
+    let mut elf_buf = [0u8; 512];
+    let elf_len = loop {
+        match crate::ipc::endpoint::recv(reply_ep, sender_pid) {
+            Ok(resp) => {
+                let len = core::cmp::min(resp.payload_len, 512);
+                for i in 0..len { elf_buf[i] = resp.payload[i]; }
+                break len;
+            }
+            Err(_) => { crate::sched::schedule(); }
+        }
+    };
+
+    if elf_len < 52 { return Err("ELF too small"); }
+
+    // Get current process page table root
+    let (old_pt, pid) = {
+        let procs = crate::proc::PROCESSES.lock();
+        let proc = procs.iter().find(|p| {
+            let cur = crate::sched::current_thread()
+                .map(|t| unsafe { (*t).owner }).unwrap_or(0);
+            p.pid == cur
+        }).ok_or("no proc")?;
+        (proc.page_table_root, proc.pid)
+    };
+
+    // Allocate new page table and load
+    let new_pt = crate::mem::buddy::alloc_page().ok_or("OOM")?;
+    unsafe {
+        core::ptr::write_bytes(crate::mem::sv39::pa_to_kva(new_pt) as *mut u8, 0, 4096);
+        crate::mem::sv39::copy_kernel_mappings(new_pt);
+    }
+    let (entry, user_sp) = crate::proc::elf::load_elf(&elf_buf[..elf_len], new_pt)
+        .ok_or("elf load failed")?;
+    let new_satp = crate::mem::sv39::make_satp(new_pt);
+
+    // Update process and thread
+    {
+        let mut procs = crate::proc::PROCESSES.lock();
+        if let Some(proc) = procs.iter_mut().find(|p| p.pid == pid) {
+            proc.page_table_root = new_pt;
+        }
+    }
+    let current = crate::sched::current_thread().ok_or("no thread")?;
+    unsafe {
+        (*current).task_ctx.satp = new_satp;
+        if let Some(ref mut tf) = (*current).trap_frame {
+            tf.sepc = entry;
+            tf.user_sp = user_sp;
+            tf.a0 = 0;
+        }
+    }
+
+    crate::sched::schedule();
+    Ok(0)
+}
+
 
 pub fn sys_exit(_code: i32) -> Result<usize, &'static str> {
     let pid = crate::sched::current_thread()
@@ -878,6 +971,7 @@ pub fn sys_setsid() -> Result<usize, &'static str> {
         .ok_or("no proc")?;
     Ok(pid as usize)
 }
+
 
 /// sys_sysinfo(buf_ptr) — fill sysinfo structure.
 /// struct sysinfo {

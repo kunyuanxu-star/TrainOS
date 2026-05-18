@@ -178,6 +178,7 @@ pub fn syscall_dispatch(tf: &mut TrapFrame) {
         SYS_MMIO_MAP => proc::sys_mmio_map(arg0, arg1),
         SYS_EXIT => proc::sys_exit(arg0 as i32),
         SYS_SPAWN => proc::sys_spawn(arg0, arg1),
+        SYS_EXEC => proc::sys_exec(arg0),
         SYS_FORK => proc::sys_fork(tf.sepc),
         SYS_GETPID => Ok(crate::sched::current_thread()
             .map(|t| unsafe { (*t).owner as usize })

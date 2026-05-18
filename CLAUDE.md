@@ -11,13 +11,24 @@ Uses RustSBI as boot firmware, runs on machina emulator.
 2. Architecture: RISC-V 64-bit (rv64gc), Sv39 virtual memory, MIT license.
 3. Language: Rust nightly (`no_std` kernel + user-space, no heap in services).
 
-## Current Status (2026-05-18) — V13.0
+## Current Status (2026-05-18) — V17.0
 
 ### Completed
-- **Kernel print macros**: `println!()` and `print!()` using `core::fmt::Write` — eliminates manual digit-by-digit printing throughout the kernel
-- **Process crash isolation**: Unknown traps now kill the offending process instead of hanging the kernel
-- **main.rs refactored**: 1482 lines → ~260 lines using `spawn_service!` macro, services organized by priority group
-- **TCP Service**: User-space TCP protocol handler with full state machine (LISTEN/SYN-SENT/SYN-RECEIVED/ESTABLISHED/FIN-WAIT/CLOSE-WAIT/LAST-ACK/TIME-WAIT), 3-way handshake, reliable data transfer with sequence numbers and ACKs
+- **Dynamic process spawning**: `sys_spawn` (syscall 3) creates new processes from user-provided ELF data
+- **Process execution**: `sys_exec` (syscall 7) loads ELF from VFS and replaces current process image
+- **POSIX I/O rewrite**: Per-process fd table (64 slots), proper path-based VFS forwarding, stdin/stdout/stderr
+- **Process time accounting**: utime/stime tracking per process, wired into timer ticks and syscall dispatch
+- **Shell V2**: Real ps (proclist), VFS-backed read/write/cat/ls, perf/mem/pid/date commands
+- **Kernel print macros**: `println!()` and `print!()` using `core::fmt::Write`
+- **Process crash isolation**: Unknown traps kill offending process instead of hanging kernel
+- **main.rs refactored**: 1482 lines → ~260 lines using `spawn_service!` macro
+- **TCPv2 Service**: Retransmission timer with exponential backoff, congestion window, slow start
+- **VFS Service**: Directory tree, 16 file slots, /proc virtual filesystem
+- **Namespaces**: UTS namespace (hostname isolation), PID namespace
+- **Device driver framework**: Register/unregister/list drivers
+- **CPU affinity**: sched_setaffinity/getaffinity
+- **Resource tracking**: getrusage, times, sysinfo
+- **81+ syscalls**: Full POSIX I/O, sockets, epoll, mmap, filesystem, time, process
 - **VFS Service**: Enhanced FS service at EP 2 with directory tree, 16 file slots, CREATE/READ/WRITE/APPEND/DELETE/LIST/STAT operations
 - **procfs**: Virtual /proc filesystem with /proc/uptime, /proc/meminfo, /proc/perf, /proc/version, /proc/proc, /proc/self
 - SMP 2.0: Active IPI on IPC wakeup, per-CPU pick counts
@@ -107,7 +118,7 @@ cargo build --release -p kernel
 | `stress/` | dynamic | Block I/O stress test |
 | `bench/` | dynamic | Performance benchmark suite |
 
-## V13.0 Changes (2026-05-18)
+## V17.0 Changes (2026-05-18)
 
 ### Kernel Improvements
 - **`println!()` / `print!()` macros**: `core::fmt::Write`-based kernel printing eliminates ~500 lines of manual digit-by-digit printing

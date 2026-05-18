@@ -303,6 +303,34 @@ pub fn fork() -> usize {
 }
 
 /// Exit current process (syscall 0)
+/// Spawn a new process from ELF data (syscall 3).
+pub fn spawn(elf_data: &[u8]) -> usize {
+    let r: usize;
+    unsafe {
+        core::arch::asm!("ecall",
+            in("a7") 3usize,
+            in("a0") elf_data.as_ptr() as usize,
+            in("a1") elf_data.len(),
+            lateout("a0") r,
+        );
+    }
+    r
+}
+
+/// Execute a new program, replacing the current process (syscall 7).
+/// Path is looked up in the VFS.
+pub fn exec(path: &str) -> usize {
+    let r: usize;
+    unsafe {
+        core::arch::asm!("ecall",
+            in("a7") 7usize,
+            in("a0") path.as_ptr() as usize,
+            lateout("a0") r,
+        );
+    }
+    r
+}
+
 pub fn exit(_code: i32) -> ! {
     unsafe {
         core::arch::asm!(
@@ -321,18 +349,6 @@ pub fn exit(_code: i32) -> ! {
 /// Load and execute an ELF binary from disk (syscall 7).
 /// The path format is "/sector/N" where N is a disk sector number.
 /// Returns the new PID on success, or usize::MAX on error.
-pub fn exec(path: &str) -> usize {
-    let r: usize;
-    unsafe {
-        core::arch::asm!(
-            "ecall",
-            in("a7") 7usize,
-            in("a0") path.as_ptr() as usize,
-            lateout("a0") r,
-        );
-    }
-    r
-}
 
 /// POSIX-compatible system calls.
 /// These use the kernel's POSIX syscalls (50-53) which translate to IPC internally.

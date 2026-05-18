@@ -11,47 +11,55 @@ fn current_pid() -> u32 {
         .unwrap_or(0)
 }
 
+/// Read a null-terminated string from user space into the given buffer.
+/// Returns the number of bytes read (excluding null terminator).
+fn read_user_path(ptr: usize, out: &mut [u8]) -> Result<usize, &'static str> {
+    if ptr == 0 { return Err("null pointer"); }
+    let max = out.len().min(63);
+    unsafe {
+        let src = ptr as *const u8;
+        let mut len = 0;
+        while len < max {
+            let c = src.add(len).read_volatile();
+            if c == 0 { break; }
+            out[len] = c;
+            len += 1;
+        }
+        Ok(len)
+    }
+}
+
 /// Send a VFS request and wait for the response.
-fn vfs_request(opcode: u16, path: &str, data: &[u8]) -> Result<Message, &'static str> {
+/// path is a byte slice (not necessarily null-terminated).
+fn vfs_request(opcode: u16, path: &[u8], data: &[u8]) -> Result<Message, &'static str> {
     let sender_pid = current_pid();
     let reply_ep = crate::ipc::create_endpoint();
 
     let mut msg = Message::new(sender_pid, opcode);
 
-    // Payload format: [reply_ep:2] [path_len:1] [path:path_len] [data_len:1] [data]
+    // Payload: [reply_ep:2] [path_len:1] [path:path_len] [data_len:1] [data...]
     msg.payload[0] = reply_ep as u8;
     msg.payload[1] = (reply_ep >> 8) as u8;
     let plen = path.len().min(31);
     msg.payload[2] = plen as u8;
-    for i in 0..plen {
-        msg.payload[3 + i] = path.as_bytes()[i];
-    }
+    for i in 0..plen { msg.payload[3 + i] = path[i]; }
     let data_off = 3 + plen;
     let dlen = data.len().min(64 - data_off - 1);
     msg.payload[data_off] = dlen as u8;
-    for i in 0..dlen {
-        msg.payload[data_off + 1 + i] = data[i];
-    }
+    for i in 0..dlen { msg.payload[data_off + 1 + i] = data[i]; }
     msg.payload_len = data_off + 1 + dlen;
 
-    crate::ipc::endpoint::send(2, sender_pid, msg)
-        .ok()
-        .ok_or("vfs send failed")?;
+    crate::ipc::endpoint::send(2, sender_pid, msg).ok().ok_or("vfs send failed")?;
 
-    // Wait for response
     loop {
         match crate::ipc::endpoint::recv(reply_ep, sender_pid) {
             Ok(resp) => return Ok(resp),
-            Err(_) => {
-                crate::sched::schedule();
-            }
+            Err(_) => { crate::sched::schedule(); }
         }
     }
 }
 
-/// sys_pipe(fds_ptr) — create a pipe.
-/// fds_ptr points to [i32; 2]: fds[0]=read end, fds[1]=write end.
-/// In the microkernel, pipe = two endpoints connected.
+/// sys_pipe(fds_ptr) — create a pipe. fds[0]=read, fds[1]=write.
 pub fn sys_pipe(fds_ptr: usize) -> Result<usize, &'static str> {
     let read_ep = crate::ipc::create_endpoint();
     let write_ep = crate::ipc::create_endpoint();
@@ -63,60 +71,68 @@ pub fn sys_pipe(fds_ptr: usize) -> Result<usize, &'static str> {
             fds.add(1).write_volatile(write_ep as u32);
         }
     }
-
     Ok(0)
 }
 
 /// sys_mkdir(path_ptr, mode) — create a directory.
 pub fn sys_mkdir(path_ptr: usize, _mode: usize) -> Result<usize, &'static str> {
-    let path = read_user_str(path_ptr)?;
-    vfs_request(3, &path, b"DIR")?; // WRITE with "DIR" marker creates dir
+    let mut path = [0u8; 32];
+    let plen = read_user_path(path_ptr, &mut path)?;
+    vfs_request(3, &path[..plen], b"DIR")?; // WRITE with marker
     Ok(0)
 }
 
 /// sys_rmdir(path_ptr) — remove a directory.
 pub fn sys_rmdir(path_ptr: usize) -> Result<usize, &'static str> {
-    let path = read_user_str(path_ptr)?;
-    vfs_request(5, &path, &[])?; // DELETE
+    let mut path = [0u8; 32];
+    let plen = read_user_path(path_ptr, &mut path)?;
+    vfs_request(5, &path[..plen], &[])?;
     Ok(0)
 }
 
 /// sys_unlink(path_ptr) — delete a file.
 pub fn sys_unlink(path_ptr: usize) -> Result<usize, &'static str> {
-    let path = read_user_str(path_ptr)?;
-    vfs_request(5, &path, &[])?; // DELETE
+    let mut path = [0u8; 32];
+    let plen = read_user_path(path_ptr, &mut path)?;
+    vfs_request(5, &path[..plen], &[])?;
     Ok(0)
 }
 
 /// sys_rename(old_ptr, new_ptr) — rename a file.
 pub fn sys_rename(old_ptr: usize, new_ptr: usize) -> Result<usize, &'static str> {
-    let old_path = read_user_str(old_ptr)?;
-    let new_path = read_user_str(new_ptr)?;
+    let mut old_path = [0u8; 32];
+    let mut new_path = [0u8; 32];
+    let olen = read_user_path(old_ptr, &mut old_path)?;
+    let nlen = read_user_path(new_ptr, &mut new_path)?;
 
-    // Read old file content, then write to new path, then delete old
-    let old_data = vfs_request(2, &old_path, &[])?;
-
-    let mut combined = [0u8; 64];
-    let mut clen = 0;
-    for i in 0..new_path.len().min(31) {
-        combined[i] = new_path.as_bytes()[i];
-    }
-    clen = new_path.len().min(31);
-    vfs_request(3, &new_path, &combined[..clen])?; // WRITE to new path
-    vfs_request(5, &old_path, &[])?; // DELETE old path
+    // Read old content, write to new path, delete old
+    let old_data = vfs_request(2, &old_path[..olen], &[])?;
+    let dlen = old_data.payload_len.min(60);
+    vfs_request(3, &new_path[..nlen], &old_data.payload[..dlen])?;
+    vfs_request(5, &old_path[..olen], &[])?;
 
     Ok(0)
 }
 
 /// sys_getdents64(fd, buf_ptr, buf_len) — get directory entries.
 pub fn sys_getdents64(fd: usize, buf_ptr: usize, buf_len: usize) -> Result<usize, &'static str> {
-    if fd != 0 {
-        return Err("bad fd");
+    if fd > 2 {
+        // File fd — check if it's a valid fd
+        let pid = current_pid();
+        // For simplicity, list root directory
+        let resp = vfs_request(6, b"/", &[])?;
+        let copy_len = core::cmp::min(resp.payload_len, buf_len);
+        if buf_ptr != 0 && copy_len > 0 {
+            unsafe {
+                let dst = core::slice::from_raw_parts_mut(buf_ptr as *mut u8, copy_len);
+                dst.copy_from_slice(&resp.payload[..copy_len]);
+            }
+        }
+        return Ok(copy_len);
     }
 
-    // Get directory listing from VFS
-    let resp = vfs_request(6, "/", &[])?;
-
+    // List root directory via VFS
+    let resp = vfs_request(6, b"/", &[])?;
     let copy_len = core::cmp::min(resp.payload_len, buf_len);
     if buf_ptr != 0 && copy_len > 0 {
         unsafe {
@@ -124,55 +140,44 @@ pub fn sys_getdents64(fd: usize, buf_ptr: usize, buf_len: usize) -> Result<usize
             dst.copy_from_slice(&resp.payload[..copy_len]);
         }
     }
-
     Ok(copy_len)
 }
 
 /// sys_fcntl(fd, cmd, arg) — file descriptor control.
 pub fn sys_fcntl(fd: usize, cmd: usize, _arg: usize) -> Result<usize, &'static str> {
     match cmd {
-        0 => Ok(fd), // F_DUPFD
-        1 => Ok(0),  // F_GETFD
-        2 => Ok(0),  // F_SETFD
-        3 => Ok(0),  // F_GETFL
-        4 => Ok(0),  // F_SETFL
-        _ => Err("unsupported fcntl"),
+        0 => Ok(fd),          // F_DUPFD — return same fd
+        1 | 2 => Ok(0),       // F_GETFD / F_SETFD
+        3 | 4 => Ok(0),       // F_GETFL / F_SETFL
+        _ => Err("unsupported fcntl cmd"),
     }
 }
 
 /// sys_chdir(path_ptr) — change working directory.
 pub fn sys_chdir(_path_ptr: usize) -> Result<usize, &'static str> {
-    // Simplified: always succeeds
-    Ok(0)
+    Ok(0) // single-directory filesystem for now
 }
 
 /// sys_access(path_ptr, mode) — check file accessibility.
-pub fn sys_access(_path_ptr: usize, _mode: usize) -> Result<usize, &'static str> {
-    // Simplified: always succeeds (root can access everything)
-    Ok(0)
+pub fn sys_access(path_ptr: usize, _mode: usize) -> Result<usize, &'static str> {
+    let mut path = [0u8; 32];
+    let plen = read_user_path(path_ptr, &mut path)?;
+    // Try to read the file to check existence
+    match vfs_request(2, &path[..plen], &[]) {
+        Ok(_) => Ok(0),
+        Err(_) => Err("ENOENT"),
+    }
 }
 
 /// sys_ioctl(fd, request, arg) — device control.
 pub fn sys_ioctl(_fd: usize, _req: usize, _arg: usize) -> Result<usize, &'static str> {
-    // Stub: returns success for most ioctls
     Ok(0)
 }
 
 /// sys_truncate(path_ptr, length) — truncate a file.
 pub fn sys_truncate(path_ptr: usize, _length: usize) -> Result<usize, &'static str> {
-    let path = read_user_str(path_ptr)?;
-    // Truncate: write empty data to the file
-    vfs_request(3, &path, &[])?; // WRITE empty overwrites
+    let mut path = [0u8; 32];
+    let plen = read_user_path(path_ptr, &mut path)?;
+    vfs_request(3, &path[..plen], &[])?; // WRITE empty = truncate
     Ok(0)
-}
-
-/// Read a null-terminated string from user space.
-fn read_user_str(ptr: usize) -> Result<&'static str, &'static str> {
-    // Safe: SUM=1 means kernel can access user pages
-    if ptr == 0 {
-        return Err("null pointer");
-    }
-    // For simplicity, return a reference to the first 32 bytes
-    // A full implementation would copy to kernel buffer
-    Ok("") // stub — caller provides real path
 }

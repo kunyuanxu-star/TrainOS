@@ -138,6 +138,9 @@ pub const SYS_REBOOT: usize = 122;
 // ── Dispatch ─────────────────────────────────────────────────────────────────
 
 pub fn syscall_dispatch(tf: &mut TrapFrame) {
+    // Account system time for the calling process
+    crate::syscall::proc::account_stime();
+
     let nr = tf.a7;
     let arg0 = tf.a0;
     let arg1 = tf.a1;

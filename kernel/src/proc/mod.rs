@@ -80,6 +80,10 @@ pub fn spawn(elf_data: &[u8], priority: u8) -> Option<u32> {
     procs.push(proc);
 
     crate::sched::enqueue_thread(thread_ptr);
+
+    // Initialize process time accounting
+    crate::syscall::proc::init_proc_time(pid);
+
     Some(pid)
 }
 
@@ -150,6 +154,7 @@ pub fn fork_child(
     procs.push(proc);
 
     crate::sched::enqueue_thread(thread_ptr);
+    crate::syscall::proc::init_proc_time(child_pid);
     crate::println!("fork_child ok pid={}", child_pid);
     Some(child_pid)
 }

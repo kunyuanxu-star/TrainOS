@@ -1,16 +1,32 @@
 #![no_std]
 #![no_main]
 
+// TrainOS Shell V2 — interactive command interpreter with VFS support
+//
+// Commands:
+//   help      — show this help
+//   ver       — show version
+//   ps        — process listing (via syscall)
+//   echo ...  — echo text
+//   write F T — write text T to file F
+//   read  F   — read file F
+//   cat   F   — display file F
+//   ls        — list root directory
+//   date      — show date
+//   whoami    — show user
+//   uptime    — show uptime
+//   perf      — show performance stats
+//   mem       — show memory info
+//   clear     — clear screen
+
 use core::panic::PanicInfo;
 use tros;
 
-const FS_EP: usize = 2; // FS service EP (well-known after init creates EP 1)
-
 #[no_mangle]
 extern "C" fn _start() -> ! {
-    tros::print("\r\nTrainOS Shell v0.1\r\n");
+    tros::print("\r\nTrainOS Shell V2\r\n");
     tros::print("Type 'help' for commands.\r\n");
-    prompt();
+    tros::print("$ ");
 
     let mut cmd_buf = [0u8; 64];
     let mut cmd_len = 0;
@@ -18,26 +34,20 @@ extern "C" fn _start() -> ! {
     loop {
         let c = tros::getchar();
         if c == usize::MAX || c == 0 {
-            // No input, yield a bit
-            for _ in 0..1000 {
-                unsafe {
-                    core::arch::asm!("nop");
-                }
-            }
+            // Yield and retry
+            tros::yield_cpu();
             continue;
         }
 
         let byte = c as u8;
-
         if byte == b'\r' || byte == b'\n' {
             if cmd_len > 0 {
                 tros::print("\r\n");
                 process_command(&cmd_buf[..cmd_len]);
                 cmd_len = 0;
-                prompt();
+                tros::print("$ ");
             }
         } else if byte == 0x7f || byte == 0x08 {
-            // Backspace
             if cmd_len > 0 {
                 cmd_len -= 1;
                 tros::putchar(0x08);
@@ -52,148 +62,132 @@ extern "C" fn _start() -> ! {
     }
 }
 
-fn prompt() {
-    tros::print("$ ");
-}
-
 fn process_command(cmd: &[u8]) {
     if cmd == b"help" {
-        tros::print("Commands: help echo read write ps > >> pipe history clear whoami uptime\r\n");
-    } else if cmd.starts_with(b">> ") {
-        // Append: >> filename text...
-        let rest = &cmd[3..];
-        if let Some(space_pos) = rest.iter().position(|&b| b == b' ') {
-            let content = &rest[space_pos + 1..];
-            let len = content.len();
-            if len > 0 && len <= 62 {
-                let reply_ep = tros::ep_create();
-                let mut buf = [0u8; 64];
-                buf[0] = len as u8;
-                for i in 0..len {
-                    buf[1 + i] = content[i];
-                }
-                buf[63] = reply_ep as u8;
-                tros::send(2, 4, &buf[..1 + len + 1]);
-                tros::print("  appended\r\n");
-            }
+        tros::print("  help ver ps echo write read cat ls date whoami uptime perf mem clear\r\n");
+    } else if cmd == b"ver" {
+        tros::print("  TrainOS V16.0\r\n");
+    } else if cmd == b"ps" {
+        // Use proclist syscall to get real process data
+        let mut buf = [0u8; 64];
+        let count = tros::proclist(&mut buf);
+        let mut i = 0;
+        let mut shown = 0;
+        while i < count && shown < count {
+            let off = shown * 6;
+            if off + 5 >= 64 { break; }
+            let pid = buf[off] as u32 | ((buf[off+1] as u32) << 8)
+                | ((buf[off+2] as u32) << 16) | ((buf[off+3] as u32) << 24);
+            let prio = buf[off+4];
+            let state = buf[off+5];
+            tros::print("  pid=");
+            tros::print_uint(pid as usize);
+            tros::print(" prio=");
+            tros::print_uint(prio as usize);
+            let state_str = match state { 0 => "Ready", 1 => "Running", 2 => "Waiting", _ => "Dead" };
+            tros::print(" ");
+            tros::print(state_str);
+            tros::print("\r\n");
+            shown += 1;
         }
-    } else if cmd.starts_with(b"> ") {
-        // Redirection: > filename text...
-        // Write text to FS (EP 2) using TFS WRITE opcode
-        let rest = &cmd[2..];
-        // Find space to split filename and content
-        if let Some(space_pos) = rest.iter().position(|&b| b == b' ') {
-            let content = &rest[space_pos + 1..];
-            let len = content.len();
-            if len > 0 && len <= 62 {
-                let reply_ep = tros::ep_create();
-                let mut buf = [0u8; 64];
-                buf[0] = len as u8;
-                for i in 0..len {
-                    buf[1 + i] = content[i];
-                }
-                buf[63] = reply_ep as u8;
-                tros::send(2, 3, &buf[..1 + len + 1]);
-                tros::print("  written\r\n");
-            }
-        }
-    } else if cmd == b"history" {
-        tros::print("  1: help\r\n");
-        tros::print("  2: ver\r\n");
-        tros::print("  3: ls\r\n");
-        tros::print("  4: history\r\n");
-    } else if cmd.starts_with(b"pipe ") {
-        // pipe demo: echo the text through "pipe" processing
-        let text = &cmd[5..];
-        tros::print("  [pipe] ");
-        for &b in text {
-            // Uppercase transform
-            let c = if b >= b'a' && b <= b'z' { b - 32 } else { b };
-            tros::putchar(c);
-        }
-        tros::print("\r\n");
-    } else if cmd == b"clear" {
-        tros::print("\r\n\r\n\r\n\r\n");
-    } else if cmd == b"whoami" {
-        tros::print("  root@trainos\r\n");
-    } else if cmd == b"uptime" {
-        tros::print("  TrainOS running since boot\r\n");
     } else if cmd.starts_with(b"echo ") {
         let msg = &cmd[5..];
-        tros::putchar(b' ');
-        for &b in msg {
-            tros::putchar(b);
-        }
+        for &b in msg { tros::putchar(b); }
         tros::print("\r\n");
     } else if cmd.starts_with(b"write ") {
-        // write <text> to FS
-        let text = &cmd[6..];
-        let len = text.len();
-        if len > 0 && len <= 62 {
-            let mut buf = [0u8; 64];
-            buf[0] = len as u8;
-            for i in 0..len {
-                buf[1 + i] = text[i];
+        let rest = &cmd[6..];
+        if let Some(space_pos) = rest.iter().position(|&b| b == b' ') {
+            let fname = &rest[..space_pos];
+            let content = &rest[space_pos + 1..];
+            // Open and write to VFS via POSIX syscalls
+            let fd = tros::open_bytes(fname);
+            if fd != usize::MAX {
+                tros::write(fd, content);
+                tros::close(fd);
             }
-
-            // Create reply EP
-            let reply_ep = tros::ep_create();
-            buf[63] = reply_ep as u8;
-
-            tros::send(FS_EP, 3, &buf[..1 + len + 1]); // WRITE op=3
-
-            let mut rbuf = [0u8; 64];
-            let (_sender, _op) = tros::recv(reply_ep, &mut rbuf);
-            tros::print("  written\r\n");
+            tros::print("  wrote ");
+            tros::print_uint(content.len());
+            tros::print(" bytes\r\n");
         }
-    } else if cmd == b"read" {
-        // Read from FS
-        let reply_ep = tros::ep_create();
-        let mut rbuf = [0u8; 64];
-        rbuf[0] = reply_ep as u8;
-        tros::send(FS_EP, 2, &rbuf[..1]); // READ op=2
-
-        let (_sender, _op) = tros::recv(reply_ep, &mut rbuf);
-        tros::print("  data: ");
-        for i in 0..11 {
-            tros::putchar(rbuf[i]);
+    } else if cmd.starts_with(b"read ") {
+        let fname = &cmd[5..];
+        let fd = tros::open_bytes(fname);
+        if fd != usize::MAX {
+            let mut buf = [0u8; 64];
+            let n = tros::read(fd, &mut buf);
+            tros::print("  ");
+            for i in 0..n { tros::putchar(buf[i]); }
+            tros::print("\r\n");
+            tros::close(fd);
+        } else {
+            tros::print("  file not found\r\n");
         }
-        tros::print("\r\n");
+    } else if cmd.starts_with(b"cat ") {
+        let fname = &cmd[4..];
+        let fd = tros::open_bytes(fname);
+        if fd != usize::MAX {
+            let mut buf = [0u8; 64];
+            let n = tros::read(fd, &mut buf);
+            for i in 0..n { tros::putchar(buf[i]); }
+            tros::print("\r\n");
+            tros::close(fd);
+        } else {
+            tros::print("  cat: no such file\r\n");
+        }
     } else if cmd == b"ls" {
-        tros::print("  init  ping  fs  sh  drv  net  echo  proc  reg\r\n");
-    } else if cmd == b"cat" {
-        tros::print("  (type 'exec cat' to run cat service)\r\n");
-    } else if cmd == b"exec" {
-        tros::print("  exec not yet implemented\r\n");
-    } else if cmd.starts_with(b"say ") {
-        let msg = &cmd[4..];
+        let mut buf = [0u8; 64];
+        let n = tros::getdents64(0, &mut buf);
         tros::print("  ");
-        for &b in msg {
-            tros::putchar(b);
+        for i in 0..n {
+            if buf[i] == b'\n' { tros::print("  "); }
+            else if buf[i] != 0 { tros::putchar(buf[i]); }
         }
         tros::print("\r\n");
-    } else if cmd == b"ver" {
-        tros::print("  TrainOS v5.0\r\n");
     } else if cmd == b"date" {
-        tros::print("  2026-05-07\r\n");
-    } else if cmd == b"ps" {
-        tros::print("  pid=sh (shell)\r\n");
-        tros::print("  pid=fs (filesystem)\r\n");
-        tros::print("  pid=init (init)\r\n");
-    } else {
-        tros::print("  unknown: ");
-        for &b in cmd {
-            tros::putchar(b);
-        }
+        let uptime = tros::uptime_ms();
+        tros::print("  uptime: ");
+        tros::print_uint(uptime / 1000);
+        tros::print("s\r\n");
+    } else if cmd == b"whoami" {
+        let uid = tros::getuid();
+        if uid == 0 { tros::print("  root"); }
+        else { tros::print("  user"); }
+        tros::print(" (uid=");
+        tros::print_uint(uid);
+        tros::print(")\r\n");
+    } else if cmd == b"uptime" {
+        let ms = tros::uptime_ms();
+        tros::print("  ");
+        tros::print_uint(ms / 1000);
+        tros::print(" seconds\r\n");
+    } else if cmd == b"perf" {
+        let (sends, recvs, ctx) = tros::perf_stats();
+        tros::print("  sends="); tros::print_uint(sends);
+        tros::print(" recvs="); tros::print_uint(recvs);
+        tros::print(" ctx="); tros::print_uint(ctx);
         tros::print("\r\n");
+    } else if cmd == b"mem" {
+        let pages = tros::meminfo();
+        tros::print("  allocated pages: ");
+        tros::print_uint(pages);
+        tros::print("\r\n");
+    } else if cmd == b"clear" {
+        tros::print("\r\n\r\n\r\n\r\n\r\n\r\n");
+    } else if cmd == b"pid" {
+        let pid = tros::getpid();
+        let ppid = tros::getppid();
+        tros::print("  pid="); tros::print_uint(pid);
+        tros::print(" ppid="); tros::print_uint(ppid);
+        tros::print("\r\n");
+    } else if !cmd.is_empty() {
+        tros::print("  unknown: ");
+        for &b in cmd { tros::putchar(b); }
+        tros::print("\r\n  Type 'help' for commands.\r\n");
     }
 }
 
 #[panic_handler]
 fn panic(_info: &PanicInfo) -> ! {
-    loop {
-        unsafe {
-            core::arch::asm!("wfi");
-        }
-    }
+    tros::print("sh: PANIC\r\n");
+    loop { unsafe { core::arch::asm!("wfi"); } }
 }

@@ -337,6 +337,26 @@ pub fn exec(path: &str) -> usize {
 /// POSIX-compatible system calls.
 /// These use the kernel's POSIX syscalls (50-53) which translate to IPC internally.
 
+/// Open a file from a byte slice (syscall 50). Returns fd number.
+/// Appends a null terminator for the kernel.
+pub fn open_bytes(path: &[u8]) -> usize {
+    let mut buf = [0u8; 32];
+    let len = path.len().min(31);
+    for i in 0..len { buf[i] = path[i]; }
+    let result: usize;
+    unsafe {
+        core::arch::asm!(
+            "ecall",
+            in("a7") 50usize,
+            in("a0") buf.as_ptr() as usize,
+            in("a1") 0usize,
+            in("a2") 0usize,
+            lateout("a0") result,
+        );
+    }
+    result
+}
+
 /// Open a file (syscall 50). Returns fd number.
 pub fn open(path: &str) -> usize {
     let result: usize;

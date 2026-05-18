@@ -137,6 +137,9 @@ fn timer_interrupt(_tf: &mut TrapFrame) {
         core::arch::asm!("csrc sip, {}", in(reg) 1usize << 5);
     }
 
+    // Account user time for the currently running process
+    crate::syscall::proc::account_utime();
+
     unsafe {
         TICK_COUNT += 1;
         if TICK_COUNT - (TICK_COUNT / 100) * 100 == 0 {

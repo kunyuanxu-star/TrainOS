@@ -283,7 +283,15 @@ pub fn syscall_dispatch(tf: &mut TrapFrame) {
 
     match result {
         Ok(val) => tf.a0 = val,
-        Err(_e) => tf.a0 = usize::MAX,
+        Err(e) => {
+            // Log failed syscalls for debugging (every 64th to avoid spam)
+            static mut ERR_COUNT: usize = 0;
+            unsafe { ERR_COUNT += 1; }
+            if unsafe { ERR_COUNT & 63 == 0 } {
+                crate::println!("  syscall nr={} failed: {} (count={})", nr, e, unsafe { ERR_COUNT });
+            }
+            tf.a0 = usize::MAX;
+        }
     }
 
     tf.sepc += 4;

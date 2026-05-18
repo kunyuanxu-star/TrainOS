@@ -1,0 +1,13 @@
+[package]
+name = "selftest"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+tros = { path = "../../lib/tros" }
+
+[profile.release]
+opt-level = "s"
+lto = true
+debug = false

@@ -271,6 +271,7 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
     spawn_service!(drv, 5);
 
     // Priority 55 — Demo (runs after all services are spawned)
+    spawn_service!(selftest, 56);
     spawn_service!(demo, 55);
 
     // Signal secondary HARTs

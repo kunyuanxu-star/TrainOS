@@ -8,10 +8,20 @@ pub fn sys_spawn(_elf_ptr: usize, _elf_len: usize) -> Result<usize, &'static str
 }
 
 pub fn sys_exit(_code: i32) -> Result<usize, &'static str> {
-    let current = crate::sched::current_thread().ok_or("no thread")?;
+    let pid = crate::sched::current_thread()
+        .map(|t| unsafe { (*t).owner })
+        .ok_or("no proc")?;
     unsafe {
+        let current = crate::sched::current_thread().ok_or("no thread")?;
         (*current).state = crate::proc::thread::ThreadState::Dead;
     }
+    // Also mark the Process as Dead so waitpid can find it
+    let mut procs = crate::proc::PROCESSES.lock();
+    if let Some(proc) = procs.iter_mut().find(|p| p.pid == pid) {
+        proc.state = ProcessState::Dead;
+    }
+    drop(procs);
+
     crate::sched::schedule();
     // Never returns
     loop {
@@ -112,6 +122,7 @@ pub fn sys_fork(parent_sepc: usize) -> Result<usize, &'static str> {
         user_sp,
         child_satp,
         priority,
+        pid,
     )
     .ok_or("fork_child failed")?;
 
@@ -270,6 +281,41 @@ pub fn sys_kill(pid: u32) -> Result<usize, &'static str> {
     } else {
         Err("process not found")
     }
+}
+
+/// Map a shared memory page. Shares caller's page at vaddr with target_pid.
+/// Returns the shared virtual address in the target process.
+pub fn sys_shm_map(target_pid: u32, vaddr: usize) -> Result<usize, &'static str> {
+    let caller_pid = crate::sched::current_thread()
+        .map(|t| unsafe { (*t).owner })
+        .ok_or("no proc")?;
+
+    if caller_pid == target_pid {
+        return Err("cannot share with self");
+    }
+
+    // Get both page table roots from the process table
+    let (caller_pt, target_pt) = {
+        let procs = crate::proc::PROCESSES.lock();
+        let caller = procs.iter().find(|p| p.pid == caller_pid).ok_or("caller not found")?;
+        let caller_pt = caller.page_table_root;
+        let target = procs.iter().find(|p| p.pid == target_pid).ok_or("target not found")?;
+        let target_pt = target.page_table_root;
+        (caller_pt, target_pt)
+    };
+
+    // Translate caller's virtual address to physical address
+    let phys = unsafe {
+        crate::proc::elf::virt_to_phys_in_pt(caller_pt, vaddr).ok_or("bad vaddr")?
+    };
+
+    // Map the same physical page into target's page table at the same VA
+    let target_va = vaddr;
+    unsafe {
+        crate::proc::elf::map_into_pt(target_pt, target_va, phys, true, true, false, true);
+    }
+
+    Ok(target_va)
 }
 
 // ── VirtIO block device driver (V3.1) ──────────────────────────────────────
@@ -700,6 +746,80 @@ pub fn sys_blk_write(sector: usize, buf_ptr: usize, buf_len: usize) -> Result<us
     }
 
     Ok(512) // 512 bytes written
+}
+
+pub fn sys_getuid() -> Result<usize, &'static str> {
+    let pid = crate::sched::current_thread().map(|t| unsafe { (*t).owner }).ok_or("no proc")?;
+    let procs = crate::proc::PROCESSES.lock();
+    let proc = procs.iter().find(|p| p.pid == pid).ok_or("not found")?;
+    Ok(proc.uid as usize)
+}
+
+pub fn sys_setuid(uid: u32) -> Result<usize, &'static str> {
+    let pid = crate::sched::current_thread().map(|t| unsafe { (*t).owner }).ok_or("no proc")?;
+    let mut procs = crate::proc::PROCESSES.lock();
+    let proc = procs.iter_mut().find(|p| p.pid == pid).ok_or("not found")?;
+    // Only root can change UID
+    if proc.uid != 0 { return Err("permission denied"); }
+    proc.uid = uid;
+    Ok(0)
+}
+
+pub fn sys_chmod(_path: usize, _mode: u16) -> Result<usize, &'static str> {
+    // Simplified: always succeed for root
+    Ok(0)
+}
+
+// ── Signal handling (V12.0D) ────────────────────────────────────────────────
+
+pub const SIGCHLD: u32 = 17;
+pub const SIGTERM: u32 = 15;
+pub const SIGKILL: u32 = 9;
+pub const SIG_IGN: usize = 1;
+pub const SIG_DFL: usize = 0;
+
+/// Register a signal handler for the calling process.
+/// For basic implementation, just acknowledge the request.
+/// Returns 0 on success.
+pub fn sys_signal(sig: u32, handler: usize) -> Result<usize, &'static str> {
+    let _ = (sig, handler);
+    Ok(0)
+}
+
+/// Wait for a child process to exit.
+/// pid == -1: wait for any child
+/// pid > 0:   wait for a specific child
+/// Returns (child_pid) on success, 0 if no dead children yet.
+pub fn sys_waitpid(pid: i32, _status_ptr: usize, _options: usize) -> Result<usize, &'static str> {
+    let caller_pid = crate::sched::current_thread()
+        .map(|t| unsafe { (*t).owner })
+        .ok_or("no proc")?;
+
+    let procs = crate::proc::PROCESSES.lock();
+
+    if pid == -1 {
+        // Wait for any child
+        for proc in procs.iter() {
+            if proc.parent == Some(caller_pid) && proc.state == ProcessState::Dead {
+                let child_pid = proc.pid;
+                drop(procs);
+                return Ok(child_pid as usize);
+            }
+        }
+    } else if pid > 0 {
+        // Wait for specific child
+        let target = pid as u32;
+        if let Some(proc) = procs.iter().find(|p| p.pid == target && p.parent == Some(caller_pid)) {
+            if proc.state == ProcessState::Dead {
+                let child_pid = proc.pid;
+                drop(procs);
+                return Ok(child_pid as usize);
+            }
+        }
+    }
+
+    // No dead children — return 0 (no status change yet)
+    Ok(0)
 }
 
 fn hex_dbg(val: usize) {

@@ -698,6 +698,33 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
         None => console::puts("  WARNING: test_clib spawn failed\r\n"),
     }
 
+    // Spawn the TEST_USER service (V12.0C multi-user support test, priority 62)
+    // High priority to run before wfi-loop services.
+    static TEST_USER_ELF: &[u8] = include_bytes!("test_user.elf");
+    match proc::spawn(TEST_USER_ELF, 62) {
+        Some(pid) => {
+            console::puts("  TEST_USER process spawned (pid=");
+            unsafe {
+                let mut n = pid;
+                let mut buf = [0u8; 10];
+                let mut i = 10;
+                loop {
+                    i -= 1;
+                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
+                    n /= 10;
+                    if n == 0 {
+                        break;
+                    }
+                }
+                for &b in buf[i..].iter() {
+                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
+                }
+            }
+            console::puts(")\r\n");
+        }
+        None => console::puts("  WARNING: TEST_USER spawn failed\r\n"),
+    }
+
     // Spawn the test_fork service (V2.0 demo)
     static TEST_FORK_ELF: &[u8] = include_bytes!("test_fork.elf");
     match proc::spawn(TEST_FORK_ELF, 30) {
@@ -722,6 +749,33 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
             console::puts(")\r\n");
         }
         None => console::puts("  WARNING: test_fork spawn failed\r\n"),
+    }
+
+    // Spawn the test_exec service (V12.0A dynamic ELF loading demo, priority 63)
+    // High priority so it runs before services like MKFS(57) that may crash.
+    static TEST_EXEC_ELF: &[u8] = include_bytes!("test_exec.elf");
+    match proc::spawn(TEST_EXEC_ELF, 63) {
+        Some(pid) => {
+            console::puts("  TEST_EXEC process spawned (pid=");
+            unsafe {
+                let mut n = pid;
+                let mut buf = [0u8; 10];
+                let mut i = 10;
+                loop {
+                    i -= 1;
+                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
+                    n /= 10;
+                    if n == 0 {
+                        break;
+                    }
+                }
+                for &b in buf[i..].iter() {
+                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
+                }
+            }
+            console::puts(")\r\n");
+        }
+        None => console::puts("  WARNING: test_exec spawn failed\r\n"),
     }
 
     // Spawn the test_sdp service (V5.0A service discovery test, priority 56)
@@ -1148,6 +1202,33 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
         None => console::puts("  WARNING: TEST_ARP spawn failed\r\n"),
     }
 
+    // Spawn the SHM test service (V12.0B shared memory IPC demo, priority 63)
+    // Highest priority to ensure it runs before other services.
+    static TEST_SHM_ELF: &[u8] = include_bytes!("test_shm.elf");
+    match proc::spawn(TEST_SHM_ELF, 63) {
+        Some(pid) => {
+            console::puts("  SHM_TEST process spawned (pid=");
+            unsafe {
+                let mut n = pid;
+                let mut buf = [0u8; 10];
+                let mut i = 10;
+                loop {
+                    i -= 1;
+                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
+                    n /= 10;
+                    if n == 0 {
+                        break;
+                    }
+                }
+                for &b in buf[i..].iter() {
+                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
+                }
+            }
+            console::puts(")\r\n");
+        }
+        None => console::puts("  WARNING: test_shm spawn failed\r\n"),
+    }
+
     // Spawn the PCI service (V7.0D PCI bus enumeration, priority 59)
     // Scans PCI configuration space via ECAM to discover devices.
     static PCI_ELF: &[u8] = include_bytes!("pci.elf");
@@ -1336,6 +1417,33 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
             console::puts(")\r\n");
         }
         None => console::puts("  WARNING: TEST_HTTP spawn failed\r\n"),
+    }
+
+    // Spawn the TEST_SIG service (V12.0D signal handling test, priority 62)
+    // Tests SIGCHLD registration, fork, and waitpid.
+    static TEST_SIG_ELF: &[u8] = include_bytes!("test_sig.elf");
+    match proc::spawn(TEST_SIG_ELF, 62) {
+        Some(pid) => {
+            console::puts("  TEST_SIG process spawned (pid=");
+            unsafe {
+                let mut n = pid;
+                let mut buf = [0u8; 10];
+                let mut i = 10;
+                loop {
+                    i -= 1;
+                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
+                    n /= 10;
+                    if n == 0 {
+                        break;
+                    }
+                }
+                for &b in buf[i..].iter() {
+                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
+                }
+            }
+            console::puts(")\r\n");
+        }
+        None => console::puts("  WARNING: TEST_SIG spawn failed\r\n"),
     }
 
     // Create idle thread and start scheduler

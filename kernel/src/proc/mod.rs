@@ -87,7 +87,7 @@ pub fn spawn(elf_data: &[u8], priority: u8) -> Option<u32> {
         }
     }
 
-    let mut proc = Box::new(Process::new(pid, priority, root_pt, cnode_id));
+    let mut proc = Box::new(Process::new(pid, priority, root_pt, cnode_id, 0, 0));
     proc.thread = Some(thread);
     let thread_ptr: *mut Thread = proc.thread.as_mut().unwrap() as *mut Thread;
 
@@ -109,6 +109,7 @@ pub fn fork_child(
     user_sp: usize,
     _satp_val: usize,
     priority: u8,
+    parent_pid: u32,
 ) -> Option<u32> {
     let child_pid = {
         let mut next = NEXT_PID.lock();
@@ -155,7 +156,8 @@ pub fn fork_child(
         }
     }
 
-    let mut proc = Box::new(Process::new(child_pid, priority, child_pt, cnode_id));
+    let mut proc = Box::new(Process::new(child_pid, priority, child_pt, cnode_id, 0, 0));
+    proc.parent = Some(parent_pid);
     proc.thread = Some(thread);
     let thread_ptr = proc.thread.as_mut().unwrap() as *mut Thread;
 

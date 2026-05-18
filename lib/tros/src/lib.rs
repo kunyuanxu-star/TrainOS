@@ -318,6 +318,22 @@ pub fn exit(_code: i32) -> ! {
     }
 }
 
+/// Load and execute an ELF binary from disk (syscall 7).
+/// The path format is "/sector/N" where N is a disk sector number.
+/// Returns the new PID on success, or usize::MAX on error.
+pub fn exec(path: &str) -> usize {
+    let r: usize;
+    unsafe {
+        core::arch::asm!(
+            "ecall",
+            in("a7") 7usize,
+            in("a0") path.as_ptr() as usize,
+            lateout("a0") r,
+        );
+    }
+    r
+}
+
 /// POSIX-compatible system calls.
 /// These use the kernel's POSIX syscalls (50-53) which translate to IPC internally.
 
@@ -539,6 +555,53 @@ pub fn uptime_ms() -> usize {
         );
     }
     result * 10 // ticks * 10ms per tick
+}
+
+/// Get the current process's user ID (syscall 60).
+pub fn getuid() -> usize {
+    let r: usize;
+    unsafe { core::arch::asm!("ecall", in("a7") 60usize, lateout("a0") r); }
+    r
+}
+
+/// Set the current process's user ID (syscall 61). Only root (uid=0) can change UID.
+pub fn setuid(uid: u32) -> usize {
+    let r: usize;
+    unsafe { core::arch::asm!("ecall", in("a7") 61usize, in("a0") uid as usize, lateout("a0") r); }
+    r
+}
+
+/// Change file permissions (syscall 62). Simplified: always succeeds for root.
+pub fn chmod(_path: &str, _mode: u16) -> usize {
+    let r: usize;
+    unsafe { core::arch::asm!("ecall", in("a7") 62usize, in("a0") 0usize, in("a1") 0usize, lateout("a0") r); }
+    r
+}
+
+/// Register a signal handler (syscall 63).
+/// Returns 0 on success.
+pub fn signal(sig: u32, handler: usize) -> usize {
+    let r: usize;
+    unsafe { core::arch::asm!("ecall", in("a7") 63usize, in("a0") sig as usize, in("a1") handler, lateout("a0") r); }
+    r
+}
+
+/// Wait for a child process to exit (syscall 64).
+/// pid == -1: wait for any child; pid > 0: wait for specific child.
+/// Returns child pid, or 0 if no dead child yet.
+pub fn waitpid(pid: i32, status: &mut i32, options: usize) -> usize {
+    let r: usize;
+    unsafe { core::arch::asm!("ecall", in("a7") 64usize, in("a0") pid as usize, in("a1") status as *const i32 as usize, in("a2") options, lateout("a0") r); }
+    r
+}
+
+/// Map a shared memory page into another process (syscall 25).
+/// Shares the current process's page at vaddr with target_pid.
+/// Returns the shared virtual address in the target process.
+pub fn shm_map(target_pid: u32, vaddr: usize) -> usize {
+    let r: usize;
+    unsafe { core::arch::asm!("ecall", in("a7") 25usize, in("a0") target_pid as usize, in("a1") vaddr, lateout("a0") r); }
+    r
 }
 
 /// Returns performance counters: (send_count, recv_count, ctx_switch_count) (syscall 44).

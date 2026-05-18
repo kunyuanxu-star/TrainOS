@@ -1,0 +1,11 @@
+[package]
+name = "test_exec"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "test_exec"
+path = "src/main.rs"
+
+[dependencies]
+tros = { path = "../../lib/tros" }

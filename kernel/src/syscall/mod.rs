@@ -11,6 +11,7 @@ pub const SYS_SPAWN: usize = 3;
 pub const SYS_FORK: usize = 4;
 pub const SYS_GETPID: usize = 5;
 pub const SYS_YIELD: usize = 6;
+pub const SYS_EXEC: usize = 7;
 pub const SYS_EP_CREATE: usize = 10;
 pub const SYS_SEND: usize = 11;
 pub const SYS_RECV: usize = 12;
@@ -32,6 +33,7 @@ pub const SYS_PROCLIST: usize = 41;
 pub const SYS_KILL: usize = 42;
 pub const SYS_MEMINFO: usize = 43;
 pub const SYS_PERF_STATS: usize = 44;
+pub const SYS_SHM_MAP: usize = 25;
 pub const SYS_UPTIME: usize = 46;
 // POSIX compatibility syscalls
 pub const SYS_OPEN: usize = 50;
@@ -42,6 +44,11 @@ pub const SYS_STAT:   usize = 54;
 pub const SYS_LSEEK:  usize = 55;
 pub const SYS_DUP:    usize = 56;
 pub const SYS_GETCWD: usize = 57;
+pub const SYS_GETUID:  usize = 60;
+pub const SYS_SETUID:  usize = 61;
+pub const SYS_CHMOD:   usize = 62;
+pub const SYS_SIGNAL:  usize = 63;
+pub const SYS_WAITPID: usize = 64;
 // SBI forwarding (note: SYS_SPAWN and SYS_PUTCHAR both use nr=1, differentiated by context)
 pub const SYS_PUTCHAR: usize = 1;
 pub const SYS_GETCHAR: usize = 2;
@@ -130,6 +137,12 @@ pub fn syscall_dispatch(tf: &mut TrapFrame) {
             let ticks = unsafe { crate::trap::TICK_COUNT };
             Ok(ticks)
         }
+        SYS_SHM_MAP => proc::sys_shm_map(arg0 as u32, arg1),
+        SYS_GETUID => proc::sys_getuid(),
+        SYS_SETUID => proc::sys_setuid(arg0 as u32),
+        SYS_CHMOD  => proc::sys_chmod(arg0, arg1 as u16),
+        SYS_SIGNAL  => proc::sys_signal(arg0 as u32, arg1),
+        SYS_WAITPID => proc::sys_waitpid(arg0 as i32, arg1, arg2),
         _ => Err("unknown syscall"),
     };
 

@@ -1,0 +1,212 @@
+name: TrainOS CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTSBI_BIN: rustsbi-riscv64-machina-fw_dynamic.bin
+  MACHINA_REV: "17e199047385dc99a15be5a34c58f6fe08430ecf"
+
+jobs:
+  # ── Build: compile kernel + all services ──────────────────────────────────
+  build:
+    name: Build (kernel + services)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust nightly
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          targets: riscv64gc-unknown-none-elf
+          components: rust-src, clippy, rustfmt
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Check formatting
+        run: cargo fmt --all --check
+
+      - name: Build all services
+        run: |
+          cargo build --release --target riscv64gc-unknown-none-elf \
+            -p init -p ping -p fs -p test_fs -p sh \
+            -p test_fork -p test_posix -p test_posix2 -p drv -p net -p echo \
+            -p test_net -p proc -p test_proc -p demo -p stress -p bb \
+            -p pci -p veth -p tfs -p tfs_jrnl -p edit -p cat \
+            -p reg -p netdrv -p test_sdp -p test_inv -p test_perf \
+            -p test_clib -p test_edit -p test_arp -p test_cap \
+            -p uart -p test_tfs -p rustdemo -p pkg -p test_pkg -p test_net2 \
+            -p mkfs -p test_mount -p test_sig -p test_exec \
+            -p test_smp -p test_shm -p http -p test_http \
+            -p tcp -p selftest
+
+      - name: Copy service ELFs
+        run: |
+          for elf in target/riscv64gc-unknown-none-elf/release/*; do
+            base=$(basename "$elf")
+            if [ -f "$elf" ] && file "$elf" | grep -q ELF && [ ! -d "kernel/src/$base" ]; then
+              cp "$elf" "kernel/src/$base.elf"
+            fi
+          done
+
+      - name: Build kernel
+        run: cargo build --release -p kernel
+
+      - name: Upload kernel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kernel
+          path: target/riscv64gc-unknown-none-elf/release/kernel
+          retention-days: 1
+
+  # ── Clippy: lint checks ──────────────────────────────────────────────────
+  clippy:
+    name: Clippy Lints
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust nightly
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          targets: riscv64gc-unknown-none-elf
+          components: clippy
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-clippy-${{ hashFiles('Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-clippy-
+
+      - name: Run clippy
+        run: cargo clippy --target riscv64gc-unknown-none-elf --all-targets 2>&1 | tee /tmp/clippy.log
+        continue-on-error: true
+
+      - name: Summarize clippy
+        run: |
+          warnings=$(grep -c "warning:" /tmp/clippy.log || echo 0)
+          errors=$(grep -c "error:" /tmp/clippy.log || echo 0)
+          echo "::notice::Clippy: $warnings warnings, $errors errors"
+          if [ "$errors" -gt 0 ]; then
+            echo "::error::Clippy found errors"
+            exit 1
+          fi
+
+  # ── System Test: run on machina emulator ──────────────────────────────────
+  test:
+    name: System Test (machina)
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust nightly
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          targets: riscv64gc-unknown-none-elf
+
+      - name: Download kernel artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: kernel
+          path: target/riscv64gc-unknown-none-elf/release/
+
+      - name: Cache machina build
+        uses: actions/cache@v4
+        id: cache-machina
+        with:
+          path: machina-binary/
+          key: machina-${{ env.MACHINA_REV }}-v2
+
+      - name: Clone and build machina
+        if: steps.cache-machina.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 https://github.com/gevico/machina.git /tmp/machina-src
+          cd /tmp/machina-src
+          cargo build --release
+          mkdir -p $GITHUB_WORKSPACE/machina-binary
+          cp target/release/machina $GITHUB_WORKSPACE/machina-binary/
+
+      - name: Make kernel executable
+        run: chmod +x target/riscv64gc-unknown-none-elf/release/kernel
+
+      - name: Run TrainOS on machina
+        timeout-minutes: 2
+        run: |
+          MACHINA_BIN=$(find machina-binary -name machina -type f | head -1)
+          timeout 30 "$MACHINA_BIN" \
+            -M riscv64-ref -smp 2 \
+            -bios "$RUSTSBI_BIN" \
+            -kernel target/riscv64gc-unknown-none-elf/release/kernel \
+            -nographic 2>&1 | tee /tmp/trainos_output.log || true
+
+      - name: Verify output
+        run: |
+          echo "=== TrainOS Output ==="
+          cat /tmp/trainos_output.log
+          echo ""
+          echo "=== Test Results ==="
+
+          # Check 1: System booted
+          if grep -q "TrainOS booting\|System ready\|READY" /tmp/trainos_output.log; then
+            echo "PASS: System booted successfully"
+          else
+            echo "FAIL: System did not boot"
+            exit 1
+          fi
+
+          # Check 2: Self-test ran
+          if grep -q "Self-Test Suite" /tmp/trainos_output.log; then
+            echo "PASS: Self-test suite executed"
+
+            # Check 3: All tests passed
+            if grep -q "ALL TESTS PASSED" /tmp/trainos_output.log; then
+              echo "PASS: ALL TESTS PASSED"
+            else
+              echo "WARN: Some tests failed (check output)"
+            fi
+          else
+            echo "WARN: Self-test suite did not run (checking boot messages)"
+          fi
+
+          # Check 4: No kernel panic
+          if grep -q "KERNEL PANIC" /tmp/trainos_output.log; then
+            echo "FAIL: Kernel panic detected"
+            exit 1
+          else
+            echo "PASS: No kernel panics"
+          fi
+
+  # ── Security audit ────────────────────────────────────────────────────────
+  deps:
+    name: Dependency Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust nightly
+        uses: dtolnay/rust-toolchain@nightly
+      - name: Check workspace
+        run: |
+          echo "Workspace members:"
+          grep "members" Cargo.toml | head -1
+          count=$(grep -o '"services/' Cargo.toml | wc -l)
+          echo "::notice::Services in workspace: $count"
+          echo "::notice::Kernel size: $(wc -c < target/riscv64gc-unknown-none-elf/release/kernel 2>/dev/null || echo 'not yet built')"

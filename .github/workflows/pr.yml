@@ -1,0 +1,44 @@
+name: Pull Request Checks
+
+on:
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # Fast checks: format, build kernel only (no emulator needed)
+  quick:
+    name: Quick Checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust nightly
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          targets: riscv64gc-unknown-none-elf
+          components: rustfmt, clippy, rust-src
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-pr-cargo-${{ hashFiles('Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-pr-cargo-
+
+      - name: Check formatting
+        run: cargo fmt --all --check
+
+      - name: Build kernel (fast check)
+        run: cargo build --release --target riscv64gc-unknown-none-elf -p kernel
+
+      - name: Build core services
+        run: |
+          cargo build --release --target riscv64gc-unknown-none-elf \
+            -p init -p fs -p net -p sh -p tcp -p selftest -p ping -p echo

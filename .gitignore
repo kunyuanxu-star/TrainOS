@@ -5,6 +5,8 @@ target/
 rustsbi-qemu.bin
 rustsbi-qemu-new.bin
 
+# Machina SBI (tracked)
+
 # Downloads (large toolchain ~460MB)
 downloads/
 

@@ -885,3 +885,71 @@ pub fn epoll_wait(epfd: usize, events: &mut [u8], maxevents: usize, timeout: isi
     }
     r
 }
+
+// ── V15.0 Extended Syscalls ──────────────────────────────────────────────────
+
+pub fn unshare(flags: usize) -> usize {
+    let r: usize;
+    unsafe { core::arch::asm!("ecall", in("a7") 110usize, in("a0") flags, lateout("a0") r); }
+    r
+}
+pub fn sethostname(name: &[u8], len: usize) -> usize {
+    let r: usize;
+    unsafe { core::arch::asm!("ecall", in("a7") 111usize, in("a0") name.as_ptr() as usize, in("a1") len, lateout("a0") r); }
+    r
+}
+pub fn gethostname(buf: &mut [u8], len: usize) -> usize {
+    let r: usize;
+    unsafe { core::arch::asm!("ecall", in("a7") 112usize, in("a0") buf.as_ptr() as usize, in("a1") len, lateout("a0") r); }
+    r
+}
+pub fn setns(fd: usize, nstype: usize) -> usize {
+    let r: usize;
+    unsafe { core::arch::asm!("ecall", in("a7") 113usize, in("a0") fd, in("a1") nstype, lateout("a0") r); }
+    r
+}
+pub fn sched_setaffinity(pid: usize, mask: &[u64]) -> usize {
+    let r: usize;
+    unsafe { core::arch::asm!("ecall", in("a7") 114usize, in("a0") pid, in("a1") 8usize, in("a2") mask.as_ptr() as usize, lateout("a0") r); }
+    r
+}
+pub fn sched_getaffinity(pid: usize, mask: &mut [u64]) -> usize {
+    let r: usize;
+    unsafe { core::arch::asm!("ecall", in("a7") 115usize, in("a0") pid, in("a1") 8usize, in("a2") mask.as_ptr() as usize, lateout("a0") r); }
+    r
+}
+pub fn times(buf: &mut [u64; 4]) -> usize {
+    let r: usize;
+    unsafe { core::arch::asm!("ecall", in("a7") 116usize, in("a0") buf.as_ptr() as usize, lateout("a0") r); }
+    r
+}
+pub fn getrusage(who: usize, buf: &mut [u64; 4]) -> usize {
+    let r: usize;
+    unsafe { core::arch::asm!("ecall", in("a7") 117usize, in("a0") who, in("a1") buf.as_ptr() as usize, lateout("a0") r); }
+    r
+}
+pub fn register_drv(name: &str, drv_type: usize, probe_ep: usize) -> usize {
+    let r: usize;
+    unsafe { core::arch::asm!("ecall", in("a7") 118usize, in("a0") name.as_ptr() as usize, in("a1") drv_type, in("a2") probe_ep, lateout("a0") r); }
+    r
+}
+pub fn unregister_drv(drv_id: usize) -> usize {
+    let r: usize;
+    unsafe { core::arch::asm!("ecall", in("a7") 119usize, in("a0") drv_id, lateout("a0") r); }
+    r
+}
+pub fn list_drvs(buf: &mut [u8]) -> usize {
+    let r: usize;
+    unsafe { core::arch::asm!("ecall", in("a7") 120usize, in("a0") buf.as_ptr() as usize, in("a1") buf.len(), lateout("a0") r); }
+    r
+}
+pub fn sync() -> usize {
+    let r: usize;
+    unsafe { core::arch::asm!("ecall", in("a7") 121usize, lateout("a0") r); }
+    r
+}
+pub fn reboot(magic: usize, cmd: usize) -> usize {
+    let r: usize;
+    unsafe { core::arch::asm!("ecall", in("a7") 122usize, in("a0") magic, in("a1") cmd, lateout("a0") r); }
+    r
+}

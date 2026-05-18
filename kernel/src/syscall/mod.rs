@@ -112,6 +112,29 @@ pub const SYS_EPOLL_CREATE: usize = 100;
 pub const SYS_EPOLL_CTL: usize = 101;
 pub const SYS_EPOLL_WAIT: usize = 102;
 
+// Namespace (V15.0): 110-113
+pub const SYS_UNSHARE: usize = 110;
+pub const SYS_SETHOSTNAME: usize = 111;
+pub const SYS_GETHOSTNAME: usize = 112;
+pub const SYS_SETNS: usize = 113;
+
+// CPU affinity (V15.0): 114-115
+pub const SYS_SCHED_SETAFFINITY: usize = 114;
+pub const SYS_SCHED_GETAFFINITY: usize = 115;
+
+// Resource usage (V15.0): 116-117
+pub const SYS_TIMES: usize = 116;
+pub const SYS_GETRUSAGE: usize = 117;
+
+// Device driver (V15.0): 118-120
+pub const SYS_REGISTER_DRV: usize = 118;
+pub const SYS_UNREGISTER_DRV: usize = 119;
+pub const SYS_LIST_DRVS: usize = 120;
+
+// System (V15.0): 121-122
+pub const SYS_SYNC: usize = 121;
+pub const SYS_REBOOT: usize = 122;
+
 // ── Dispatch ─────────────────────────────────────────────────────────────────
 
 pub fn syscall_dispatch(tf: &mut TrapFrame) {
@@ -227,6 +250,29 @@ pub fn syscall_dispatch(tf: &mut TrapFrame) {
         SYS_EPOLL_CREATE => epoll::sys_epoll_create(arg0),
         SYS_EPOLL_CTL => epoll::sys_epoll_ctl(arg0, arg1, arg2, arg3),
         SYS_EPOLL_WAIT => epoll::sys_epoll_wait(arg0, arg1, arg2, arg3 as isize),
+
+        // V15.0 — Namespace
+        SYS_UNSHARE => proc::sys_unshare(arg0),
+        SYS_SETHOSTNAME => proc::sys_sethostname(arg0, arg1),
+        SYS_GETHOSTNAME => proc::sys_gethostname(arg0, arg1),
+        SYS_SETNS => proc::sys_setns(arg0, arg1),
+
+        // V15.0 — CPU affinity
+        SYS_SCHED_SETAFFINITY => proc::sys_sched_setaffinity(arg0, arg1, arg2),
+        SYS_SCHED_GETAFFINITY => proc::sys_sched_getaffinity(arg0, arg1, arg2),
+
+        // V15.0 — Resource usage
+        SYS_TIMES => proc::sys_times(arg0),
+        SYS_GETRUSAGE => proc::sys_getrusage(arg0, arg1),
+
+        // V15.0 — Device driver
+        SYS_REGISTER_DRV => proc::sys_register_drv(arg0, arg1, arg2),
+        SYS_UNREGISTER_DRV => proc::sys_unregister_drv(arg0),
+        SYS_LIST_DRVS => proc::sys_list_drvs(arg0, arg1),
+
+        // V15.0 — System
+        SYS_SYNC => proc::sys_sync(),
+        SYS_REBOOT => proc::sys_reboot(arg0, arg1),
 
         _ => Err("unknown syscall"),
     };

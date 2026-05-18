@@ -44,6 +44,12 @@ mod syscall;
 #[cfg(not(test))]
 mod invariant;
 
+#[cfg(not(test))]
+mod ns;
+
+#[cfg(not(test))]
+mod device;
+
 #[cfg(test)]
 mod mem;
 

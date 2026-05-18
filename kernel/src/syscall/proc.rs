@@ -920,3 +920,227 @@ pub fn sys_sysinfo(buf_ptr: usize) -> Result<usize, &'static str> {
 
     Ok(0)
 }
+
+// ── Namespace syscalls (V15.0) ───────────────────────────────────────────────
+
+/// sys_unshare(flags) — disassociate parts of process execution context.
+pub fn sys_unshare(flags: usize) -> Result<usize, &'static str> {
+    let pid = crate::sched::current_thread()
+        .map(|t| unsafe { (*t).owner })
+        .ok_or("no proc")?;
+
+    if flags & crate::ns::CLONE_NEWUTS != 0 {
+        let ns_id = crate::ns::new_uts_ns().ok_or("no uts ns")?;
+        crate::ns::set_process_uts(pid, ns_id);
+    }
+    if flags & crate::ns::CLONE_NEWPID != 0 {
+        let ns_id = crate::ns::new_pid_ns(pid).ok_or("no pid ns")?;
+        crate::ns::set_process_pid_ns(pid, ns_id);
+    }
+    if flags & crate::ns::CLONE_NEWNS != 0 { crate::ns::new_mount_ns(); }
+    if flags & crate::ns::CLONE_NEWNET != 0 { crate::ns::new_net_ns(); }
+    if flags & crate::ns::CLONE_NEWIPC != 0 { crate::ns::new_ipc_ns(); }
+    if flags & crate::ns::CLONE_NEWUSER != 0 { crate::ns::new_user_ns(); }
+
+    Ok(0)
+}
+
+/// sys_sethostname(name_ptr, len) — set system hostname
+pub fn sys_sethostname(name_ptr: usize, len: usize) -> Result<usize, &'static str> {
+    let pid = crate::sched::current_thread()
+        .map(|t| unsafe { (*t).owner })
+        .ok_or("no proc")?;
+    let ns_id = crate::ns::get_process_uts(pid);
+
+    if name_ptr == 0 || len == 0 { return Err("invalid args"); }
+    let mut name = [0u8; 64];
+    let copy_len = core::cmp::min(len, 64);
+    unsafe {
+        let src = core::slice::from_raw_parts(name_ptr as *const u8, copy_len);
+        name[..copy_len].copy_from_slice(src);
+    }
+    if crate::ns::set_hostname(ns_id, &name[..copy_len]) { Ok(0) } else { Err("sethostname failed") }
+}
+
+/// sys_gethostname(buf_ptr, len) — get system hostname
+pub fn sys_gethostname(buf_ptr: usize, len: usize) -> Result<usize, &'static str> {
+    let pid = crate::sched::current_thread()
+        .map(|t| unsafe { (*t).owner })
+        .ok_or("no proc")?;
+    let ns_id = crate::ns::get_process_uts(pid);
+    let mut name = [0u8; 64];
+    let nlen = crate::ns::get_hostname(ns_id, &mut name);
+    let copy_len = core::cmp::min(nlen, len);
+    if buf_ptr != 0 && copy_len > 0 {
+        unsafe {
+            let dst = core::slice::from_raw_parts_mut(buf_ptr as *mut u8, copy_len);
+            dst.copy_from_slice(&name[..copy_len]);
+        }
+    }
+    Ok(copy_len)
+}
+
+/// sys_setns(fd, nstype) — reassociate with a namespace
+pub fn sys_setns(fd: usize, nstype: usize) -> Result<usize, &'static str> {
+    let pid = crate::sched::current_thread()
+        .map(|t| unsafe { (*t).owner })
+        .ok_or("no proc")?;
+    let target_ns = if nstype == crate::ns::CLONE_NEWPID {
+        crate::ns::get_process_pid_ns(fd as u32)
+    } else if nstype == crate::ns::CLONE_NEWUTS {
+        crate::ns::get_process_uts(fd as u32)
+    } else { return Err("unsupported ns type"); };
+
+    if nstype == crate::ns::CLONE_NEWPID {
+        crate::ns::set_process_pid_ns(pid, target_ns);
+    } else {
+        crate::ns::set_process_uts(pid, target_ns);
+    }
+    Ok(0)
+}
+
+// ── CPU affinity (V15.0) ─────────────────────────────────────────────────────
+
+static mut CPU_AFFINITY: [(u32, u64); 64] = [(0, 0xFFFF_FFFF_FFFF_FFFFu64); 64];
+static mut AFFINITY_COUNT: usize = 0;
+
+pub fn sys_sched_setaffinity(pid: usize, _size: usize, mask_ptr: usize) -> Result<usize, &'static str> {
+    if mask_ptr == 0 { return Err("null mask"); }
+    let mask: u64 = unsafe { (mask_ptr as *const u64).read_volatile() };
+    unsafe {
+        for i in 0..AFFINITY_COUNT {
+            if CPU_AFFINITY[i].0 == pid as u32 { CPU_AFFINITY[i].1 = mask; return Ok(0); }
+        }
+        if AFFINITY_COUNT >= 64 { return Err("affinity table full"); }
+        CPU_AFFINITY[AFFINITY_COUNT] = (pid as u32, mask);
+        AFFINITY_COUNT += 1;
+    }
+    Ok(0)
+}
+
+pub fn sys_sched_getaffinity(pid: usize, _size: usize, mask_ptr: usize) -> Result<usize, &'static str> {
+    if mask_ptr == 0 { return Err("null mask ptr"); }
+    unsafe {
+        for i in 0..AFFINITY_COUNT {
+            if CPU_AFFINITY[i].0 == pid as u32 {
+                (mask_ptr as *mut u64).write_volatile(CPU_AFFINITY[i].1);
+                return Ok(0);
+            }
+        }
+        (mask_ptr as *mut u64).write_volatile(0xFFFF_FFFF_FFFF_FFFFu64);
+    }
+    Ok(0)
+}
+
+// ── Resource usage (V15.0) ───────────────────────────────────────────────────
+
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct ProcTime { pid: u32, utime: u64, stime: u64, start_time: u64 }
+const EMPTY_PROCTIME: ProcTime = ProcTime { pid: 0, utime: 0, stime: 0, start_time: 0 };
+static mut PROC_TIMES: [ProcTime; 32] = [EMPTY_PROCTIME; 32];
+static mut PROC_TIME_COUNT: usize = 0;
+
+pub fn init_proc_time(pid: u32) {
+    unsafe {
+        for i in 0..PROC_TIME_COUNT { if PROC_TIMES[i].pid == pid { return; } }
+        if PROC_TIME_COUNT >= 32 { return; }
+        let tick = crate::trap::TICK_COUNT;
+        PROC_TIMES[PROC_TIME_COUNT] = ProcTime { pid, utime: 0, stime: 0, start_time: tick as u64 };
+        PROC_TIME_COUNT += 1;
+    }
+}
+
+pub fn account_utime() {
+    let pid = crate::sched::current_thread().map(|t| unsafe { (*t).owner }).unwrap_or(0);
+    unsafe {
+        for i in 0..PROC_TIME_COUNT {
+            if PROC_TIMES[i].pid == pid { PROC_TIMES[i].utime += 1; break; }
+        }
+    }
+}
+
+pub fn account_stime() {
+    let pid = crate::sched::current_thread().map(|t| unsafe { (*t).owner }).unwrap_or(0);
+    unsafe {
+        for i in 0..PROC_TIME_COUNT {
+            if PROC_TIMES[i].pid == pid { PROC_TIMES[i].stime += 1; break; }
+        }
+    }
+}
+
+pub fn sys_times(buf_ptr: usize) -> Result<usize, &'static str> {
+    let pid = crate::sched::current_thread().map(|t| unsafe { (*t).owner }).ok_or("no proc")?;
+    unsafe {
+        for i in 0..PROC_TIME_COUNT {
+            if PROC_TIMES[i].pid == pid {
+                if buf_ptr != 0 {
+                    let ptr = buf_ptr as *mut u64;
+                    let tick = crate::trap::TICK_COUNT;
+                    ptr.write_volatile(PROC_TIMES[i].utime);
+                    ptr.add(1).write_volatile(PROC_TIMES[i].stime);
+                    ptr.add(2).write_volatile(0);
+                    ptr.add(3).write_volatile(0);
+                }
+                return Ok(crate::trap::TICK_COUNT);
+            }
+        }
+    }
+    Err("no time entry")
+}
+
+pub fn sys_getrusage(who: usize, buf_ptr: usize) -> Result<usize, &'static str> {
+    if who > 1 { return Err("bad who"); }
+    let pid = crate::sched::current_thread().map(|t| unsafe { (*t).owner }).ok_or("no proc")?;
+    if buf_ptr == 0 { return Err("null buf"); }
+    unsafe {
+        for i in 0..PROC_TIME_COUNT {
+            if PROC_TIMES[i].pid == pid {
+                let ptr = buf_ptr as *mut u64;
+                let utime_ticks = PROC_TIMES[i].utime;
+                ptr.write_volatile(utime_ticks / 100);
+                ptr.add(1).write_volatile((utime_ticks * 10000000) % 1000000);
+                let stime_ticks = PROC_TIMES[i].stime;
+                ptr.add(2).write_volatile(stime_ticks / 100);
+                ptr.add(3).write_volatile((stime_ticks * 10000000) % 1000000);
+                return Ok(0);
+            }
+        }
+    }
+    Ok(0)
+}
+
+// ── Device driver syscalls (V15.0) ───────────────────────────────────────────
+
+pub fn sys_register_drv(name_ptr: usize, drv_type: usize, probe_ep: usize) -> Result<usize, &'static str> {
+    let pid = crate::sched::current_thread().map(|t| unsafe { (*t).owner }).ok_or("no proc")?;
+    let mut name = [0u8; 32];
+    if name_ptr != 0 {
+        unsafe {
+            let src = name_ptr as *const u8;
+            let mut nlen = 0;
+            while nlen < 31 { let c = src.add(nlen).read(); if c == 0 { break; } name[nlen] = c; nlen += 1; }
+        }
+    }
+    crate::device::register(&name, drv_type as u32, pid, probe_ep).ok_or("driver table full").map(|id| id)
+}
+
+pub fn sys_unregister_drv(drv_id: usize) -> Result<usize, &'static str> {
+    if crate::device::unregister(drv_id) { Ok(0) } else { Err("unregister failed") }
+}
+
+pub fn sys_list_drvs(buf_ptr: usize, buf_len: usize) -> Result<usize, &'static str> {
+    if buf_ptr == 0 || buf_len == 0 { return Err("null buf"); }
+    let mut buf = unsafe { core::slice::from_raw_parts_mut(buf_ptr as *mut u8, buf_len) };
+    Ok(crate::device::list(&mut buf))
+}
+
+/// sys_sync() — sync filesystem caches
+pub fn sys_sync() -> Result<usize, &'static str> { Ok(0) }
+
+/// sys_reboot(magic, cmd) — reboot/halt/poweroff
+pub fn sys_reboot(magic: usize, _cmd: usize) -> Result<usize, &'static str> {
+    if magic != 0xfee1_dead { return Err("bad magic"); }
+    unsafe { core::arch::asm!("ecall", in("a7") 8usize, in("a0") 0usize, in("a1") 0usize); }
+    Err("reset failed")
+}

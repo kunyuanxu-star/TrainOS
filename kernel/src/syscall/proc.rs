@@ -462,8 +462,10 @@ pub fn sys_blk_read(sector: usize, buf_ptr: usize, buf_len: usize) -> Result<usi
     );
 
     // 14. Kick the device (write queue index 0 to QueueNotify at offset 0x50)
+    // NOTE: Must be u32 write; machina's VirtIO MMIO handler ignores writes
+    // with size != 4 for transport registers.
     unsafe {
-        ((VIRTIO_BASE + 0x50) as *mut u16).write_volatile(0);
+        ((VIRTIO_BASE + 0x50) as *mut u32).write_volatile(0);
     }
 
     // 15. Poll for completion (used ring idx > 0)
@@ -492,15 +494,6 @@ pub fn sys_blk_read(sector: usize, buf_ptr: usize, buf_len: usize) -> Result<usi
     // 16. Read used ring element: ring[0].len (total bytes written by device)
     let used_elem_len = unsafe { ((used_ring + 8) as *const u32).read_volatile() };
     let used_elem_id = unsafe { ((used_ring + 4) as *const u32).read_volatile() };
-
-    // Debug: print used ring info
-    crate::console::puts("  BLK: done idx=");
-    hex_dbg(unsafe { used_idx_ptr.read_volatile() } as usize);
-    crate::console::puts(" id=");
-    hex_dbg(used_elem_id as usize);
-    crate::console::puts(" len=");
-    hex_dbg(used_elem_len as usize);
-    crate::console::puts("\r\n");
 
     // 17. Check VirtIO block status byte (0 = OK)
     let blk_status = unsafe { status_buf.read() };
@@ -669,9 +662,9 @@ pub fn sys_blk_write(sector: usize, buf_ptr: usize, buf_len: usize) -> Result<us
         STATUS_ACKNOWLEDGE | STATUS_DRIVER | (1 << 8) | STATUS_DRIVER_OK,
     );
 
-    // 14. Kick the device
+    // 14. Kick the device (u32 write required for machina VirtIO MMIO)
     unsafe {
-        ((VIRTIO_BASE + 0x50) as *mut u16).write_volatile(0);
+        ((VIRTIO_BASE + 0x50) as *mut u32).write_volatile(0);
     }
 
     // 15. Poll for completion
@@ -697,23 +690,11 @@ pub fn sys_blk_write(sector: usize, buf_ptr: usize, buf_len: usize) -> Result<us
     }
 
     // 16. Read used ring element
-    let used_elem_len = unsafe { ((used_ring + 8) as *const u32).read_volatile() };
-    let used_elem_id = unsafe { ((used_ring + 4) as *const u32).read_volatile() };
-
-    // Debug
-    crate::console::puts("  BLK_WR: done idx=");
-    hex_dbg(unsafe { used_idx_ptr.read_volatile() } as usize);
-    crate::console::puts(" id=");
-    hex_dbg(used_elem_id as usize);
-    crate::console::puts(" len=");
-    hex_dbg(used_elem_len as usize);
-    crate::console::puts("\r\n");
+    let _used_elem_len = unsafe { ((used_ring + 8) as *const u32).read_volatile() };
+    let _used_elem_id = unsafe { ((used_ring + 4) as *const u32).read_volatile() };
 
     // 17. Check VirtIO block status byte (0 = OK)
     let blk_status = unsafe { status_buf.read() };
-    crate::console::puts("  BLK_WR: status_byte=");
-    hex_dbg(blk_status as usize);
-    crate::console::puts("\r\n");
     if blk_status != 0 {
         return Err("virtio block error");
     }

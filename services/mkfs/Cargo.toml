@@ -1,0 +1,10 @@
+[package]
+name = "mkfs"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "mkfs"
+
+[dependencies]
+tros = { path = "../../lib/tros" }

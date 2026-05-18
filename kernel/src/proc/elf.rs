@@ -125,7 +125,7 @@ pub unsafe fn map_into_pt(
 }
 
 /// Translate virtual to physical address in a specific page table.
-unsafe fn virt_to_phys_in_pt(root_pt: usize, va: usize) -> Option<usize> {
+pub(crate) unsafe fn virt_to_phys_in_pt(root_pt: usize, va: usize) -> Option<usize> {
     let (l0_phys, idx) = walk_pt(root_pt, va, false)?;
     let l0 = pt_page_ref(l0_phys);
     let pte = l0[idx];

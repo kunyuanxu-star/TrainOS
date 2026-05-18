@@ -16,8 +16,15 @@ pub fn init() {
     // Pre-create well-known endpoints for system services.
     // EP 1 is the init service endpoint (init hardcodes recv(1, ...)).
     // EP 2 is the FS service endpoint (FS will be changed to recv(2, ...)).
-    create_endpoint(); // EP 1
-    create_endpoint(); // EP 2
+    // EP 8 is the HTTP service endpoint.
+    create_endpoint(); // EP 1 - init
+    create_endpoint(); // EP 2 - FS
+    create_endpoint(); // EP 3
+    create_endpoint(); // EP 4
+    create_endpoint(); // EP 5
+    create_endpoint(); // EP 6
+    create_endpoint(); // EP 7
+    create_endpoint(); // EP 8 - HTTP service
 }
 
 pub fn create_endpoint() -> usize {

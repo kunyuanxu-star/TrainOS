@@ -383,6 +383,34 @@ pub fn close(fd: usize) -> usize {
     result
 }
 
+/// stat(fd, buf) — get file status (syscall 54).
+pub fn stat(_fd: usize, buf: &mut [u8]) -> usize {
+    let r: usize;
+    unsafe { core::arch::asm!("ecall", in("a7") 54usize, in("a0") 0usize, in("a1") buf.as_ptr() as usize, lateout("a0") r); }
+    r
+}
+
+/// lseek(fd, offset, whence) — reposition read/write offset (syscall 55).
+pub fn lseek(fd: usize, offset: isize, whence: usize) -> usize {
+    let r: usize;
+    unsafe { core::arch::asm!("ecall", in("a7") 55usize, in("a0") fd, in("a1") offset as usize, in("a2") whence, lateout("a0") r); }
+    r
+}
+
+/// dup(fd) — duplicate a file descriptor (syscall 56).
+pub fn dup(fd: usize) -> usize {
+    let r: usize;
+    unsafe { core::arch::asm!("ecall", in("a7") 56usize, in("a0") fd, lateout("a0") r); }
+    r
+}
+
+/// getcwd(buf) — get current working directory (syscall 57).
+pub fn getcwd(buf: &mut [u8]) -> usize {
+    let r: usize;
+    unsafe { core::arch::asm!("ecall", in("a7") 57usize, in("a0") buf.as_ptr() as usize, in("a1") buf.len(), lateout("a0") r); }
+    r
+}
+
 /// Read a disk sector from the VirtIO block device (syscall 40).
 /// sector: logical block address (512-byte units)
 /// buf: mutable buffer to receive data (must be >= 512 bytes)

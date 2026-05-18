@@ -325,6 +325,33 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
         None => console::puts("  WARNING: ECHO spawn failed\r\n"),
     }
 
+    // Spawn the HTTP service (V11.0D TCP server on EP 8, prio 58)
+    // Same priority as VETH/PKG so it runs in the 58 group, before MKFS(57).
+    static HTTP_ELF: &[u8] = include_bytes!("http.elf");
+    match proc::spawn(HTTP_ELF, 58) {
+        Some(pid) => {
+            console::puts("  HTTP process spawned (pid=");
+            unsafe {
+                let mut n = pid;
+                let mut buf = [0u8; 10];
+                let mut i = 10;
+                loop {
+                    i -= 1;
+                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
+                    n /= 10;
+                    if n == 0 {
+                        break;
+                    }
+                }
+                for &b in buf[i..].iter() {
+                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
+                }
+            }
+            console::puts(")\r\n");
+        }
+        None => console::puts("  WARNING: HTTP spawn failed\r\n"),
+    }
+
     // Spawn the TEST_NET service (V2.5 network test, prio 41)
     static TEST_NET_ELF: &[u8] = include_bytes!("test_net.elf");
     match proc::spawn(TEST_NET_ELF, 41) {
@@ -376,6 +403,61 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
             console::puts(")\r\n");
         }
         None => console::puts("  WARNING: REG spawn failed\r\n"),
+    }
+
+    // Spawn the MKFS service (V11.0B persistent disk format, priority 57)
+    // Formats the disk with TFS superblock, bitmap, root dir, journal, and welcome file.
+    static MKFS_ELF: &[u8] = include_bytes!("mkfs.elf");
+    match proc::spawn(MKFS_ELF, 57) {
+        Some(pid) => {
+            console::puts("  MKFS process spawned (pid=");
+            unsafe {
+                let mut n = pid;
+                let mut buf = [0u8; 10];
+                let mut i = 10;
+                loop {
+                    i -= 1;
+                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
+                    n /= 10;
+                    if n == 0 {
+                        break;
+                    }
+                }
+                for &b in buf[i..].iter() {
+                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
+                }
+            }
+            console::puts(")\r\n");
+        }
+        None => console::puts("  WARNING: mkfs spawn failed\r\n"),
+    }
+
+    // Spawn the TEST_MOUNT service (V11.0B cross-reboot persistence test, priority 50)
+    // Verifies that the TFS filesystem and welcome file persist on the disk.
+    // NOTE: priority > 24 because SH(24) busy-waits and would starve lower prios.
+    static TEST_MOUNT_ELF: &[u8] = include_bytes!("test_mount.elf");
+    match proc::spawn(TEST_MOUNT_ELF, 50) {
+        Some(pid) => {
+            console::puts("  TEST_MOUNT process spawned (pid=");
+            unsafe {
+                let mut n = pid;
+                let mut buf = [0u8; 10];
+                let mut i = 10;
+                loop {
+                    i -= 1;
+                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
+                    n /= 10;
+                    if n == 0 {
+                        break;
+                    }
+                }
+                for &b in buf[i..].iter() {
+                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
+                }
+            }
+            console::puts(")\r\n");
+        }
+        None => console::puts("  WARNING: test_mount spawn failed\r\n"),
     }
 
     // Spawn the TEST_NET2 service (V9.0C network integration test, priority 54)
@@ -721,7 +803,7 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
         None => console::puts("  WARNING: drv spawn failed\r\n"),
     }
 
-    // Spawn the NETDRV service (V4.0B VirtIO network driver, priority 63)
+    // Spawn the NETDRV service (V4.0B VirtIO network driver, priority 27)
     // Prio 63 = highest, matches TEST_CAP. NETDRV enqueued first so runs first, then exits.
     static NETDRV_ELF: &[u8] = include_bytes!("netdrv.elf");
     match proc::spawn(NETDRV_ELF, 63) {
@@ -772,6 +854,32 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
             console::puts(")\r\n");
         }
         None => console::puts("  WARNING: tfs spawn failed\r\n"),
+    }
+
+    // Spawn the SMP verification test (V11.0A concurrent IPC, priority 61)
+    static SMP_ELF: &[u8] = include_bytes!("test_smp.elf");
+    match proc::spawn(SMP_ELF, 61) {
+        Some(pid) => {
+            console::puts("  SMP_TEST process spawned (pid=");
+            unsafe {
+                let mut n = pid;
+                let mut buf = [0u8; 10];
+                let mut i = 10;
+                loop {
+                    i -= 1;
+                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
+                    n /= 10;
+                    if n == 0 {
+                        break;
+                    }
+                }
+                for &b in buf[i..].iter() {
+                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
+                }
+            }
+            console::puts(")\r\n");
+        }
+        None => console::puts("  WARNING: smp spawn failed\r\n"),
     }
 
     // Spawn the TFS test service (V4.0A persistent disk FS, priority 55)
@@ -908,7 +1016,7 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
         None => console::puts("  WARNING: TEST_PROC spawn failed\r\n"),
     }
 
-    // Spawn the TEST_CAP service (V4.0C capability security test, priority 63)
+    // Spawn the TEST_CAP service (V4.0C capability security test, priority 27)
     static TEST_CAP_ELF: &[u8] = include_bytes!("test_cap.elf");
     match proc::spawn(TEST_CAP_ELF, 63) {
         Some(pid) => {
@@ -932,6 +1040,32 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
             console::puts(")\r\n");
         }
         None => console::puts("  WARNING: TEST_CAP spawn failed\r\n"),
+    }
+
+    // Spawn the TEST_POSIX2 service (V11.0C extended POSIX syscalls test, priority 27)
+    static TEST_POSIX2_ELF: &[u8] = include_bytes!("test_posix2.elf");
+    match proc::spawn(TEST_POSIX2_ELF, 27) {
+        Some(pid) => {
+            console::puts("  TEST_POSIX2 process spawned (pid=");
+            unsafe {
+                let mut n = pid;
+                let mut buf = [0u8; 10];
+                let mut i = 10;
+                loop {
+                    i -= 1;
+                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
+                    n /= 10;
+                    if n == 0 {
+                        break;
+                    }
+                }
+                for &b in buf[i..].iter() {
+                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
+                }
+            }
+            console::puts(")\r\n");
+        }
+        None => console::puts("  WARNING: test_posix2 spawn failed\r\n"),
     }
 
     // Spawn the TEST_PERF service (V5.0D performance benchmark, priority 27)
@@ -960,7 +1094,7 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
         None => console::puts("  WARNING: TEST_PERF spawn failed\r\n"),
     }
 
-    // Spawn the BB service (V7.0B BusyBox-like multi-command utility, priority 63)
+    // Spawn the BB service (V7.0B BusyBox-like multi-command utility, priority 27)
     // High priority to run before JRNL(62) which crashes with an unhandled trap.
     // Demonstrates the BusyBox concept: single binary dispatching multiple commands.
     static BB_ELF: &[u8] = include_bytes!("bb.elf");
@@ -1175,6 +1309,33 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
             console::puts(")\r\n");
         }
         None => console::puts("  WARNING: RUSTDEMO spawn failed\r\n"),
+    }
+
+    // Spawn the TEST_HTTP service (V11.0D HTTP client test, prio 58)
+    // Runs in the same priority group as HTTP(58) so HTTP starts first, then test_http sends.
+    static TEST_HTTP_ELF: &[u8] = include_bytes!("test_http.elf");
+    match proc::spawn(TEST_HTTP_ELF, 58) {
+        Some(pid) => {
+            console::puts("  TEST_HTTP process spawned (pid=");
+            unsafe {
+                let mut n = pid;
+                let mut buf = [0u8; 10];
+                let mut i = 10;
+                loop {
+                    i -= 1;
+                    buf[i] = b'0' + (n - (n / 10) * 10) as u8;
+                    n /= 10;
+                    if n == 0 {
+                        break;
+                    }
+                }
+                for &b in buf[i..].iter() {
+                    core::arch::asm!("ecall", in("a7") 1usize, in("a0") b as usize);
+                }
+            }
+            console::puts(")\r\n");
+        }
+        None => console::puts("  WARNING: TEST_HTTP spawn failed\r\n"),
     }
 
     // Create idle thread and start scheduler

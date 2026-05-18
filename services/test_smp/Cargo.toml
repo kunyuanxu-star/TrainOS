@@ -1,0 +1,10 @@
+[package]
+name = "test_smp"
+version.workspace = true
+edition.workspace = true
+
+[[bin]]
+name = "test_smp"
+
+[dependencies]
+tros = { path = "../../lib/tros" }

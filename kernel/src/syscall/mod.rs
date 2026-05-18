@@ -2,56 +2,117 @@ pub mod cap;
 pub mod ipc;
 pub mod posix;
 pub mod proc;
+pub mod memory;
+pub mod socket;
+pub mod epoll;
+pub mod time;
+pub mod fs;
 
 use crate::trap::TrapFrame;
 
-// Syscall numbers
+// ── Syscall Number Assignments ───────────────────────────────────────────────
+
+// Core: 0-7
 pub const SYS_EXIT: usize = 0;
+pub const SYS_PUTCHAR: usize = 1;
+pub const SYS_GETCHAR: usize = 2;
 pub const SYS_SPAWN: usize = 3;
 pub const SYS_FORK: usize = 4;
 pub const SYS_GETPID: usize = 5;
 pub const SYS_YIELD: usize = 6;
 pub const SYS_EXEC: usize = 7;
+
+// IPC: 10-14
 pub const SYS_EP_CREATE: usize = 10;
 pub const SYS_SEND: usize = 11;
 pub const SYS_RECV: usize = 12;
 pub const SYS_CALL: usize = 13;
 pub const SYS_REPLY: usize = 14;
+
+// MMIO / Memory: 20-25
 pub const SYS_MMIO_MAP: usize = 20;
 pub const SYS_UNMAP: usize = 21;
 pub const SYS_MAP_MMIO: usize = 22;
 pub const SYS_MMIO_READ32: usize = 23;
 pub const SYS_MMIO_WRITE32: usize = 24;
+pub const SYS_SHM_MAP: usize = 25;
+
+// Capability: 30-34
 pub const SYS_MINT: usize = 30;
 pub const SYS_COPY: usize = 31;
 pub const SYS_MOVE: usize = 32;
 pub const SYS_DELETE: usize = 33;
 pub const SYS_CAP_STATS: usize = 34;
+
+// Block I/O + System info: 40-46
 pub const SYS_BLK_READ: usize = 40;
-pub const SYS_BLK_WRITE: usize = 45;
 pub const SYS_PROCLIST: usize = 41;
 pub const SYS_KILL: usize = 42;
 pub const SYS_MEMINFO: usize = 43;
 pub const SYS_PERF_STATS: usize = 44;
-pub const SYS_SHM_MAP: usize = 25;
+pub const SYS_BLK_WRITE: usize = 45;
 pub const SYS_UPTIME: usize = 46;
-// POSIX compatibility syscalls
+
+// POSIX I/O: 50-57
 pub const SYS_OPEN: usize = 50;
 pub const SYS_READ: usize = 51;
 pub const SYS_WRITE: usize = 52;
 pub const SYS_CLOSE: usize = 53;
-pub const SYS_STAT:   usize = 54;
-pub const SYS_LSEEK:  usize = 55;
-pub const SYS_DUP:    usize = 56;
+pub const SYS_STAT: usize = 54;
+pub const SYS_LSEEK: usize = 55;
+pub const SYS_DUP: usize = 56;
 pub const SYS_GETCWD: usize = 57;
-pub const SYS_GETUID:  usize = 60;
-pub const SYS_SETUID:  usize = 61;
-pub const SYS_CHMOD:   usize = 62;
-pub const SYS_SIGNAL:  usize = 63;
+
+// User/Permissions: 60-64
+pub const SYS_GETUID: usize = 60;
+pub const SYS_SETUID: usize = 61;
+pub const SYS_CHMOD: usize = 62;
+pub const SYS_SIGNAL: usize = 63;
 pub const SYS_WAITPID: usize = 64;
-// SBI forwarding
-pub const SYS_PUTCHAR: usize = 1;
-pub const SYS_GETCHAR: usize = 2;
+
+// Process (V14.0): 65-71
+pub const SYS_GETPPID: usize = 65;
+pub const SYS_GETTID: usize = 66;
+pub const SYS_NANOSLEEP: usize = 67;
+pub const SYS_CLOCK_GETTIME: usize = 68;
+pub const SYS_UMASK: usize = 69;
+pub const SYS_SETSID: usize = 70;
+pub const SYS_SYSINFO: usize = 71;
+
+// Filesystem (V14.0): 72-82
+pub const SYS_PIPE: usize = 72;
+pub const SYS_FCNTL: usize = 73;
+pub const SYS_IOCTL: usize = 74;
+pub const SYS_GETDENTS64: usize = 75;
+pub const SYS_MKDIR: usize = 76;
+pub const SYS_RMDIR: usize = 77;
+pub const SYS_UNLINK: usize = 78;
+pub const SYS_RENAME: usize = 79;
+pub const SYS_CHDIR: usize = 80;
+pub const SYS_ACCESS: usize = 81;
+pub const SYS_TRUNCATE: usize = 82;
+
+// Memory management (V14.0): 83-86
+pub const SYS_MMAP: usize = 83;
+pub const SYS_MUNMAP: usize = 84;
+pub const SYS_MPROTECT: usize = 85;
+pub const SYS_BRK: usize = 86;
+
+// Socket (V14.0): 90-96
+pub const SYS_SOCKET: usize = 90;
+pub const SYS_BIND: usize = 91;
+pub const SYS_LISTEN: usize = 92;
+pub const SYS_ACCEPT: usize = 93;
+pub const SYS_CONNECT: usize = 94;
+pub const SYS_SENDTO: usize = 95;
+pub const SYS_RECVFROM: usize = 96;
+
+// epoll (V14.0): 100-102
+pub const SYS_EPOLL_CREATE: usize = 100;
+pub const SYS_EPOLL_CTL: usize = 101;
+pub const SYS_EPOLL_WAIT: usize = 102;
+
+// ── Dispatch ─────────────────────────────────────────────────────────────────
 
 pub fn syscall_dispatch(tf: &mut TrapFrame) {
     let nr = tf.a7;
@@ -61,21 +122,14 @@ pub fn syscall_dispatch(tf: &mut TrapFrame) {
     let arg3 = tf.a3;
 
     let result = match nr {
+        // Core
         SYS_PUTCHAR => {
-            unsafe {
-                core::arch::asm!("ecall", in("a7") 1usize, in("a0") tf.a0);
-            }
+            unsafe { core::arch::asm!("ecall", in("a7") 1usize, in("a0") tf.a0); }
             Ok(0)
         }
         SYS_GETCHAR => {
             let c: usize;
-            unsafe {
-                core::arch::asm!(
-                    "ecall",
-                    in("a7") 2usize,
-                    lateout("a0") c,
-                );
-            }
+            unsafe { core::arch::asm!("ecall", in("a7") 2usize, lateout("a0") c); }
             Ok(c)
         }
         SYS_EP_CREATE => ipc::sys_ep_create(),
@@ -102,17 +156,14 @@ pub fn syscall_dispatch(tf: &mut TrapFrame) {
         SYS_GETPID => Ok(crate::sched::current_thread()
             .map(|t| unsafe { (*t).owner as usize })
             .unwrap_or(0)),
-        SYS_YIELD => {
-            crate::sched::schedule();
-            Ok(0)
-        }
+        SYS_YIELD => { crate::sched::schedule(); Ok(0) }
         SYS_OPEN => posix::sys_open(arg0, arg1, arg2),
         SYS_READ => posix::sys_read(arg0, arg1, arg2),
         SYS_WRITE => posix::sys_write(arg0, arg1, arg2),
         SYS_CLOSE => posix::sys_close(arg0),
-        SYS_STAT   => posix::sys_stat(arg0, arg1),
-        SYS_LSEEK  => posix::sys_lseek(arg0, arg1 as isize, arg2),
-        SYS_DUP    => posix::sys_dup(arg0),
+        SYS_STAT => posix::sys_stat(arg0, arg1),
+        SYS_LSEEK => posix::sys_lseek(arg0, arg1 as isize, arg2),
+        SYS_DUP => posix::sys_dup(arg0),
         SYS_GETCWD => posix::sys_getcwd(arg0, arg1),
         SYS_MMIO_READ32 => sys_mmio_read32(arg0),
         SYS_MMIO_WRITE32 => sys_mmio_write32(arg0, arg1),
@@ -122,38 +173,73 @@ pub fn syscall_dispatch(tf: &mut TrapFrame) {
         SYS_KILL => proc::sys_kill(arg0 as u32),
         SYS_MEMINFO => Ok(crate::mem::buddy::allocated_pages()),
         SYS_PERF_STATS => {
-            let sends =
-                crate::ipc::endpoint::SEND_COUNT.load(core::sync::atomic::Ordering::Relaxed);
-            let recvs =
-                crate::ipc::endpoint::RECV_COUNT.load(core::sync::atomic::Ordering::Relaxed);
+            let sends = crate::ipc::endpoint::SEND_COUNT.load(core::sync::atomic::Ordering::Relaxed);
+            let recvs = crate::ipc::endpoint::RECV_COUNT.load(core::sync::atomic::Ordering::Relaxed);
             let ctx = crate::sched::CTX_SWITCH_COUNT.load(core::sync::atomic::Ordering::Relaxed);
-            let result = (sends & 0xFFFFF) | ((recvs & 0xFFFFF) << 20) | ((ctx & 0xFFFFFF) << 40);
-            Ok(result as usize)
+            Ok(((sends & 0xFFFFF) | ((recvs & 0xFFFFF) << 20) | ((ctx & 0xFFFFFF) << 40)) as usize)
         }
-        SYS_UPTIME => {
-            let ticks = unsafe { crate::trap::TICK_COUNT };
-            Ok(ticks)
-        }
+        SYS_UPTIME => Ok(unsafe { crate::trap::TICK_COUNT }),
         SYS_SHM_MAP => proc::sys_shm_map(arg0 as u32, arg1),
         SYS_GETUID => proc::sys_getuid(),
         SYS_SETUID => proc::sys_setuid(arg0 as u32),
-        SYS_CHMOD  => proc::sys_chmod(arg0, arg1 as u16),
-        SYS_SIGNAL  => proc::sys_signal(arg0 as u32, arg1),
+        SYS_CHMOD => proc::sys_chmod(arg0, arg1 as u16),
+        SYS_SIGNAL => proc::sys_signal(arg0 as u32, arg1),
         SYS_WAITPID => proc::sys_waitpid(arg0 as i32, arg1, arg2),
+
+        // V14.0 — Process
+        SYS_GETPPID => proc::sys_getppid(),
+        SYS_GETTID => proc::sys_gettid(),
+        SYS_NANOSLEEP => time::sys_nanosleep(arg0, arg1),
+        SYS_CLOCK_GETTIME => time::sys_clock_gettime(arg0, arg1),
+        SYS_UMASK => proc::sys_umask(arg0 as u16),
+        SYS_SETSID => proc::sys_setsid(),
+        SYS_SYSINFO => proc::sys_sysinfo(arg0),
+
+        // V14.0 — Filesystem
+        SYS_PIPE => fs::sys_pipe(arg0),
+        SYS_FCNTL => fs::sys_fcntl(arg0, arg1, arg2),
+        SYS_IOCTL => fs::sys_ioctl(arg0, arg1, arg2),
+        SYS_GETDENTS64 => fs::sys_getdents64(arg0, arg1, arg2),
+        SYS_MKDIR => fs::sys_mkdir(arg0, arg1),
+        SYS_RMDIR => fs::sys_rmdir(arg0),
+        SYS_UNLINK => fs::sys_unlink(arg0),
+        SYS_RENAME => fs::sys_rename(arg0, arg1),
+        SYS_CHDIR => fs::sys_chdir(arg0),
+        SYS_ACCESS => fs::sys_access(arg0, arg1),
+        SYS_TRUNCATE => fs::sys_truncate(arg0, arg1),
+
+        // V14.0 — Memory
+        SYS_MMAP => memory::sys_mmap(arg0, arg1, arg2, arg3, tf.a4 as isize, tf.a5 as isize),
+        SYS_MUNMAP => memory::sys_munmap(arg0, arg1),
+        SYS_MPROTECT => memory::sys_mprotect(arg0, arg1, arg2),
+        SYS_BRK => memory::sys_brk(arg0),
+
+        // V14.0 — Socket
+        SYS_SOCKET => socket::sys_socket(arg0, arg1, arg2),
+        SYS_BIND => socket::sys_bind(arg0, arg1, arg2),
+        SYS_LISTEN => socket::sys_listen(arg0, arg1),
+        SYS_ACCEPT => socket::sys_accept(arg0),
+        SYS_CONNECT => socket::sys_connect(arg0, arg1, arg2),
+        SYS_SENDTO => socket::sys_sendto(arg0, arg1, arg2, arg3, tf.a4, tf.a5),
+        SYS_RECVFROM => socket::sys_recvfrom(arg0, arg1, arg2, arg3, tf.a4, tf.a5),
+
+        // V14.0 — epoll
+        SYS_EPOLL_CREATE => epoll::sys_epoll_create(arg0),
+        SYS_EPOLL_CTL => epoll::sys_epoll_ctl(arg0, arg1, arg2, arg3),
+        SYS_EPOLL_WAIT => epoll::sys_epoll_wait(arg0, arg1, arg2, arg3 as isize),
+
         _ => Err("unknown syscall"),
     };
 
     match result {
-        Ok(val) => {
-            tf.a0 = val;
-        }
-        Err(_e) => {
-            tf.a0 = usize::MAX;
-        }
+        Ok(val) => tf.a0 = val,
+        Err(_e) => tf.a0 = usize::MAX,
     }
 
     tf.sepc += 4;
 }
+
+// ── MMIO helpers ─────────────────────────────────────────────────────────────
 
 fn sys_map_mmio(phys: usize, size: usize) -> Result<usize, &'static str> {
     let thread = crate::sched::current_thread().ok_or("no thread")?;
@@ -162,47 +248,34 @@ fn sys_map_mmio(phys: usize, size: usize) -> Result<usize, &'static str> {
     let procs = crate::proc::PROCESSES.lock();
     let mut root_pt = 0;
     for proc in procs.iter() {
-        if proc.pid == pid {
-            root_pt = proc.page_table_root;
-            break;
-        }
+        if proc.pid == pid { root_pt = proc.page_table_root; break; }
     }
+    drop(procs);
+
     if root_pt == 0 {
         crate::println!("  MMIO: process pid={} not found!", pid);
         return Err("process not found");
     }
-    drop(procs);
 
     crate::println!("  MMIO: pid={} root_pt=0x{:x}", pid, root_pt);
-
     let va = crate::proc::elf::map_phys_to_user(root_pt, phys, size);
     crate::println!("  MMIO: mapped at va=0x{:x}", va);
     Ok(va)
 }
 
-/// Read a 32-bit value from a physical MMIO address.
-/// Uses a temporary fault handler to catch load access faults on non-existent
-/// physical addresses, returning an error instead of crashing.
 fn sys_mmio_read32(phys: usize) -> Result<usize, &'static str> {
-    if phys & 0x3 != 0 {
-        return Err("unaligned mmio read");
-    }
-
+    if phys & 0x3 != 0 { return Err("unaligned mmio read"); }
     unsafe {
         extern "C" {
             static __mmio_fault_happened: core::cell::UnsafeCell<usize>;
             fn __mmio_fault_recover();
         }
         core::ptr::write_volatile(__mmio_fault_happened.get(), 0);
-
         let old_stvec: usize;
         core::arch::asm!("csrr {}, stvec", out(reg) old_stvec);
         core::arch::asm!("csrw stvec, {}", in(reg) __mmio_fault_recover as *const () as usize);
-
         let val = (phys as *const u32).read_volatile();
-
         core::arch::asm!("csrw stvec, {}", in(reg) old_stvec);
-
         if core::ptr::read_volatile(__mmio_fault_happened.get()) != 0 {
             Err("mmio load access fault")
         } else {
@@ -211,7 +284,14 @@ fn sys_mmio_read32(phys: usize) -> Result<usize, &'static str> {
     }
 }
 
-// Temporary fault handler for sys_mmio_read32 / sys_mmio_write32.
+fn sys_mmio_write32(phys: usize, val: usize) -> Result<usize, &'static str> {
+    if phys & 0x3 != 0 { return Err("unaligned mmio write"); }
+    unsafe { (phys as *mut u32).write_volatile(val as u32); }
+    Ok(0)
+}
+
+// ── MMIO fault recovery ──────────────────────────────────────────────────────
+
 core::arch::global_asm!(
     ".data",
     ".align 3",
@@ -230,14 +310,3 @@ core::arch::global_asm!(
     "    csrw sepc, t0",
     "    sret",
 );
-
-/// Write a 32-bit value to a physical MMIO address.
-fn sys_mmio_write32(phys: usize, val: usize) -> Result<usize, &'static str> {
-    if phys & 0x3 != 0 {
-        return Err("unaligned mmio write");
-    }
-    unsafe {
-        (phys as *mut u32).write_volatile(val as u32);
-    }
-    Ok(0)
-}

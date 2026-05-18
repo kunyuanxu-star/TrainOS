@@ -336,7 +336,77 @@ pub unsafe fn copy_kernel_mappings(target_root_phys: usize) {
     }
 }
 
-/// Build an Sv39 satp value for a given root page table physical address.
+/// Map a virtual address to a physical page in a process-specific page table.
+pub unsafe fn map_user_page(
+    root_phys: usize, va: usize, pa: usize, r: bool, w: bool,
+) -> Result<(), &'static str> {
+    // Walk the process's page table, allocating missing levels
+    let (l0_phys, idx) = walk_process_pt(root_phys, va, true)
+        .ok_or("map_user_page: walk failed")?;
+    let l0 = &mut *(pa_to_kva(l0_phys) as *mut [PTE; 512]);
+    let mut pte = PTE::empty();
+    pte.set_ppn(pa >> 12);
+    pte.set_flags(r, w, false, true); // U=1 (user-accessible)
+    pte.set_accessed(true);
+    pte.set_dirty(true);
+    l0[idx] = pte;
+    Ok(())
+}
+
+/// Unmap a virtual address from a process-specific page table.
+pub unsafe fn unmap_user_page(root_phys: usize, va: usize) {
+    if let Some((l0_phys, idx)) = walk_process_pt(root_phys, va, false) {
+        let l0 = &mut *(pa_to_kva(l0_phys) as *mut [PTE; 512]);
+        l0[idx] = PTE::empty();
+    }
+}
+
+/// Walk a process-specific page table (not the kernel's ROOT_PT).
+pub unsafe fn walk_process_pt(
+    root_phys: usize, va: usize, alloc: bool,
+) -> Option<(usize, usize)> {
+    let vpn2_idx = vpn2(va);
+    let vpn1_idx = vpn1(va);
+    let vpn0_idx = vpn0(va);
+
+    let l2 = &mut *(pa_to_kva(root_phys) as *mut [PTE; 512]);
+
+    // L2 → L1
+    let l1_phys = if !l2[vpn2_idx].is_valid() {
+        if !alloc { return None; }
+        let new_page = super::buddy::alloc_page()?;
+        core::ptr::write_bytes(pa_to_kva(new_page) as *mut u8, 0, PAGE_SIZE);
+        let mut entry = PTE::empty();
+        entry.set_ppn(new_page >> 12);
+        entry.set_flags(false, false, false, false);
+        l2[vpn2_idx] = entry;
+        new_page
+    } else if l2[vpn2_idx].is_leaf() {
+        return None;
+    } else {
+        l2[vpn2_idx].phys_addr()
+    };
+
+    // L1 → L0
+    let l1 = &mut *(pa_to_kva(l1_phys) as *mut [PTE; 512]);
+    if l1[vpn1_idx].is_leaf() {
+        return None;
+    }
+    let l0_phys = if !l1[vpn1_idx].is_valid() {
+        if !alloc { return None; }
+        let new_page = super::buddy::alloc_page()?;
+        core::ptr::write_bytes(pa_to_kva(new_page) as *mut u8, 0, PAGE_SIZE);
+        let mut entry = PTE::empty();
+        entry.set_ppn(new_page >> 12);
+        entry.set_flags(false, false, false, false);
+        l1[vpn1_idx] = entry;
+        new_page
+    } else {
+        l1[vpn1_idx].phys_addr()
+    };
+
+    Some((l0_phys, vpn0_idx))
+}
 pub fn make_satp(root_phys: usize) -> usize {
     (8usize << 60) | (root_phys >> 12)
 }

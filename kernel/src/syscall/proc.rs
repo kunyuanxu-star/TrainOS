@@ -835,3 +835,88 @@ fn hex_dbg(val: usize) {
         }
     }
 }
+
+// ── Extended process syscalls (V14.0) ────────────────────────────────────────
+
+/// sys_getppid() — get parent PID.
+pub fn sys_getppid() -> Result<usize, &'static str> {
+    let pid = crate::sched::current_thread()
+        .map(|t| unsafe { (*t).owner })
+        .ok_or("no proc")?;
+    let procs = crate::proc::PROCESSES.lock();
+    let parent = procs.iter()
+        .find(|p| p.pid == pid)
+        .and_then(|p| p.parent)
+        .unwrap_or(0);
+    Ok(parent as usize)
+}
+
+/// sys_gettid() — get thread ID (same as PID in single-threaded V14).
+pub fn sys_gettid() -> Result<usize, &'static str> {
+    let tid = crate::sched::current_thread()
+        .map(|t| t as usize)
+        .unwrap_or(0);
+    Ok(tid)
+}
+
+/// sys_umask(mask) — set file mode creation mask. Returns previous mask.
+pub fn sys_umask(mask: u16) -> Result<usize, &'static str> {
+    let pid = crate::sched::current_thread()
+        .map(|t| unsafe { (*t).owner })
+        .ok_or("no proc")?;
+    let mut procs = crate::proc::PROCESSES.lock();
+    let proc = procs.iter_mut().find(|p| p.pid == pid).ok_or("not found")?;
+    let old = proc.umask;
+    proc.umask = mask;
+    Ok(old as usize)
+}
+
+/// sys_setsid() — create a new session. Returns session ID (same as PID).
+pub fn sys_setsid() -> Result<usize, &'static str> {
+    let pid = crate::sched::current_thread()
+        .map(|t| unsafe { (*t).owner })
+        .ok_or("no proc")?;
+    Ok(pid as usize)
+}
+
+/// sys_sysinfo(buf_ptr) — fill sysinfo structure.
+/// struct sysinfo {
+///     uptime: i64,       // seconds since boot
+///     loads: [u64; 3],   // 1, 5, 15 min load averages
+///     totalram: u64,     // total usable RAM in bytes
+///     freeram: u64,      // available RAM in bytes
+///     procs: u16,        // number of processes
+/// }
+pub fn sys_sysinfo(buf_ptr: usize) -> Result<usize, &'static str> {
+    if buf_ptr == 0 { return Err("null pointer"); }
+
+    let ticks = unsafe { crate::trap::TICK_COUNT };
+    let uptime = (ticks as u64 * 10) / 1000; // seconds
+
+    let total_pages = crate::mem::buddy::total_pages() as u64;
+    let free_pages = (total_pages - crate::mem::buddy::allocated_pages() as u64);
+    let total_ram = total_pages * 4096;
+    let free_ram = free_pages * 4096;
+
+    let procs = crate::proc::PROCESSES.lock();
+    let proc_count = procs.iter().filter(|p| p.state != ProcessState::Dead).count() as u16;
+    drop(procs);
+
+    unsafe {
+        let ptr = buf_ptr as *mut u64;
+
+        ptr.write_volatile(uptime);           // uptime (seconds)
+
+        ptr.add(1).write_volatile(0);   // load1
+        ptr.add(2).write_volatile(0);   // load5
+        ptr.add(3).write_volatile(0);   // load15
+
+        ptr.add(4).write_volatile(total_ram);  // totalram
+        ptr.add(5).write_volatile(free_ram);   // freeram
+
+        let proc_ptr = buf_ptr as *mut u16;
+        proc_ptr.add(48).write_volatile(proc_count); // procs (offset 48 bytes in)
+    }
+
+    Ok(0)
+}

@@ -619,3 +619,269 @@ pub fn perf_stats() -> (usize, usize, usize) {
     let ctx = (result >> 40) & 0xFFFFFF;
     (sends, recvs, ctx)
 }
+
+// ── V14.0 Extended Syscalls ──────────────────────────────────────────────────
+
+/// Get parent process ID (syscall 65).
+pub fn getppid() -> usize {
+    let r: usize;
+    unsafe { core::arch::asm!("ecall", in("a7") 65usize, lateout("a0") r); }
+    r
+}
+
+/// Get thread ID (syscall 66).
+pub fn gettid() -> usize {
+    let r: usize;
+    unsafe { core::arch::asm!("ecall", in("a7") 66usize, lateout("a0") r); }
+    r
+}
+
+/// Nanosleep (syscall 67).
+pub fn nanosleep(_seconds: u64, _nanoseconds: u64) -> usize {
+    let r: usize;
+    unsafe { core::arch::asm!("ecall", in("a7") 67usize, in("a0") 0usize, in("a1") 0usize, lateout("a0") r); }
+    r
+}
+
+/// clock_gettime(clk_id, ts_ptr) (syscall 68).
+pub fn clock_gettime(clk_id: usize, ts: &mut [u64; 2]) -> usize {
+    let r: usize;
+    unsafe { core::arch::asm!("ecall", in("a7") 68usize, in("a0") clk_id, in("a1") ts.as_ptr() as usize, lateout("a0") r); }
+    r
+}
+
+/// Set umask (syscall 69).
+pub fn umask(mask: u16) -> usize {
+    let r: usize;
+    unsafe { core::arch::asm!("ecall", in("a7") 69usize, in("a0") mask as usize, lateout("a0") r); }
+    r
+}
+
+/// Create new session (syscall 70).
+pub fn setsid() -> usize {
+    let r: usize;
+    unsafe { core::arch::asm!("ecall", in("a7") 70usize, lateout("a0") r); }
+    r
+}
+
+/// Get system info (syscall 71).
+pub fn sysinfo(buf: &mut [u8]) -> usize {
+    let r: usize;
+    unsafe { core::arch::asm!("ecall", in("a7") 71usize, in("a0") buf.as_ptr() as usize, lateout("a0") r); }
+    r
+}
+
+/// Create a pipe (syscall 72). fds[0]=read end, fds[1]=write end.
+pub fn pipe(fds: &mut [u32; 2]) -> usize {
+    let r: usize;
+    unsafe { core::arch::asm!("ecall", in("a7") 72usize, in("a0") fds.as_ptr() as usize, lateout("a0") r); }
+    r
+}
+
+/// fcntl(fd, cmd, arg) (syscall 73).
+pub fn fcntl(fd: usize, cmd: usize, arg: usize) -> usize {
+    let r: usize;
+    unsafe { core::arch::asm!("ecall", in("a7") 73usize, in("a0") fd, in("a1") cmd, in("a2") arg, lateout("a0") r); }
+    r
+}
+
+/// ioctl(fd, request, arg) (syscall 74).
+pub fn ioctl(fd: usize, req: usize, arg: usize) -> usize {
+    let r: usize;
+    unsafe { core::arch::asm!("ecall", in("a7") 74usize, in("a0") fd, in("a1") req, in("a2") arg, lateout("a0") r); }
+    r
+}
+
+/// getdents64(fd, buf, len) (syscall 75).
+pub fn getdents64(fd: usize, buf: &mut [u8]) -> usize {
+    let r: usize;
+    unsafe { core::arch::asm!("ecall", in("a7") 75usize, in("a0") fd, in("a1") buf.as_ptr() as usize, in("a2") buf.len(), lateout("a0") r); }
+    r
+}
+
+/// mkdir(path, mode) (syscall 76).
+pub fn mkdir(path: &str, mode: usize) -> usize {
+    let r: usize;
+    unsafe { core::arch::asm!("ecall", in("a7") 76usize, in("a0") path.as_ptr() as usize, in("a1") mode, lateout("a0") r); }
+    r
+}
+
+/// rmdir(path) (syscall 77).
+pub fn rmdir(path: &str) -> usize {
+    let r: usize;
+    unsafe { core::arch::asm!("ecall", in("a7") 77usize, in("a0") path.as_ptr() as usize, lateout("a0") r); }
+    r
+}
+
+/// unlink(path) (syscall 78).
+pub fn unlink(path: &str) -> usize {
+    let r: usize;
+    unsafe { core::arch::asm!("ecall", in("a7") 78usize, in("a0") path.as_ptr() as usize, lateout("a0") r); }
+    r
+}
+
+/// rename(old, new) (syscall 79).
+pub fn rename(old: &str, new: &str) -> usize {
+    let r: usize;
+    unsafe { core::arch::asm!("ecall", in("a7") 79usize, in("a0") old.as_ptr() as usize, in("a1") new.as_ptr() as usize, lateout("a0") r); }
+    r
+}
+
+/// chdir(path) (syscall 80).
+pub fn chdir(path: &str) -> usize {
+    let r: usize;
+    unsafe { core::arch::asm!("ecall", in("a7") 80usize, in("a0") path.as_ptr() as usize, lateout("a0") r); }
+    r
+}
+
+/// access(path, mode) (syscall 81).
+pub fn access(path: &str, mode: usize) -> usize {
+    let r: usize;
+    unsafe { core::arch::asm!("ecall", in("a7") 81usize, in("a0") path.as_ptr() as usize, in("a1") mode, lateout("a0") r); }
+    r
+}
+
+/// truncate(path, length) (syscall 82).
+pub fn truncate(path: &str, length: usize) -> usize {
+    let r: usize;
+    unsafe { core::arch::asm!("ecall", in("a7") 82usize, in("a0") path.as_ptr() as usize, in("a1") length, lateout("a0") r); }
+    r
+}
+
+/// mmap(addr, length, prot, flags, fd, offset) (syscall 83).
+pub fn mmap(addr: usize, length: usize, prot: usize, flags: usize, fd: usize, offset: usize) -> usize {
+    let r: usize;
+    unsafe {
+        core::arch::asm!("ecall",
+            in("a7") 83usize,
+            in("a0") addr,
+            in("a1") length,
+            in("a2") prot,
+            in("a3") flags,
+            in("a4") fd,
+            in("a5") offset,
+            lateout("a0") r,
+        );
+    }
+    r
+}
+
+/// munmap(addr, length) (syscall 84).
+pub fn munmap(addr: usize, length: usize) -> usize {
+    let r: usize;
+    unsafe { core::arch::asm!("ecall", in("a7") 84usize, in("a0") addr, in("a1") length, lateout("a0") r); }
+    r
+}
+
+/// mprotect(addr, length, prot) (syscall 85).
+pub fn mprotect(addr: usize, length: usize, prot: usize) -> usize {
+    let r: usize;
+    unsafe { core::arch::asm!("ecall", in("a7") 85usize, in("a0") addr, in("a1") length, in("a2") prot, lateout("a0") r); }
+    r
+}
+
+/// brk(addr) — set program break (syscall 86).
+pub fn brk(addr: usize) -> usize {
+    let r: usize;
+    unsafe { core::arch::asm!("ecall", in("a7") 86usize, in("a0") addr, lateout("a0") r); }
+    r
+}
+
+/// socket(domain, typ, proto) (syscall 90).
+pub fn socket(domain: usize, typ: usize, proto: usize) -> usize {
+    let r: usize;
+    unsafe { core::arch::asm!("ecall", in("a7") 90usize, in("a0") domain, in("a1") typ, in("a2") proto, lateout("a0") r); }
+    r
+}
+
+/// bind(fd, addr_ptr, addr_len) (syscall 91).
+pub fn bind(fd: usize, addr: &[u8], addr_len: usize) -> usize {
+    let r: usize;
+    unsafe { core::arch::asm!("ecall", in("a7") 91usize, in("a0") fd, in("a1") addr.as_ptr() as usize, in("a2") addr_len, lateout("a0") r); }
+    r
+}
+
+/// listen(fd, backlog) (syscall 92).
+pub fn listen(fd: usize, backlog: usize) -> usize {
+    let r: usize;
+    unsafe { core::arch::asm!("ecall", in("a7") 92usize, in("a0") fd, in("a1") backlog, lateout("a0") r); }
+    r
+}
+
+/// accept(fd) (syscall 93).
+pub fn accept(fd: usize) -> usize {
+    let r: usize;
+    unsafe { core::arch::asm!("ecall", in("a7") 93usize, in("a0") fd, lateout("a0") r); }
+    r
+}
+
+/// connect(fd, addr_ptr, addr_len) (syscall 94).
+pub fn connect(fd: usize, addr: &[u8], addr_len: usize) -> usize {
+    let r: usize;
+    unsafe { core::arch::asm!("ecall", in("a7") 94usize, in("a0") fd, in("a1") addr.as_ptr() as usize, in("a2") addr_len, lateout("a0") r); }
+    r
+}
+
+/// sendto(fd, buf, len, flags, addr, addr_len) (syscall 95).
+pub fn sendto(fd: usize, buf: &[u8], len: usize, flags: usize, addr: &[u8], addr_len: usize) -> usize {
+    let r: usize;
+    unsafe {
+        core::arch::asm!("ecall",
+            in("a7") 95usize,
+            in("a0") fd,
+            in("a1") buf.as_ptr() as usize,
+            in("a2") len,
+            in("a3") flags,
+            in("a4") addr.as_ptr() as usize,
+            in("a5") addr_len,
+            lateout("a0") r,
+        );
+    }
+    r
+}
+
+/// recvfrom(fd, buf, len, flags, addr, addr_len_ptr) (syscall 96).
+pub fn recvfrom(fd: usize, buf: &mut [u8], len: usize, flags: usize) -> usize {
+    let r: usize;
+    unsafe {
+        core::arch::asm!("ecall",
+            in("a7") 96usize,
+            in("a0") fd,
+            in("a1") buf.as_ptr() as usize,
+            in("a2") len,
+            in("a3") flags,
+            lateout("a0") r,
+        );
+    }
+    r
+}
+
+/// epoll_create(size) (syscall 100).
+pub fn epoll_create(size: usize) -> usize {
+    let r: usize;
+    unsafe { core::arch::asm!("ecall", in("a7") 100usize, in("a0") size, lateout("a0") r); }
+    r
+}
+
+/// epoll_ctl(epfd, op, fd, events) (syscall 101).
+pub fn epoll_ctl(epfd: usize, op: usize, fd: usize, events: usize) -> usize {
+    let r: usize;
+    unsafe { core::arch::asm!("ecall", in("a7") 101usize, in("a0") epfd, in("a1") op, in("a2") fd, in("a3") events, lateout("a0") r); }
+    r
+}
+
+/// epoll_wait(epfd, events_ptr, maxevents, timeout) (syscall 102).
+pub fn epoll_wait(epfd: usize, events: &mut [u8], maxevents: usize, timeout: isize) -> usize {
+    let r: usize;
+    unsafe {
+        core::arch::asm!("ecall",
+            in("a7") 102usize,
+            in("a0") epfd,
+            in("a1") events.as_ptr() as usize,
+            in("a2") maxevents,
+            in("a3") timeout as usize,
+            lateout("a0") r,
+        );
+    }
+    r
+}

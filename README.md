@@ -26,10 +26,11 @@ All device drivers, filesystems, network stacks, and POSIX compatibility run as 
 
 ## Current Status (2026-05-08)
 
-### V8.0 — Microkernel with Full Service Ecosystem
+### V11.0 — SMP-Verified Microkernel with Persistent FS and HTTP Server
 
-- **35+ system calls**: Process, IPC, capability, MMIO, block I/O, POSIX, debug
-- **24 user-space services**: init, ping, fs, test_fs, sh, test_fork, uart, test_posix, drv, net, echo, test_net, test_c, proc, test_proc, demo, stress, bb, pci, veth, tfs, tfs_jrnl, edit, cat
+- **39+ system calls**: Process, IPC, capability, MMIO, block I/O, POSIX (stat/lseek/dup/getcwd), debug
+- **34+ user-space services**: init, ping, fs, test_fs, sh, test_fork, uart, test_posix, drv, net, echo, test_net, test_c, proc, test_proc, demo, stress, bb, pci, veth, tfs, tfs_jrnl, edit, cat, bench, rustdemo, mkfs, http, test_smp, test_posix2, test_mount, test_http
+- **SMP verified**: 2 HARTs with concurrent IPC, fork under SMP
 - **Capability system**: Full CNode with Mint/Copy/Move/Revoke/Delete
 - **POSIX compatibility**: open/read/write/close translated to IPC→FS service
 - **COW fork + page fault handler**: Full deep-copy with COW breaking

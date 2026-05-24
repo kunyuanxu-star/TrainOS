@@ -21,7 +21,7 @@
     "灵活组合（Flexible Composition）：将频繁通信的OS服务（如文件系统和内存管理器）合并到同一地址空间将IPC优化为直接函数调用，大幅减少IPC开销。TrainOS可在IPC密集的服务对之间试点组合",
     "地址令牌访问控制（Address-Token-Based Access Control）：将访问令牌编码到物理页的地址映射中，读操作仅需6 cycles（相比seL4 capability的526 cycles快87倍）。TrainOS可借鉴此设计优化capability系统的数据平面性能",
     "策略无关内核分页（Policy-Free Kernel Paging）：内核仅执行页表操作，分页策略决策保留在用户态内存管理服务，减少IPC交互次数，页错误处理比Linux快38%",
-    "Twin Drivers：驱动控制面在Linux驱动容器中运行，数据面使用轻量级"孪生驱动"，实现约1200 MB/s吞吐量，匹配Linux性能。TrainOS可参考此模式复用现有Linux驱动"
+    "Twin Drivers：驱动控制面在Linux驱动容器中运行，数据面使用轻量级“孪生驱动”，实现约1200 MB/s吞吐量，匹配Linux性能。TrainOS可参考此模式复用现有Linux驱动"
   ],
   "roadmap_mapping": "cross_cutting",
   "compatibility_with_rust": "neutral",

@@ -28,7 +28,7 @@ The V21–V30 roadmap is defined in [docs/specs/2026-05-18-trainos-v21-v30-roadm
 2. Architecture: RISC-V 64-bit (rv64gc), Sv39 virtual memory, MIT license.
 3. Language: Rust nightly (`no_std` kernel + user-space, no heap in services).
 
-## Current Status (2026-05-24) — V29.0 (Wave 1-3 Complete, V30 pending)
+## Current Status (2026-05-24) — V30.0 (Complete)
 
 ### Completed
 - **Dynamic process spawning**: `sys_spawn` (syscall 3) creates new processes from user-provided ELF data
@@ -124,6 +124,17 @@ The V21–V30 roadmap is defined in [docs/specs/2026-05-18-trainos-v21-v30-roadm
 - **Model management**: 8 models per GPU, weight storage in GPU memory, load/unload/list
 - **Inference pipeline**: `inference_submit` wraps tensor ops into workloads, latency stats tracking
 - **17 new syscalls**: GPU_* (220-229), AI_* (222-231), MODEL_* (232-234), INFERENCE_* (235-236)
+
+### Wave 4 (V30) — 2026-05-24
+
+#### V30 — Production Readiness & Linux ABI Compatibility
+- **42 new syscalls (240-281)**: System V IPC (semget/semop/semctl, msgget/msgsnd/msgrcv/msgctl), signals (sigaction/sigprocmask/sigreturn/rt_sigaction), termios (TCGETS/TCSETS/TIOCGWINSZ), filesystem (symlink/readlink/fsync/fdatasync/flock/fallocate/sendfile), process (prctl/getpriority/setpriority/sched_getparam/sched_setparam), memory (madvise/mincore/mlock/munlock), time (settimeofday, POSIX timers), socket (getsockopt/setsockopt/getpeername/getsockname/shutdown), poll/ppoll/pselect6
+- **Linux ABI**: 120+ Linux→TrainOS syscall mappings, open/mmap flag translation, 34-value errno conversion, full ELF auxiliary vector (20 AT_* entries)
+- **/proc filesystem**: cpuinfo, meminfo, mounts, stat, loadavg, uptime, per-process maps/status/cmdline/fd/
+- **/sys device model**: devices, class/block, class/net, system/cpu
+- **Dynamic linker**: .interp/.dynamic parsing, DT_NEEDED resolution, R_RISCV_RELATIVE/GLOB_DAT/JUMP_SLOT relocations
+- **Self-hosting**: rustc/cargo runtime framework, 256MB memory requirement, cross→native bootstrap path
+- **Production deployment**: QEMU/HiFive/VisionFive2/K230 platform configs, systemd-lite service manager (dependency-based boot, auto-restart), DHCP/DNS network config, package manager (install/remove/list)
 
 ### Architecture
 **Microkernel** — kernel provides:

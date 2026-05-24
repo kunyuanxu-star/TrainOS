@@ -81,6 +81,9 @@ pub fn send(ep_id: usize, sender_pid: u32, msg: Message) -> Result<(), &'static 
     ep.pending_senders.push_back(sender_pid, msg);
     SEND_COUNT.fetch_add(1, Ordering::Relaxed);
 
+    // V24: IPC_SEND hook — fires on every IPC send
+    crate::extension::run_hook(crate::extension::HOOK_IPC_SEND, ep_id as u64, sender_pid as u64);
+
     if let Some(receiver) = ep.waiting_receiver.take() {
         unsafe {
             // Priority inheritance: receiver gets max of its own and sender's priority

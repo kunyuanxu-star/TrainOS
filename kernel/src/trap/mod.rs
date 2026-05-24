@@ -153,6 +153,14 @@ fn timer_interrupt(_tf: &mut TrapFrame) {
         }
     }
 
+    // V24: TIMER hook
+    let timer_pid = crate::sched::current_thread()
+        .map(|t| unsafe { (*t).owner })
+        .unwrap_or(0);
+    unsafe {
+        crate::extension::run_hook(crate::extension::HOOK_TIMER, TICK_COUNT as u64, timer_pid as u64);
+    }
+
     crate::sched::schedule();
 }
 

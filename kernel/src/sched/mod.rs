@@ -9,7 +9,7 @@ pub static CTX_SWITCH_COUNT: AtomicU64 = AtomicU64::new(0);
 const NUM_PRIORITIES: usize = 64;
 
 /// Simple FIFO queue backed by a Vec
-struct ThreadQueue {
+pub(crate) struct ThreadQueue {
     items: Vec<*mut Thread>,
     head: usize,
 }
@@ -40,15 +40,19 @@ impl ThreadQueue {
         Some(t)
     }
 
-    fn is_empty(&self) -> bool {
+    pub(crate) fn is_empty(&self) -> bool {
         self.head >= self.items.len()
+    }
+
+    pub(crate) fn iter(&self) -> core::slice::Iter<'_, *mut Thread> {
+        self.items[self.head..].iter()
     }
 }
 
 pub struct Scheduler {
-    ready_queues: [ThreadQueue; NUM_PRIORITIES],
-    priority_bitmap: u64,
-    current: Option<*mut Thread>,
+    pub(crate) ready_queues: [ThreadQueue; NUM_PRIORITIES],
+    pub(crate) priority_bitmap: u64,
+    pub(crate) current: Option<*mut Thread>,
     pick_count: [u64; 4], // picks per HART
 }
 
@@ -103,8 +107,8 @@ impl Scheduler {
     }
 }
 
-static SCHED_LOCK: SpinLock = SpinLock::new();
-static mut SCHEDULER: Scheduler = Scheduler::new();
+pub(crate) static SCHED_LOCK: SpinLock = SpinLock::new();
+pub(crate) static mut SCHEDULER: Scheduler = Scheduler::new();
 
 pub fn schedule() {
     SCHED_LOCK.lock();

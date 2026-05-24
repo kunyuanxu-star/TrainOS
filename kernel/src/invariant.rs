@@ -22,23 +22,41 @@ fn check_memory_invariants() {
 }
 
 fn check_scheduler_invariants() {
-    // Verify current thread exists and is in a valid state
-    if let Some(cur) = crate::sched::current_thread() {
-        unsafe {
-            let state = (*cur).state;
-            let prio = (*cur).base_priority;
-            if prio > 63 {
-                crate::println!("INVARIANT: invalid priority {}", prio);
+    crate::sched::SCHED_LOCK.lock();
+    let sched = unsafe { &*core::ptr::addr_of_mut!(crate::sched::SCHEDULER) };
+    let bitmap = sched.priority_bitmap;
+
+    for prio in 0..64 {
+        if bitmap & (1u64 << prio) != 0 {
+            let q = &sched.ready_queues[prio];
+            if q.is_empty() {
+                crate::println!(
+                    "INVARIANT: priority_bitmap bit {} set but ready_queues[{}] is empty",
+                    prio, prio
+                );
+                continue;
             }
-            // Thread should be Running or Ready
-            match state {
-                crate::proc::thread::ThreadState::Ready
-                | crate::proc::thread::ThreadState::Running
-                | crate::proc::thread::ThreadState::Waiting
-                | crate::proc::thread::ThreadState::Dead => {}
+            for &t in q.iter() {
+                unsafe {
+                    let state = (*t).state;
+                    match state {
+                        crate::proc::thread::ThreadState::Ready => {}
+                        _ => crate::println!(
+                            "INVARIANT: thread pid={} in ready_queues[{}] has state {:?}",
+                            (*t).owner, prio, state
+                        ),
+                    }
+                }
             }
+        } else if !sched.ready_queues[prio].is_empty() {
+            crate::println!(
+                "INVARIANT: priority_bitmap bit {} clear but ready_queues[{}] has threads",
+                prio, prio
+            );
         }
     }
+
+    crate::sched::SCHED_LOCK.unlock();
 }
 
 fn check_cap_invariants() {

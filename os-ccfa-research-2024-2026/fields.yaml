@@ -1,0 +1,192 @@
+# OS CCF-A Conference Paper Research — Field Definitions
+# Generated: 2026-05-24
+
+fields:
+  # ── 基本信息 ──
+  - name: title
+    description: "论文完整标题（英文）"
+    detail_level: brief
+
+  - name: conference
+    description: "发表会议/期刊 (SOSP/OSDI/EuroSys/ASPLOS/USENIX ATC 等)"
+    detail_level: brief
+
+  - name: year
+    description: "发表年份"
+    detail_level: brief
+
+  - name: authors
+    description: "第一作者及通讯作者（标注所属机构）"
+    detail_level: brief
+
+  - name: institution
+    description: "主要研究机构"
+    detail_level: brief
+
+  - name: status
+    description: "信息来源可靠性: confirmed/partial_confirmed/corrected/trend/uncertain"
+    detail_level: brief
+
+  # ── 技术方向 ──
+  - name: paper_theme
+    description: "论文主题分类"
+    type: enum
+    values:
+      - formal_verification    # 形式化验证
+      - memory_management      # 内存管理
+      - scheduling             # 调度
+      - security               # 安全
+      - rust_lang              # Rust语言级
+      - disaggregated_memory   # 分解内存
+      - virtualization         # 虚拟化
+      - kernel_extension       # 内核扩展
+      - ai_os                  # AI+OS协同
+      - file_storage           # 文件/存储
+      - wasm                   # WebAssembly
+      - microkernel_design     # 微内核设计
+      - confidential_computing # 机密计算
+      - tiered_memory          # 分层内存
+      - serverless             # 无服务器
+    detail_level: brief
+
+  - name: key_idea
+    description: "核心创新点（1-2句话）"
+    detail_level: brief
+
+  - name: keywords
+    description: "3-5个技术关键词"
+    detail_level: brief
+
+  - name: technical_contribution_type
+    description: "技术贡献类型"
+    type: enum
+    values:
+      - novel_design          # 新架构/新设计
+      - empirical_study       # 实证研究/经验报告
+      - analysis_improvement  # 现有系统分析与改进
+      - tool_methodology      # 工具/方法论
+      - production_report     # 产业化报告
+      - survey                # 综述
+    detail_level: brief
+
+  # ── TrainOS 相关性 ──
+  - name: relevance
+    description: "对TrainOS的参考价值"
+    type: enum
+    values: [high, medium, low]
+    detail_level: brief
+
+  - name: applicable_techniques
+    description: "可直接或间接应用于TrainOS的具体技术"
+    detail_level: detailed
+
+  - name: roadmap_mapping
+    description: "对应TrainOS V21-V30路线图阶段"
+    type: enum
+    values:
+      - V21_verification    # 形式化验证
+      - V22_io_uring        # 异步I/O
+      - V23_virtualization  # 虚拟化
+      - V24_kernel_ext      # 内核扩展
+      - V25_numa            # NUMA
+      - V26_dist_ipc        # 分布式IPC
+      - V27_defense_depth   # 安全加固
+      - V28_wasm            # WASM运行时
+      - V29_ai_os           # AI原生
+      - V30_linux_abi       # Linux ABI
+      - cross_cutting       # 跨阶段
+      - next_phase          # 下一阶段新方向
+    detail_level: brief
+
+  - name: compatibility_with_rust
+    description: "技术方案与Rust的兼容性"
+    type: enum
+    values:
+      - native_rust        # 论文本身用Rust
+      - rust_compatible    # 设计可用Rust实现
+      - neutral            # 与语言无关
+      - non_rust           # 依赖C特定特性
+    detail_level: brief
+
+  - name: implementation_readiness
+    description: "技术可直接移植到TrainOS的程度"
+    type: enum
+    values:
+      - ready_for_adoption  # 可直接采用
+      - needs_adaptation    # 需要适配
+      - needs_prototyping   # 需要原型验证
+      - concept_only        # 仅概念层面
+    detail_level: detailed
+
+  # ── 影响力与成熟度 ──
+  - name: maturity
+    description: "技术成熟度"
+    type: enum
+    values: [research, prototype, production, ecosystem]
+    detail_level: brief
+
+  - name: open_source
+    description: "是否开源"
+    type: enum
+    values: [yes, no, partial]
+    detail_level: brief
+
+  - name: repo_url
+    description: "开源仓库URL（如有）"
+    detail_level: brief
+
+  - name: citations_impact
+    description: "引用影响（best_paper/高引/一般）"
+    type: enum
+    values: [best_paper, highly_cited, normal, too_early]
+    detail_level: brief
+
+  - name: ecosystem_relevance
+    description: "对RISC-V/Rust生态的影响程度"
+    type: enum
+    values:
+      - ecosystem_defining  # 定义生态方向
+      - important_trend     # 重要趋势
+      - niche_specific      # 细分领域
+      - academic_only       # 纯学术
+    detail_level: brief
+
+  # ── 行动指南 ──
+  - name: effort_estimate
+    description: "实现所需工作量评估（人周）"
+    detail_level: detailed
+
+  - name: time_sensitivity
+    description: "时效性评估"
+    type: enum
+    values:
+      - highly_time_sensitive        # <6个月
+      - moderately_time_sensitive    # 6-18个月
+      - long_tail                    # >18个月仍相关
+    detail_level: brief
+
+  - name: engagement_level
+    description: "建议参与深度"
+    type: enum
+    values:
+      - read_only           # 只需阅读
+      - discuss_in_team     # 团队讨论
+      - prototype           # 实现原型
+      - engage_community    # 接触作者/社区
+      - contribute          # 贡献代码
+    detail_level: brief
+
+  - name: risks_and_caveats
+    description: "采用该技术的风险和注意事项"
+    detail_level: detailed
+
+  - name: suggested_next_step
+    description: "对该论文/方向的建议下一步行动"
+    detail_level: detailed
+
+# ── Uncertain Fields (deep阶段自动填充) ──
+# 以下字段可能因信息不足而无法确定，deep research agent会尽量补充
+uncertain_fields:
+  - repo_url          # 部分论文可能未开源
+  - citations_impact   # 2025-2026论文引用量可能尚低
+  - effort_estimate    # 需要领域经验预估

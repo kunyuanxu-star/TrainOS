@@ -1,0 +1,215 @@
+# OS CCF-A Conference Paper Research (2024-2026)
+# Generated: 2026-05-24
+# Topic: 操作系统类CCF-A会议论文演进方向调研
+
+topic: "操作系统 CCF-A 会议论文演进方向 (SOSP/OSDI/EuroSys/ASPLOS/USENIX ATC 2024-2026)"
+
+items:
+  # ── Verified Items (from Step 1 + web search confirmation) ──
+
+  - id: RFL
+    name: "Rust-for-Linux Empirical Study"
+    conference: "USENIX ATC"
+    year: 2024
+    status: confirmed
+    note: "Best Paper. 首个Rust内核实证研究。发现Rust能减少但无法消除漏洞，ownership与内核细粒度内存控制存在矛盾。"
+
+  - id: HONGMENG
+    name: "HongMeng Production Microkernel (Microkernel Goes General)"
+    conference: "OSDI"
+    year: 2024
+    status: confirmed
+    note: "华为鸿蒙微内核产业化实践。数亿设备部署。三级隔离(IC0/IC1/IC2)+灵活组合(Flexible Composition)。"
+
+  - id: SQFS
+    name: "SquirrelFS: Using Rust Typestate for Filesystem Crash Consistency"
+    conference: "OSDI"
+    year: 2024
+    status: confirmed
+    note: "Rust类型系统typestate模式编译时检查持久化内存文件系统崩溃一致性。"
+
+  - id: EBPFVER
+    name: "Validating the eBPF Verifier via State Embedding"
+    conference: "OSDI"
+    year: 2024
+    status: confirmed
+    note: "状态嵌入技术验证eBPF验证器正确性。1个月发现15个逻辑bug，2个可提权。"
+
+  - id: LLMOSDI24
+    name: "LLM Serving Systems (Sarathi-Serve, ServerlessLLM, etc.)"
+    conference: "OSDI"
+    year: 2024
+    status: confirmed
+    note: "OSDI'24大量LLM serving论文，OS社区涌入AI系统研究。GPU调度、KV-cache管理。"
+
+  - id: CORTENMM
+    name: "CortenMM: Efficient Memory Management with Strong Correctness Guarantees"
+    conference: "SOSP"
+    year: 2025
+    status: confirmed
+    note: "Best Paper. Asterinas OS内存管理核心。单层抽象+Verus形式化验证并发页表操作。"
+
+  - id: FINEMEM
+    name: "FineMem: Fine-Grained Disaggregated Memory"
+    conference: "OSDI"
+    year: 2025
+    status: confirmed
+    note: "细粒度(4KB/2MB)远程分配器。延迟降低95%，内存利用率2.25-2.8倍。预注册+RDMA窗口隔离。"
+
+  - id: WABI
+    name: "Empowering WebAssembly with Thin Kernel Interfaces"
+    conference: "EuroSys"
+    year: 2025
+    status: confirmed
+    note: "WASM运行时直接暴露OS用户态syscall，不破坏进程内沙箱。首次在WASM上运行复杂应用。"
+
+  - id: ALLOY
+    name: "AlloyStack: A Library OS for Serverless"
+    conference: "EuroSys"
+    year: 2025
+    status: confirmed
+    note: "面向serverless的Library OS。Unikernel复兴实际案例。"
+
+  - id: EBPFUN
+    name: "Revealing the Unstable Foundations of eBPF-Based Kernel Extensions"
+    conference: "EuroSys"
+    year: 2025
+    status: confirmed
+    note: "揭示eBPF内核扩展的不稳定性问题。对TrainOS V24有警示作用。"
+
+  - id: CHRONO
+    name: "Chrono/PET: Tiered Memory Management"
+    conference: "EuroSys"
+    year: 2025
+    status: confirmed
+    note: "分层内存管理，精确热度测量和主动降级。SJTU/Intel + Seoul National Univ/Samsung。"
+
+  - id: DEFT
+    name: "Deft: Scalable Tree Index for Disaggregated Memory"
+    conference: "EuroSys"
+    year: 2025
+    status: confirmed
+    note: "清华大学分解内存可扩缩树索引。"
+
+  - id: EAGLE
+    name: "Eagle: Efficient Secure Containers HW/SW Co-Design"
+    conference: "ASPLOS"
+    year: 2025
+    status: confirmed
+    note: "硬件-软件协同高效安全容器方案。"
+
+  - id: TEEM3
+    name: "TEEM3: Independent TEE"
+    conference: "ASPLOS"
+    year: 2026
+    status: confirmed
+    note: "核心独立的协作式可信执行环境。"
+
+  - id: WASMEXT
+    name: "Safe Kernel Extensibility with WebAssembly"
+    conference: "CMU Tech Report"
+    year: 2025
+    status: confirmed
+    note: "CMU硕士论文。WASM作为内核安全可扩展性基础，eBPF和内核模块之间的中间地带。"
+
+  - id: CHERI
+    name: "CHERI Industrialization"
+    conference: "ASPLOS"
+    year: 2025
+    status: partial_confirmed
+    note: "硬件capability产业化路线。来源未精确匹配ASPLOS'25录用列表，需进一步确认具体论文标题。"
+
+  - id: IO_URING
+    name: "io_uring Scalability Analysis"
+    conference: "EuroSys"
+    year: 2024
+    status: partial_confirmed
+    note: "共享SQ多核争用优化。具体论文标题未精确匹配，需进一步确认。"
+
+  # ── Corrected Items ──
+
+  - id: THESEUS
+    name: "Theseus: Intralingual OS"
+    conference: "OSDI"
+    year: 2020
+    status: corrected
+    note: "原标注为OSDI'24，实际为OSDI 2020。Rust语言级状态管理，编译时资源追踪。后续无新的OSDI更新。"
+
+  - id: REDOX
+    name: "Redox OS"
+    conference: "N/A (持续项目)"
+    year: 2024
+    status: confirmed
+    note: "Rust微内核自举编译持续演进。2024-2025年持续推进自举和驱动支持。"
+
+  - id: FUCHSIA
+    name: "Fuchsia Starnix"
+    conference: "N/A (持续项目)"
+    year: 2024
+    status: confirmed
+    note: "Google Fuchsia的Linux ABI兼容层。生产部署中。"
+
+  # ── Trend Directions (超越单篇论文) ──
+
+  - id: MULTI_KERNEL
+    name: "Multi-Kernel / Multi-OS Architecture"
+    conference: "Linux Kernel 6.18+"
+    year: 2025
+    status: trend
+    note: "Linux 6.18+引入multi-kernel概念，允许多个内核实例在同一硬件共存。与微内核多服务器架构有深层关联。"
+
+  - id: TIERED_MEM
+    name: "Tiered/Disaggregated Memory Systems"
+    conference: "Multi-venue (EuroSys'25, ASPLOS'26)"
+    year: 2025
+    status: trend
+    note: "2024-2026最活跃OS研究方向之一。CXL内存、分层存储、远程内存池化。"
+
+  - id: AI_OS_COLLAB
+    name: "LLM推理与OS协同"
+    conference: "Multi-venue (OSDI'24, ASPLOS'26)"
+    year: 2024
+    status: trend
+    note: "OS社区大量涌入AI系统研究。GPU调度、内存管理、推理serving系统。"
+
+  - id: CONFIDENTIAL
+    name: "Confidential Computing & TEE"
+    conference: "Multi-venue (ASPLOS'24-'26)"
+    year: 2024
+    status: trend
+    note: "机密计算/TEE持续热点。TDX/SEV/CAA/CCA硬件TEE + 软件Enclave。"
+
+  - id: FORMAL_OS
+    name: "Formally Verified OS Components"
+    conference: "Multi-venue"
+    year: 2025
+    status: trend
+    note: "形式化验证从内核向用户态服务、文件系统、内存管理扩展。Verus/Rust验证工具链成熟。"
+
+  - id: WASM_KERNEL
+    name: "WASM as Kernel Extension/Isolation Layer"
+    conference: "Multi-venue (EuroSys'25, CMU 2025)"
+    year: 2025
+    status: trend
+    note: "WASM作为eBPF和内核模块之间的中间地带。提供更强隔离同时保持灵活性。"
+
+# ── Uncertain Items (from Step 1, unverified by web search) ──
+
+uncertain_items:
+  - id: SEL4_VER
+    name: "seL4 Verification Extensions"
+    claimed_conference: "SOSP'25"
+    issue: "web search未找到来源。SOSP'25 66篇录用论文中未确认此项。建议删除或等待正式proceedings确认。"
+    recommendation: "remove_until_confirmed"
+
+  - id: ZNS_SSD
+    name: "ZNS SSD + Computational Storage"
+    claimed_conference: "ASPLOS'25"
+    issue: "ASPOLS'25录用列表未精确匹配。可计算存储是持续热点但此项具体来源待确认。"
+    recommendation: "downgrade_to_trend"
+
+execution:
+  batch_size: 3
+  items_per_agent: 2
+  output_dir: "./results"
+  note: "batch_size=3 意味着3个并行agent。每个agent调研2个item。"

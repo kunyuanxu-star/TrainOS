@@ -1,0 +1,37 @@
+{
+  "title": "An Empirical Study of Rust-for-Linux: The Success, Dissatisfaction, and Compromise",
+  "conference": "USENIX ATC 2024",
+  "year": 2024,
+  "authors": "Hongyu Li (北京邮电大学), Liwei Guo (北京邮电大学/电子科技大学), Yexuan Yang (北京邮电大学), Shangguang Wang (北京邮电大学), Mengwei Xu (北京邮电大学)",
+  "institution": "北京邮电大学 (Beijing University of Posts and Telecommunications)",
+  "status": "confirmed",
+  "paper_theme": "rust_lang",
+  "key_idea": "首个对Rust-for-Linux(RFL)项目的系统性实证研究，分析6个关键RFL驱动、269个issue、763个PR、1540个commit、3611封邮件和12501条Zulip讨论。发现Rust使内核更'可安全化'但非彻底安全；unsafe块在驱动开发中不可避免；ownership模型与内核细粒度内存控制存在根本矛盾导致复杂workaround；Rust驱动性能与C相当但在缺失优化场景下慢11倍；二进制体积增加33%。",
+  "keywords": [
+    "Rust-for-Linux",
+    "内核实证研究",
+    "unsafe代码",
+    "ownership冲突",
+    "内核驱动性能",
+    "二进制体积膨胀"
+  ],
+  "technical_contribution_type": "empirical_study",
+  "relevance": "high",
+  "applicable_techniques": "safe abstraction模式：将unsafe代码封装在安全抽象层后暴露安全API；Pin+Box+类型化初始化API(InPlaceModule/PinInit)解决ownership与不可移动类型的矛盾；避免过度泛型化以减少二进制体积膨胀；理解ownership与内核资源管理的张力区域并设计适当的抽象边界；编写Rust内核代码时关注cache/TLB行为（指针密集型ownership共享会增加miss率）",
+  "roadmap_mapping": "cross_cutting",
+  "compatibility_with_rust": "native_rust",
+  "implementation_readiness": "ready_for_adoption",
+  "maturity": "research",
+  "open_source": "yes",
+  "repo_url": "https://github.com/Richardhongyu/rfl_empirical_tools",
+  "citations_impact": "best_paper",
+  "ecosystem_relevance": "important_trend",
+  "effort_estimate": "不确定",
+  "time_sensitivity": "long_tail",
+  "engagement_level": "read_only",
+  "risks_and_caveats": "Rust在性能敏感路径上可能比C慢11倍（如e1000驱动因缺失预取优化导致ping延迟剧增）；二进制体积增加33%（泛型单态化+边界检查+drop胶水代码导致.text段增大约99%）；unsafe块无法避免需精心封装（NVMe驱动44个unsafe用法+16个安全抽象、GPU驱动107个unsafe用法+7个安全抽象）；ownership与内核设计哲学的矛盾导致复杂嵌套类型如Pin<Box<SpinLock<Box<Ring<RxDesc>>>>>；Rust的borrow checker无法捕获语义bug（如映射到错误内存位置能通过编译）",
+  "suggested_next_step": "阅读论文全文(USENIX ATC 2024 Proceedings)并深入分析实证发现；将论文中识别的ownership矛盾、性能陷阱和unsafe封装模式纳入TrainOS编码规范和代码审查checklist；特别关注Bin size膨胀问题以保证TrainOS在资源受限场景下的可行性；研究safe abstraction设计模式以确保unsafe代码的正确封装",
+  "uncertain": [
+    "effort_estimate"
+  ]
+}

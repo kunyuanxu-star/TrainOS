@@ -1,0 +1,37 @@
+{
+  "title": "SquirrelFS: using the Rust compiler to check file-system crash consistency",
+  "conference": "OSDI 2024",
+  "year": 2024,
+  "authors": "Hayley LeBlanc (德克萨斯大学奥斯汀分校), Nathan Taylor (德克萨斯大学奥斯汀分校), James Bornholt (德克萨斯大学奥斯汀分校), Vijay Chidambaram (德克萨斯大学奥斯汀分校)",
+  "institution": "德克萨斯大学奥斯汀分校 (University of Texas at Austin)",
+  "status": "confirmed",
+  "paper_theme": "file_storage",
+  "key_idea": "利用Rust typestate模式，在编译时检查持久化内存文件系统的崩溃一致性，无需独立的形式化证明或运行时检查。核心创新是同步软更新(Synchronous Soft Updates)机制，将崩溃安全性归结为元数据更新顺序的编译时保证。",
+  "keywords": [
+    "typestate模式",
+    "崩溃一致性",
+    "持久化内存",
+    "Rust编译器",
+    "软更新",
+    "编译时验证"
+  ],
+  "technical_contribution_type": "novel_design",
+  "relevance": "high",
+  "applicable_techniques": "typestate模式用于在类型系统中编码状态机不变量（每个持久化对象携带持久化状态和操作状态两个类型级状态参数）；同步软更新(SSU)机制作为一种简化的崩溃一致性策略；零成本类型抽象（状态为零大小类型，无运行时开销）；编译时保证取代运行时验证的模式",
+  "roadmap_mapping": "V21_verification",
+  "compatibility_with_rust": "native_rust",
+  "implementation_readiness": "needs_adaptation",
+  "maturity": "research",
+  "open_source": "yes",
+  "repo_url": "https://github.com/utsaslab/squirrelfs",
+  "citations_impact": "too_early",
+  "ecosystem_relevance": "niche_specific",
+  "effort_estimate": "不确定",
+  "time_sensitivity": "long_tail",
+  "engagement_level": "discuss_in_team",
+  "risks_and_caveats": "仅检查基于排序的不变量，无法捕获语义错误（如inode内容正确性）或来自信任代码/编译器的bug；不能检查可变大小集合的属性（对编译器不可判定）；实现基于Linux内核v6.3.0的RFL框架，需适配微内核架构；当前仅针对持久化内存(PM)场景设计",
+  "suggested_next_step": "下载并阅读论文全文(arXiv:2406.09649)及演讲视频，深入理解typestate模式在Rust类型系统中的实现方式（两个typestate参数的设计模式）；评估将typestate模式应用于TrainOS文件系统崩溃一致性或IPC协议状态机编码的可行性",
+  "uncertain": [
+    "effort_estimate"
+  ]
+}

@@ -1,0 +1,50 @@
+{
+  "title": "CortenMM: Efficient Memory Management with Strong Correctness Guarantees",
+  "conference": "SOSP 2025",
+  "year": 2025,
+  "authors": "第一作者：Junyang Zhang（北京大学 & 中关村实验室）；通讯作者：Diyu Zhou（北京大学）、Hongliang Tian（蚂蚁集团）",
+  "institution": "北京大学、中关村实验室、蚂蚁集团、CertiK、UCLA、密歇根理工大学",
+  "status": "confirmed",
+  "paper_theme": "memory_management",
+  "key_idea": "摒弃传统操作系统中VMA树+页表的两层内存抽象，设计单层（One-Level）架构直接在硬件页表上操作，消除软件同步开销和状态双重维护，配合事务化MMU接口和Verus形式化验证工具证明并发页表操作的正确性，在真实场景中性能最高达Linux的26倍，获得SOSP 2025最佳论文。",
+  "keywords": [
+    "单层内存管理",
+    "形式化验证",
+    "事务化MMU接口",
+    "Verus验证器",
+    "并发正确性"
+  ],
+  "technical_contribution_type": "novel_design",
+  "relevance": "high",
+  "applicable_techniques": [
+    "单层内存抽象设计：TrainOS可摒弃传统VMA树软件抽象，直接在Sv39页表上构建内存管理子系统，消除双层抽象的同步开销和内存浪费",
+    "事务化MMU接口：设计事务化的页表操作原语（begin/commit/abort），保证并发页表操作在发生竞争时自动回滚，无需复杂锁协议。TrainOS可在IPC消息中嵌入事务化内存操作",
+    "Verus形式化验证方法论：使用Rust + Verus对并发MMU操作进行形式化验证，已发现页表节点过早释放等并发bug。TrainOS可用相同工具链验证其capability系统的内存安全",
+    "单层架构下Rust所有权模型与形式化验证的结合模式：将页表节点视为拥有唯一所有权的资源，通过Rust类型系统在编译期消除释放后使用等内存安全漏洞",
+    "vostd验证框架：Asterinas团队开源的ostd形式化验证代码库，TrainOS可直接参考其验证模式验证自身的内存管理原语"
+  ],
+  "roadmap_mapping": "V21_verification",
+  "compatibility_with_rust": "native_rust",
+  "implementation_readiness": "ready_for_adoption",
+  "maturity": "prototype",
+  "open_source": "partial",
+  "repo_url": "https://github.com/TELOS-syslab/CortenMM-Artifact",
+  "citations_impact": "best_paper",
+  "ecosystem_relevance": "ecosystem_defining",
+  "effort_estimate": "不确定",
+  "time_sensitivity": "highly_time_sensitive",
+  "engagement_level": "engage_community",
+  "risks_and_caveats": [
+    "单层设计假设x86/ARM/RISC-V的MMU设计已趋于统一且稳定，但未来ISA演进（如CHERI扩展）可能导致设计需要调整",
+    "事务化MMU接口可能与TrainOS现有的capability系统和IPC消息模型存在设计冲突，需要仔细集成",
+    "Verus形式化验证工具链仍在快速演进中，可能无法直接支持TrainOS使用的nightly Rust工具链版本",
+    "论文主要验证在Asterinas的framekernel架构上，在微内核架构下（尤其是服务间IPC传递内存相关操作）可能需要额外适配工作",
+    "消除VMA软件抽象层后，部分依赖软件元数据的高级功能（如mremap、透明大页、用户态页错误处理）可能需要设计替代的元数据管理方案",
+    "CortenMM的验证覆盖约2K行可执行代码和6K行规约，要达到完整验证需要数倍的投入",
+    "单层架构中所有内存策略从内核移至用户态，可能增加用户态服务之间的IPC复杂度"
+  ],
+  "suggested_next_step": "立即阅读论文全文并克隆CortenMM工件仓库（https://github.com/TELOS-syslab/CortenMM-Artifact）进行实验验证。与Asterinas社区通过GitHub Issues/Discussions建立联系，了解单层设计在RISC-V 64位平台上的实际部署情况和适配经验。评估在TrainOS内存管理服务中实现单层内存管理原型的可行性，优先使用Verus验证核心页表操作并发正确性。安排1-2名团队成员深入研读CortenMM和vostd代码，评估直接复用验证基础设施的可能性。",
+  "uncertain": [
+    "effort_estimate"
+  ]
+}

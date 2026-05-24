@@ -1322,10 +1322,22 @@ pub fn sys_vm_list(buf_ptr: usize, buf_len: usize) -> Result<usize, &'static str
 }
 
 // ── V24 Kernel extension syscalls ────────────────────────────────────────────
-pub fn sys_ext_register(hook_type: usize, bytecode_ptr: usize) -> Result<usize, &'static str> {
+pub fn sys_ext_register(hook_type: usize, bytecode_ptr: usize, bytecode_len: usize, name_ptr: usize) -> Result<usize, &'static str> {
     let pid = crate::sched::current_thread().map(|t| unsafe { (*t).owner }).ok_or("no proc")?;
-    let bc = unsafe { core::slice::from_raw_parts(bytecode_ptr as *const u8, 256) };
-    crate::extension::register(pid, hook_type as u8, bc).map(|id| id).ok_or("register failed")
+    if bytecode_ptr == 0 { return Err("null bytecode"); }
+    if bytecode_len < 8 || bytecode_len > crate::extension::MAX_BYTECODE { return Err("invalid bytecode len"); }
+    let bc = unsafe { core::slice::from_raw_parts(bytecode_ptr as *const u8, bytecode_len) };
+    // Read name from user space (up to 15 bytes + null)
+    let mut name_buf = [0u8; 16];
+    if name_ptr != 0 {
+        for i in 0..15 {
+            let c = unsafe { (name_ptr as *const u8).add(i).read_volatile() };
+            name_buf[i] = c;
+            if c == 0 { break; }
+        }
+    }
+    let name = &name_buf;
+    crate::extension::register(pid, hook_type as u8, bc, name).map(|id| id).ok_or("register failed")
 }
 pub fn sys_ext_unregister(ext_id: usize) -> Result<usize, &'static str> {
     if crate::extension::unregister(ext_id) { Ok(0) } else { Err("not found") }
@@ -1449,11 +1461,51 @@ pub fn sys_wasm_load(name_ptr: usize, bytecode_ptr: usize) -> Result<usize, &'st
     let bc = unsafe { core::slice::from_raw_parts(bytecode_ptr as *const u8, 4096) };
     crate::wasm::wasm_load(pid, name, bc).ok_or("load failed")
 }
-pub fn sys_wasm_unload(module_id: usize) -> Result<usize, &'static str> { Ok(0) }
+pub fn sys_wasm_unload(module_id: usize) -> Result<usize, &'static str> {
+    if crate::wasm::wasm_unload(module_id) { Ok(0) } else { Err("unload failed") }
+}
 pub fn sys_wasm_list(buf_ptr: usize, buf_len: usize) -> Result<usize, &'static str> {
     if buf_ptr == 0 { return Err("null buf"); }
     let buf = unsafe { core::slice::from_raw_parts_mut(buf_ptr as *mut u8, buf_len) };
     Ok(crate::wasm::wasm_list(buf))
+}
+pub fn sys_wasm_execute(module_id: usize, name_ptr: usize) -> Result<usize, &'static str> {
+    if name_ptr == 0 { return Err("null name"); }
+    let mut name_buf = [0u8; 32];
+    let nlen = unsafe {
+        let mut len = 0;
+        while len < 31 {
+            let c = (name_ptr as *const u8).add(len).read_volatile();
+            name_buf[len] = c;
+            if c == 0 { break; }
+            len += 1;
+        }
+        len
+    };
+    if nlen == 0 { return Err("empty name"); }
+    let name = core::str::from_utf8(&name_buf[..nlen]).map_err(|_| "invalid utf8")?;
+    match crate::wasm::wasm_execute(module_id, name, &[]) {
+        Ok(result) => Ok(result as usize),
+        Err(e) => Err(e),
+    }
+}
+pub fn sys_wasm_mem_read(module_id: usize, offset: usize, buf_ptr: usize) -> Result<usize, &'static str> {
+    if buf_ptr == 0 { return Err("null buf"); }
+    let mut buf = [0u8; 256];
+    let to_read = buf.len();
+    let buf_slice = &mut buf[..to_read];
+    crate::wasm::wasm_memory_read(module_id, offset, buf_slice)?;
+    unsafe {
+        core::ptr::copy_nonoverlapping(buf.as_ptr(), buf_ptr as *mut u8, to_read);
+    }
+    Ok(to_read)
+}
+pub fn sys_wasm_mem_write(module_id: usize, offset: usize, data_ptr: usize, data_len: usize) -> Result<usize, &'static str> {
+    if data_ptr == 0 { return Err("null data"); }
+    if data_len > 256 { return Err("data too large"); }
+    let data = unsafe { core::slice::from_raw_parts(data_ptr as *const u8, data_len) };
+    crate::wasm::wasm_memory_write(module_id, offset, data)?;
+    Ok(data_len)
 }
 
 // ── V29 AI/GPU syscalls ──────────────────────────────────────────────────────

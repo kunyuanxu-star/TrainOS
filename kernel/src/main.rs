@@ -173,6 +173,10 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
     mem::sv39::enable_mmu();
     println!("  MMU enabled (Sv39)");
 
+    // V28: Initialize WASM/WASI subsystem
+    wasm::wasi::wasi_init();
+    println!("  WASI subsystem initialized");
+
     // Spawn all services in priority order.
     //
     // Priority allocation rationale:

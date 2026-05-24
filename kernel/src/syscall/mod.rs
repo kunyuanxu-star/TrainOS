@@ -183,10 +183,13 @@ pub const SYS_CHERI_CAP_CHECK: usize = 202;
 pub const SYS_SANDBOX_ADD: usize = 203;
 pub const SYS_SANDBOX_CHECK: usize = 204;
 
-// WASM (V28): 210-213
+// WASM (V28): 210-215
 pub const SYS_WASM_LOAD: usize = 210;
 pub const SYS_WASM_UNLOAD: usize = 211;
 pub const SYS_WASM_LIST: usize = 212;
+pub const SYS_WASM_EXECUTE: usize = 213;
+pub const SYS_WASM_MEM_READ: usize = 214;
+pub const SYS_WASM_MEM_WRITE: usize = 215;
 
 // AI/GPU (V29): 220-223
 pub const SYS_GPU_REGISTER: usize = 220;
@@ -205,10 +208,10 @@ pub fn syscall_dispatch(tf: &mut TrapFrame) {
     let nr = tf.a7;
 
     // V21: Seccomp check before syscall execution
+    let pid = crate::sched::current_thread()
+        .map(|t| unsafe { (*t).owner })
+        .unwrap_or(0);
     {
-        let pid = crate::sched::current_thread()
-            .map(|t| unsafe { (*t).owner })
-            .unwrap_or(0);
         let (allowed, should_kill) = crate::security::seccomp_check(pid, nr);
         if should_kill {
             crate::println!("seccomp: killing pid={} for syscall nr={}", pid, nr);
@@ -216,6 +219,10 @@ pub fn syscall_dispatch(tf: &mut TrapFrame) {
         }
         if !allowed { tf.a0 = usize::MAX; return; }
     }
+
+    // V24: SYSCALL_ENTER hook — fires before syscall dispatch
+    crate::extension::run_hook(crate::extension::HOOK_SYSCALL_ENTER, nr as u64, pid as u64);
+
     crate::syscall::proc::account_stime();
     let arg0 = tf.a0;
     let arg1 = tf.a1;
@@ -397,7 +404,7 @@ pub fn syscall_dispatch(tf: &mut TrapFrame) {
         SYS_VM_RESUME => proc::sys_vm_resume(arg0 as u32),
 
         // V24 — Kernel extensions
-        SYS_EXT_REGISTER => proc::sys_ext_register(arg0, arg1),
+        SYS_EXT_REGISTER => proc::sys_ext_register(arg0, arg1, arg2, arg3),
         SYS_EXT_UNREGISTER => proc::sys_ext_unregister(arg0),
         SYS_EXT_LIST => proc::sys_ext_list(arg0, arg1),
 
@@ -420,6 +427,9 @@ pub fn syscall_dispatch(tf: &mut TrapFrame) {
         SYS_WASM_LOAD => proc::sys_wasm_load(arg0, arg1),
         SYS_WASM_UNLOAD => proc::sys_wasm_unload(arg0),
         SYS_WASM_LIST => proc::sys_wasm_list(arg0, arg1),
+        SYS_WASM_EXECUTE => proc::sys_wasm_execute(arg0, arg1),
+        SYS_WASM_MEM_READ => proc::sys_wasm_mem_read(arg0, arg1, arg2),
+        SYS_WASM_MEM_WRITE => proc::sys_wasm_mem_write(arg0, arg1, arg2, arg3),
 
         // V29 — AI/GPU
         SYS_GPU_REGISTER => proc::sys_gpu_register(arg0, arg1, arg2),
@@ -458,6 +468,9 @@ pub fn syscall_dispatch(tf: &mut TrapFrame) {
             tf.a0 = usize::MAX;
         }
     }
+
+    // V24: SYSCALL_EXIT hook — fires after syscall completes
+    crate::extension::run_hook(crate::extension::HOOK_SYSCALL_EXIT, nr as u64, pid as u64);
 
     tf.sepc += 4;
 }

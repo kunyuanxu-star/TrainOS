@@ -283,6 +283,42 @@ pub unsafe fn virt_to_phys(va: usize) -> Option<usize> {
     }
 }
 
+/// Check if a user-space page is present (mapped) in a given page table.
+/// Returns 1 if present, 0 if not.
+pub fn is_user_page_present(pt_root: usize, va: usize) -> u8 {
+    unsafe {
+        // Walk manually using the given page table root
+        let vpn2_idx = vpn2(va);
+        let vpn1_idx = vpn1(va);
+        let vpn0_idx = vpn0(va);
+
+        if vpn2_idx >= 256 {
+            // Kernel space — skip
+            return 0;
+        }
+
+        let l2 = &*(pa_to_kva(pt_root) as *const [PTE; 512]);
+        if !l2[vpn2_idx].is_valid() || l2[vpn2_idx].is_leaf() {
+            return 0;
+        }
+        let l1_phys = l2[vpn2_idx].phys_addr();
+        let l1 = &*(pa_to_kva(l1_phys) as *const [PTE; 512]);
+        if !l1[vpn1_idx].is_valid() {
+            return 0;
+        }
+        if l1[vpn1_idx].is_leaf() {
+            // 2MB superpage — present
+            return if l1[vpn1_idx].is_user() { 1 } else { 0 };
+        }
+        let l0_phys = l1[vpn1_idx].phys_addr();
+        let l0 = &*(pa_to_kva(l0_phys) as *const [PTE; 512]);
+        if !l0[vpn0_idx].is_valid() || !l0[vpn0_idx].is_leaf() {
+            return 0;
+        }
+        if l0[vpn0_idx].is_user() { 1 } else { 0 }
+    }
+}
+
 /// Enable Sv39 MMU by setting satp.
 /// Gated behind not(test) because it uses RISC-V-specific assembly instructions.
 #[cfg(not(test))]

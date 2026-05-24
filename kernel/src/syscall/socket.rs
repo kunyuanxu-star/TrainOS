@@ -174,3 +174,100 @@ pub fn sys_recvfrom(
         }
     }
 }
+
+// ── V30 Socket syscalls ──────────────────────────────────────────────────────
+
+/// sys_getsockopt(fd, level, optname, optval, optlen) — get socket options.
+pub fn sys_getsockopt(fd: usize, _level: usize, optname: usize, optval_ptr: usize, optlen_ptr: usize) -> Result<usize, &'static str> {
+    let sender_pid = current_pid();
+    let _ = sender_pid;
+    if optval_ptr == 0 || optlen_ptr == 0 { return Err("null optval/optlen"); }
+
+    unsafe {
+        let optlen = (optlen_ptr as *const u32).read_volatile() as usize;
+        match optname {
+            1 => { // SO_REUSEADDR
+                if optlen >= 4 {
+                    (optval_ptr as *mut u32).write_volatile(1);
+                    (optlen_ptr as *mut u32).write_volatile(4);
+                }
+                Ok(0)
+            }
+            2 => { // SO_TYPE = SOCK_STREAM (1) or SOCK_DGRAM (2)
+                if optlen >= 4 {
+                    (optval_ptr as *mut u32).write_volatile(1); // SOCK_STREAM
+                    (optlen_ptr as *mut u32).write_volatile(4);
+                }
+                Ok(0)
+            }
+            3 => { // SO_ERROR
+                if optlen >= 4 {
+                    (optval_ptr as *mut u32).write_volatile(0); // no error
+                    (optlen_ptr as *mut u32).write_volatile(4);
+                }
+                Ok(0)
+            }
+            7 => { // SO_SNDBUF
+                if optlen >= 4 {
+                    (optval_ptr as *mut u32).write_volatile(8192);
+                    (optlen_ptr as *mut u32).write_volatile(4);
+                }
+                Ok(0)
+            }
+            8 => { // SO_RCVBUF
+                if optlen >= 4 {
+                    (optval_ptr as *mut u32).write_volatile(8192);
+                    (optlen_ptr as *mut u32).write_volatile(4);
+                }
+                Ok(0)
+            }
+            _ => Ok(0), // unknown option — return 0
+        }
+    }
+}
+
+/// sys_setsockopt(fd, level, optname, optval, optlen) — set socket options.
+pub fn sys_setsockopt(fd: usize, _level: usize, _optname: usize, _optval_ptr: usize, _optlen: usize) -> Result<usize, &'static str> {
+    let sender_pid = current_pid();
+    let _ = sender_pid;
+    Ok(0) // Accept all options silently
+}
+
+/// sys_getpeername(fd, addr_ptr, addrlen_ptr) — get peer address.
+pub fn sys_getpeername(fd: usize, addr_ptr: usize, _addrlen_ptr: usize) -> Result<usize, &'static str> {
+    let sender_pid = current_pid();
+    let _ = sender_pid;
+    if addr_ptr == 0 { return Err("null addr"); }
+    // Return a dummy sockaddr_in (AF_INET, port 0, addr 0)
+    unsafe {
+        let ptr = addr_ptr as *mut u16;
+        ptr.write_volatile(2); // AF_INET
+        ptr.add(1).write_volatile(0); // port
+        let ip_ptr = addr_ptr as *mut u32;
+        ip_ptr.add(1).write_volatile(0); // addr
+    }
+    Ok(0)
+}
+
+/// sys_getsockname(fd, addr_ptr, addrlen_ptr) — get socket name.
+pub fn sys_getsockname(fd: usize, addr_ptr: usize, _addrlen_ptr: usize) -> Result<usize, &'static str> {
+    let sender_pid = current_pid();
+    let _ = sender_pid;
+    if addr_ptr == 0 { return Err("null addr"); }
+    unsafe {
+        let ptr = addr_ptr as *mut u16;
+        ptr.write_volatile(2); // AF_INET
+        ptr.add(1).write_volatile(0);
+        let ip_ptr = addr_ptr as *mut u32;
+        ip_ptr.add(1).write_volatile(0);
+    }
+    Ok(0)
+}
+
+/// sys_shutdown(fd, how) — shut down part of a full-duplex connection.
+pub fn sys_shutdown(fd: usize, _how: usize) -> Result<usize, &'static str> {
+    let sender_pid = current_pid();
+    let _ = sender_pid;
+    // Acknowledge shutdown — no real teardown needed
+    Ok(0)
+}

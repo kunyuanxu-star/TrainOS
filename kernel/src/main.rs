@@ -186,6 +186,33 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
     wasm::wasi::wasi_init();
     println!("  WASI subsystem initialized");
 
+    // V30: Initialize Linux ABI compatibility subsystem
+    compat::compat_init();
+    println!("  Linux ABI compat initialized");
+
+    // V30: Register default services with service manager
+    let _svc_idx = compat::deploy::service_register(
+        "init", "/sbin/init",
+        compat::deploy::RestartPolicy::Always,
+        &[],
+    );
+    let _svc_idx = compat::deploy::service_register(
+        "fs", "/sbin/fs",
+        compat::deploy::RestartPolicy::OnFailure,
+        &[],
+    );
+    let _svc_idx = compat::deploy::service_register(
+        "net", "/sbin/net",
+        compat::deploy::RestartPolicy::OnFailure,
+        &["fs"],
+    );
+    let _svc_idx = compat::deploy::service_register(
+        "sh", "/bin/sh",
+        compat::deploy::RestartPolicy::UnlessStopped,
+        &["fs"],
+    );
+    println!("  Service manager initialized");
+
     // Spawn all services in priority order.
     //
     // Priority allocation rationale:

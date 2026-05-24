@@ -16,17 +16,17 @@ const MAX_FDS: usize = 64;
 const MAX_PATH: usize = 32;
 
 #[derive(Clone, Copy)]
-enum FdType { File, Socket, Pipe, Epoll }
+pub(crate) enum FdType { File, Socket, Pipe, Epoll }
 
-struct FdEntry {
-    pid: u32,
-    fd: usize,
-    fd_type: FdType,
-    path: [u8; MAX_PATH],
-    path_len: usize,
-    offset: usize,
-    ep: usize,      // for socket/pipe/epoll
-    used: bool,
+pub(crate) struct FdEntry {
+    pub pid: u32,
+    pub fd: usize,
+    pub fd_type: FdType,
+    pub path: [u8; MAX_PATH],
+    pub path_len: usize,
+    pub offset: usize,
+    pub ep: usize,      // for socket/pipe/epoll
+    pub used: bool,
 }
 
 const EMPTY_FD: FdEntry = FdEntry {
@@ -85,6 +85,11 @@ unsafe fn find_fd(pid: u32, fd: usize) -> Option<*mut FdEntry> {
         }
     }
     None
+}
+
+/// Public wrapper for fd lookup, used by V30 filesystem syscalls.
+pub unsafe fn find_fd_internal(pid: u32, fd: usize) -> Option<*mut FdEntry> {
+    find_fd(pid, fd)
 }
 
 unsafe fn remove_fd(pid: u32, fd: usize) {

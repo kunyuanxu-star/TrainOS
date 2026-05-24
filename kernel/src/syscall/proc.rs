@@ -1774,10 +1774,605 @@ pub fn sys_inference_stats(model_id: u32, buf_ptr: usize) -> Result<usize, &'sta
     }
 }
 
+// ── V30 System V Semaphores ──────────────────────────────────────────────────
+
+const MAX_SEMS: usize = 16;
+const MAX_SEM_NSEMS: usize = 4;
+
+#[derive(Clone, Copy)]
+struct Semaphore {
+    key: u32,
+    id: u32,
+    values: [i16; MAX_SEM_NSEMS],
+    nsems: usize,
+    pid: u32,
+}
+
+static mut SEMAPHORES: [Semaphore; MAX_SEMS] = [Semaphore { key: 0, id: 0, values: [0; MAX_SEM_NSEMS], nsems: 0, pid: 0 }; MAX_SEMS];
+static mut SEM_COUNT: usize = 0;
+static mut SEM_NEXT_ID: u32 = 1;
+
+/// sys_semget(key, nsems, semflg) — get/create a System V semaphore set.
+pub fn sys_semget(key: u32, nsems: usize, _semflg: usize) -> Result<usize, &'static str> {
+    unsafe {
+        // IPC_PRIVATE (key=0): always create new
+        if key == 0 {
+            if SEM_COUNT >= MAX_SEMS { return Err("sem table full"); }
+            let id = SEM_NEXT_ID;
+            SEM_NEXT_ID += 1;
+            let ns = nsems.min(MAX_SEM_NSEMS);
+            SEMAPHORES[SEM_COUNT] = Semaphore { key, id, values: [0; MAX_SEM_NSEMS], nsems: ns, pid: 0 };
+            SEM_COUNT += 1;
+            return Ok(id as usize);
+        }
+        // Lookup existing
+        for i in 0..SEM_COUNT {
+            if SEMAPHORES[i].key == key {
+                return Ok(SEMAPHORES[i].id as usize);
+            }
+        }
+        // Create new with key
+        if SEM_COUNT >= MAX_SEMS { return Err("sem table full"); }
+        let id = SEM_NEXT_ID;
+        SEM_NEXT_ID += 1;
+        let ns = nsems.min(MAX_SEM_NSEMS);
+        SEMAPHORES[SEM_COUNT] = Semaphore { key, id, values: [0; MAX_SEM_NSEMS], nsems: ns, pid: 0 };
+        SEM_COUNT += 1;
+        Ok(id as usize)
+    }
+}
+
+/// sys_semop(semid, sops_ptr, nsops) — perform semaphore operations.
+pub fn sys_semop(semid: u32, sops_ptr: usize, _nsops: usize) -> Result<usize, &'static str> {
+    let pid = crate::sched::current_thread()
+        .map(|t| unsafe { (*t).owner }).unwrap_or(0);
+    unsafe {
+        for i in 0..SEM_COUNT {
+            if SEMAPHORES[i].id == semid {
+                if sops_ptr == 0 { return Err("null sops"); }
+                // struct sembuf { sem_num: u16, sem_op: i16, sem_flg: i16 }
+                let sem_num = (sops_ptr as *const u16).read_volatile() as usize;
+                let sem_op = (sops_ptr as *const i16).add(1).read_volatile();
+                if sem_num >= SEMAPHORES[i].nsems { return Err("bad sem_num"); }
+                // Simple implementation: block if operation would go negative
+                loop {
+                    let val = SEMAPHORES[i].values[sem_num];
+                    let new_val = val.wrapping_add(sem_op);
+                    if new_val >= 0 || sem_op == 0 || sem_op == -1 {
+                        SEMAPHORES[i].values[sem_num] = new_val;
+                        SEMAPHORES[i].pid = pid;
+                        return Ok(0);
+                    }
+                    // Would block — yield and retry
+                    crate::sched::schedule();
+                }
+            }
+        }
+    }
+    Err("sem not found")
+}
+
+/// sys_semctl(semid, semnum, cmd, arg) — semaphore control operations.
+pub fn sys_semctl(semid: u32, semnum: u32, cmd: usize, _arg: usize) -> Result<usize, &'static str> {
+    unsafe {
+        for i in 0..SEM_COUNT {
+            if SEMAPHORES[i].id == semid {
+                let result = match cmd {
+                    0 => { // SETVAL
+                        SEMAPHORES[i].values[semnum as usize] = _arg as i16;
+                        Ok(1)
+                    }
+                    1 => Ok(SEMAPHORES[i].values[semnum as usize] as usize), // GETVAL
+                    6 => Ok(0), // GETPID
+                    2 => Ok(0), // GETNCNT
+                    3 => Ok(0), // GETZCNT
+                    9 => { // IPC_STAT
+                        let pid = crate::sched::current_thread()
+                            .map(|t| unsafe { (*t).owner }).unwrap_or(0);
+                        let _ = pid;
+                        Ok(0)
+                    }
+                    8 => { // IPC_SET
+                        Ok(0)
+                    }
+                    10 => { // IPC_RMID
+                        for j in i..SEM_COUNT - 1 {
+                            SEMAPHORES[j] = SEMAPHORES[j + 1];
+                        }
+                        SEM_COUNT -= 1;
+                        Ok(0)
+                    }
+                    _ => Err("unsupported semctl cmd"),
+                };
+                return result;
+            }
+        }
+    }
+    Err("sem not found")
+}
+
+// ── V30 System V Message Queues ──────────────────────────────────────────────
+
+const MAX_MSGQS: usize = 8;
+const MAX_MSG_SLOTS: usize = 64;
+const MAX_MSG_SIZE: usize = 60;
+
+#[derive(Clone, Copy)]
+struct Msg {
+    mtype: i64,
+    data: [u8; MAX_MSG_SIZE],
+    len: usize,
+    valid: bool,
+}
+
+#[derive(Clone, Copy)]
+struct MsgQueue {
+    key: u32,
+    id: u32,
+    msgs: [Msg; MAX_MSG_SLOTS],
+    write_idx: usize,
+    read_idx: usize,
+    count: usize,
+}
+
+static mut MSG_QUEUES: [MsgQueue; MAX_MSGQS] = [MsgQueue {
+    key: 0, id: 0,
+    msgs: [Msg { mtype: 0, data: [0; MAX_MSG_SIZE], len: 0, valid: false }; MAX_MSG_SLOTS],
+    write_idx: 0, read_idx: 0, count: 0,
+}; MAX_MSGQS];
+static mut MSGQ_COUNT: usize = 0;
+static mut MSGQ_NEXT_ID: u32 = 1;
+
+/// sys_msgget(key, msgflg) — get/create a message queue.
+pub fn sys_msgget(key: u32, _msgflg: usize) -> Result<usize, &'static str> {
+    unsafe {
+        if key == 0 {
+            if MSGQ_COUNT >= MAX_MSGQS { return Err("msgq table full"); }
+            let id = MSGQ_NEXT_ID;
+            MSGQ_NEXT_ID += 1;
+            MSG_QUEUES[MSGQ_COUNT].key = key;
+            MSG_QUEUES[MSGQ_COUNT].id = id;
+            MSG_QUEUES[MSGQ_COUNT].write_idx = 0;
+            MSG_QUEUES[MSGQ_COUNT].read_idx = 0;
+            MSG_QUEUES[MSGQ_COUNT].count = 0;
+            MSGQ_COUNT += 1;
+            return Ok(id as usize);
+        }
+        for i in 0..MSGQ_COUNT {
+            if MSG_QUEUES[i].key == key { return Ok(MSG_QUEUES[i].id as usize); }
+        }
+        if MSGQ_COUNT >= MAX_MSGQS { return Err("msgq table full"); }
+        let id = MSGQ_NEXT_ID;
+        MSGQ_NEXT_ID += 1;
+        MSG_QUEUES[MSGQ_COUNT].key = key;
+        MSG_QUEUES[MSGQ_COUNT].id = id;
+        MSG_QUEUES[MSGQ_COUNT].write_idx = 0;
+        MSG_QUEUES[MSGQ_COUNT].read_idx = 0;
+        MSG_QUEUES[MSGQ_COUNT].count = 0;
+        MSGQ_COUNT += 1;
+        Ok(id as usize)
+    }
+}
+
+/// sys_msgsnd(msqid, msgp_ptr, msgsz, msgflg) — send a message.
+pub fn sys_msgsnd(msqid: u32, msgp_ptr: usize, msgsz: usize, _msgflg: usize) -> Result<usize, &'static str> {
+    if msgp_ptr == 0 { return Err("null msgp"); }
+    let copy_len = msgsz.min(MAX_MSG_SIZE);
+    unsafe {
+        for i in 0..MSGQ_COUNT {
+            if MSG_QUEUES[i].id == msqid {
+                // Wait for space
+                loop {
+                    if MSG_QUEUES[i].count < MAX_MSG_SLOTS { break; }
+                    crate::sched::schedule();
+                }
+                let idx = MSG_QUEUES[i].write_idx;
+                let mtype = (msgp_ptr as *const i64).read_volatile();
+                MSG_QUEUES[i].msgs[idx].mtype = mtype;
+                MSG_QUEUES[i].msgs[idx].len = copy_len;
+                MSG_QUEUES[i].msgs[idx].valid = true;
+                core::ptr::copy_nonoverlapping(
+                    (msgp_ptr as *const u8).add(8),
+                    MSG_QUEUES[i].msgs[idx].data.as_mut_ptr(),
+                    copy_len,
+                );
+                MSG_QUEUES[i].write_idx = (idx + 1) % MAX_MSG_SLOTS;
+                MSG_QUEUES[i].count += 1;
+                return Ok(0);
+            }
+        }
+    }
+    Err("msgq not found")
+}
+
+/// sys_msgrcv(msqid, msgp_ptr, msgsz, msgtyp, msgflg) — receive a message.
+pub fn sys_msgrcv(msqid: u32, msgp_ptr: usize, msgsz: usize, msgtyp: i64, _msgflg: usize) -> Result<usize, &'static str> {
+    if msgp_ptr == 0 { return Err("null msgp"); }
+    unsafe {
+        for i in 0..MSGQ_COUNT {
+            if MSG_QUEUES[i].id == msqid {
+                loop {
+                    // Find matching message
+                    let mut found = false;
+                    let mut found_idx = 0;
+                    for scan in 0..MAX_MSG_SLOTS {
+                        let idx = (MSG_QUEUES[i].read_idx + scan) % MAX_MSG_SLOTS;
+                        if !MSG_QUEUES[i].msgs[idx].valid { continue; }
+                        if msgtyp == 0 || MSG_QUEUES[i].msgs[idx].mtype == msgtyp {
+                            found = true;
+                            found_idx = idx;
+                            break;
+                        }
+                    }
+                    if found {
+                        let copy_len = MSG_QUEUES[i].msgs[found_idx].len.min(msgsz);
+                        let mtype = MSG_QUEUES[i].msgs[found_idx].mtype;
+                        let data = MSG_QUEUES[i].msgs[found_idx].data;
+                        MSG_QUEUES[i].msgs[found_idx].valid = false;
+                        MSG_QUEUES[i].count -= 1;
+                        // Write mtype
+                        (msgp_ptr as *mut i64).write_volatile(mtype);
+                        core::ptr::copy_nonoverlapping(
+                            data.as_ptr(),
+                            (msgp_ptr as *mut u8).add(8),
+                            copy_len,
+                        );
+                        MSG_QUEUES[i].read_idx = (found_idx + 1) % MAX_MSG_SLOTS;
+                        return Ok(copy_len);
+                    }
+                    // No message — block
+                    crate::sched::schedule();
+                }
+            }
+        }
+    }
+    Err("msgq not found")
+}
+
+/// sys_msgctl(msqid, cmd, buf) — message queue control.
+pub fn sys_msgctl(msqid: u32, cmd: u32, _buf: usize) -> Result<usize, &'static str> {
+    unsafe {
+        for i in 0..MSGQ_COUNT {
+            if MSG_QUEUES[i].id == msqid {
+                let result = match cmd {
+                    0 => { // IPC_RMID
+                        for j in i..MSGQ_COUNT - 1 { MSG_QUEUES[j] = MSG_QUEUES[j + 1]; }
+                        MSGQ_COUNT -= 1;
+                        Ok(0)
+                    }
+                    _ => Ok(0), // IPC_STAT, IPC_SET
+                };
+                return result;
+            }
+        }
+    }
+    Err("msgq not found")
+}
+
+// ── V30 Signal Enhancements ──────────────────────────────────────────────────
+
+const MAX_SIGNAL_HANDLERS: usize = 32;
+const SIG_BLOCK: u32 = 0;
+const SIG_UNBLOCK: u32 = 1;
+const SIG_SETMASK: u32 = 2;
+
+#[derive(Clone, Copy)]
+struct SignalHandler {
+    pid: u32,
+    signum: u32,
+    handler: usize,   // user-space handler address
+    flags: usize,
+    mask: u64,        // signal mask during handler
+}
+
+static mut SIGNAL_HANDLERS: [SignalHandler; MAX_SIGNAL_HANDLERS] = [
+    SignalHandler { pid: 0, signum: 0, handler: 0, flags: 0, mask: 0 }; MAX_SIGNAL_HANDLERS
+];
+static mut SIGNAL_HANDLER_COUNT: usize = 0;
+static mut SIGNAL_MASKS: [(u32, u64); 64] = [(0, 0); 64];
+static mut SIGNAL_MASK_COUNT: usize = 0;
+
+fn get_signal_mask(pid: u32) -> u64 {
+    unsafe {
+        for i in 0..SIGNAL_MASK_COUNT {
+            if SIGNAL_MASKS[i].0 == pid { return SIGNAL_MASKS[i].1; }
+        }
+    }
+    0
+}
+
+fn set_signal_mask(pid: u32, mask: u64) {
+    unsafe {
+        for i in 0..SIGNAL_MASK_COUNT {
+            if SIGNAL_MASKS[i].0 == pid {
+                SIGNAL_MASKS[i].1 = mask;
+                return;
+            }
+        }
+        if SIGNAL_MASK_COUNT < 64 {
+            SIGNAL_MASKS[SIGNAL_MASK_COUNT] = (pid, mask);
+            SIGNAL_MASK_COUNT += 1;
+        }
+    }
+}
+
+/// sys_sigaction(signum, act_ptr, oldact_ptr) — examine/change signal action.
+pub fn sys_sigaction(signum: u32, act_ptr: usize, oldact_ptr: usize) -> Result<usize, &'static str> {
+    let pid = crate::sched::current_thread()
+        .map(|t| unsafe { (*t).owner }).unwrap_or(0);
+    if signum == 9 || signum == 19 { return Err("cannot change SIGKILL/SIGSTOP"); }
+
+    unsafe {
+        // Return old action if requested
+        if oldact_ptr != 0 {
+            let mut found = false;
+            for i in 0..SIGNAL_HANDLER_COUNT {
+                if SIGNAL_HANDLERS[i].pid == pid && SIGNAL_HANDLERS[i].signum == signum {
+                    let old_ptr = oldact_ptr as *mut usize;
+                    old_ptr.write_volatile(SIGNAL_HANDLERS[i].handler);
+                    old_ptr.add(1).write_volatile(SIGNAL_HANDLERS[i].flags);
+                    found = true;
+                    break;
+                }
+            }
+            if !found {
+                let old_ptr = oldact_ptr as *mut usize;
+                old_ptr.write_volatile(0); // SIG_DFL
+                old_ptr.add(1).write_volatile(0);
+            }
+        }
+
+        // Set new action
+        if act_ptr != 0 {
+            let new_handler = (act_ptr as *const usize).read_volatile();
+            let new_flags = (act_ptr as *const usize).add(1).read_volatile();
+            let mut found = false;
+            for i in 0..SIGNAL_HANDLER_COUNT {
+                if SIGNAL_HANDLERS[i].pid == pid && SIGNAL_HANDLERS[i].signum == signum {
+                    SIGNAL_HANDLERS[i].handler = new_handler;
+                    SIGNAL_HANDLERS[i].flags = new_flags;
+                    found = true;
+                    break;
+                }
+            }
+            if !found && SIGNAL_HANDLER_COUNT < MAX_SIGNAL_HANDLERS {
+                SIGNAL_HANDLERS[SIGNAL_HANDLER_COUNT] = SignalHandler {
+                    pid, signum, handler: new_handler, flags: new_flags, mask: 0,
+                };
+                SIGNAL_HANDLER_COUNT += 1;
+            }
+        }
+    }
+    Ok(0)
+}
+
+/// sys_sigprocmask(how, set_ptr, oldset_ptr) — examine/change signal mask.
+pub fn sys_sigprocmask(how: u32, set_ptr: usize, oldset_ptr: usize) -> Result<usize, &'static str> {
+    let pid = crate::sched::current_thread()
+        .map(|t| unsafe { (*t).owner }).unwrap_or(0);
+
+    let old_mask = get_signal_mask(pid);
+
+    // Return old mask if requested
+    if oldset_ptr != 0 {
+        unsafe { (oldset_ptr as *mut u64).write_volatile(old_mask); }
+    }
+
+    // Update mask
+    if set_ptr != 0 {
+        let set_val = unsafe { (set_ptr as *const u64).read_volatile() };
+        match how {
+            SIG_BLOCK => set_signal_mask(pid, old_mask | set_val),
+            SIG_UNBLOCK => set_signal_mask(pid, old_mask & !set_val),
+            SIG_SETMASK => set_signal_mask(pid, set_val),
+            _ => return Err("bad how"),
+        }
+    }
+
+    Ok(0)
+}
+
+/// sys_sigreturn() — return from signal handler.
+pub fn sys_sigreturn() -> Result<usize, &'static str> {
+    Ok(0)
+}
+
+/// sys_sigpending(set_ptr) — examine pending signals.
+pub fn sys_sigpending(set_ptr: usize) -> Result<usize, &'static str> {
+    if set_ptr != 0 {
+        unsafe { (set_ptr as *mut u64).write_volatile(0); }
+    }
+    Ok(0)
+}
+
+// ── V30 Poll/Select ──────────────────────────────────────────────────────────
+
+#[derive(Clone, Copy)]
+struct PollFd {
+    fd: i32,
+    events: i16,
+    revents: i16,
+}
+
+/// sys_poll(fds_ptr, nfds, timeout) — wait for I/O events.
+pub fn sys_poll(fds_ptr: usize, nfds: usize, _timeout: isize) -> Result<usize, &'static str> {
+    if fds_ptr == 0 { return Err("null fds"); }
+    if nfds == 0 { return Ok(0); }
+
+    let pid = crate::sched::current_thread()
+        .map(|t| unsafe { (*t).owner }).unwrap_or(0);
+    let max_retries = 1000; // limit spinning
+
+    for _ in 0..max_retries {
+        let mut ready = 0;
+        unsafe {
+            for i in 0..nfds {
+                let entry_ptr = (fds_ptr + i * 8) as *const i16; // sizeof(pollfd)=8
+                let fd = (entry_ptr as *const i32).read_volatile();
+                let events = entry_ptr.add(2).read_volatile();
+
+                if fd < 0 { continue; }
+
+                let mut revents: i16 = 0;
+                // Check if fd can read (POLLIN=1)
+                if events & 1 != 0 {
+                    // For STDIN (fd=0): always ready
+                    if fd == 0 { revents |= 1; }
+                    // Check if there's data to read (simplified: always ready for files)
+                    else { revents |= 1; }
+                }
+                // Check if fd can write (POLLOUT=4)
+                if events & 4 != 0 {
+                    revents |= 4;
+                }
+
+                let rp = entry_ptr.add(4) as *mut i16;
+                rp.write_volatile(revents);
+                if revents != 0 { ready += 1; }
+            }
+        }
+        if ready > 0 { return Ok(ready); }
+        crate::sched::schedule();
+    }
+    Ok(0)
+}
+
+/// sys_ppoll(fds_ptr, nfds, timeout, sigmask) — poll with signal mask.
+pub fn sys_ppoll(fds_ptr: usize, nfds: usize, timeout: usize, _sigmask: usize) -> Result<usize, &'static str> {
+    let pid = crate::sched::current_thread()
+        .map(|t| unsafe { (*t).owner }).unwrap_or(0);
+    let _ = pid;
+    // Delegate to poll
+    sys_poll(fds_ptr, nfds, timeout as isize)
+}
+
+/// sys_pselect6(nfds, readfds, writefds, exceptfds, timeout) — synchronous I/O multiplexing.
+pub fn sys_pselect6(nfds: usize, _readfds: usize, _writefds: usize, _exceptfds: usize, _timeout: usize) -> Result<usize, &'static str> {
+    // Simplified: return ready fds count
+    let mut ready = 0;
+    if nfds > 0 {
+        // Fd 0 (stdin) is always readable
+        if _readfds != 0 {
+            unsafe {
+                let byte = (_readfds as *const u8).read_volatile();
+                if byte != 0 { ready = 1; }
+            }
+        }
+    }
+    if ready == 0 {
+        crate::sched::schedule();
+    }
+    Ok(ready)
+}
+
+// ── V30 Process Control (prctl, priority) ────────────────────────────────────
+
+const PR_SET_NAME: usize = 15;
+const PR_GET_NAME: usize = 16;
+pub static mut PROCESS_NAMES: [(u32, [u8; 16]); 64] = [(0, [0u8; 16]); 64];
+pub static mut PROCESS_NAME_COUNT: usize = 0;
+
+/// sys_prctl(option, arg2, arg3) — process control.
+pub fn sys_prctl(option: usize, arg2: usize, arg3: usize) -> Result<usize, &'static str> {
+    let pid = crate::sched::current_thread()
+        .map(|t| unsafe { (*t).owner }).unwrap_or(0);
+    match option {
+        PR_SET_NAME => {
+            if arg2 == 0 { return Err("null name"); }
+            let mut name = [0u8; 16];
+            unsafe {
+                let src = arg2 as *const u8;
+                for i in 0..15 {
+                    let c = src.add(i).read_volatile();
+                    name[i] = c;
+                    if c == 0 { break; }
+                }
+            }
+            unsafe {
+                for i in 0..PROCESS_NAME_COUNT {
+                    if PROCESS_NAMES[i].0 == pid {
+                        PROCESS_NAMES[i].1 = name;
+                        return Ok(0);
+                    }
+                }
+                if PROCESS_NAME_COUNT < 64 {
+                    PROCESS_NAMES[PROCESS_NAME_COUNT] = (pid, name);
+                    PROCESS_NAME_COUNT += 1;
+                }
+            }
+            Ok(0)
+        }
+        PR_GET_NAME => {
+            if arg2 == 0 { return Err("null buf"); }
+            unsafe {
+                let mut found = false;
+                for i in 0..PROCESS_NAME_COUNT {
+                    if PROCESS_NAMES[i].0 == pid {
+                        core::ptr::copy_nonoverlapping(
+                            PROCESS_NAMES[i].1.as_ptr(),
+                            arg2 as *mut u8, 16,
+                        );
+                        found = true;
+                        break;
+                    }
+                }
+                if !found {
+                    let default = b"trainos\0";
+                    core::ptr::copy_nonoverlapping(default.as_ptr(), arg2 as *mut u8, 8);
+                }
+            }
+            Ok(0)
+        }
+        _ => Err("unsupported prctl option"),
+    }
+}
+
+/// sys_getpriority(which, who) — get process priority (nice value).
+pub fn sys_getpriority(which: usize, who: usize) -> Result<usize, &'static str> {
+    let _ = (which, who);
+    Ok(0) // return default nice value of 0
+}
+
+/// sys_setpriority(which, who, prio) — set process priority.
+pub fn sys_setpriority(which: usize, who: usize, prio: usize) -> Result<usize, &'static str> {
+    let _ = (which, who, prio);
+    Ok(0)
+}
+
+/// sys_sched_getparam(pid, param_ptr) — get scheduling parameters.
+pub fn sys_sched_getparam(pid: u32, param_ptr: usize) -> Result<usize, &'static str> {
+    if param_ptr == 0 { return Err("null param"); }
+    let procs = crate::proc::PROCESSES.lock();
+    for proc in procs.iter() {
+        if proc.pid == pid {
+            unsafe { (param_ptr as *mut u32).write_volatile(proc.base_priority as u32); }
+            return Ok(0);
+        }
+    }
+    Err("process not found")
+}
+
+/// sys_sched_setparam(pid, param_ptr) — set scheduling parameters.
+pub fn sys_sched_setparam(pid: u32, param_ptr: usize) -> Result<usize, &'static str> {
+    if param_ptr == 0 { return Err("null param"); }
+    let new_priority = unsafe { (param_ptr as *const u32).read_volatile() as u8 };
+    let mut procs = crate::proc::PROCESSES.lock();
+    for proc in procs.iter_mut() {
+        if proc.pid == pid {
+            proc.base_priority = new_priority;
+            if let Some(ref mut thread) = proc.thread {
+                thread.effective_priority = new_priority;
+            }
+            return Ok(0);
+        }
+    }
+    Err("process not found")
+}
+
 // ── V30 Linux compat syscalls ────────────────────────────────────────────────
 pub fn sys_compat_init() -> Result<usize, &'static str> { crate::compat::compat_init(); Ok(0) }
 pub fn sys_compat_translate(linux_nr: usize) -> Result<usize, &'static str> {
-    crate::compat::translate_syscall(linux_nr).ok_or("no mapping")
+    crate::compat::translate_syscall(linux_nr).map(|(nr, _needs_trans)| nr).ok_or("no mapping")
 }
 pub fn sys_compat_setup_auxv(stack_top: usize, entry: usize, phdr: usize, phent: usize, phnum: usize) -> Result<usize, &'static str> {
     Ok(crate::compat::setup_auxv(stack_top, entry, phdr, phent, phnum))

@@ -228,6 +228,67 @@ pub const SYS_COMPAT_INIT: usize = 300;
 pub const SYS_COMPAT_TRANSLATE: usize = 301;
 pub const SYS_COMPAT_SETUP_AUXV: usize = 302;
 
+// V30 POSIX Compliance: 240-283
+// System V IPC — Semaphores
+pub const SYS_SEMGET: usize = 240;
+pub const SYS_SEMOP: usize = 241;
+pub const SYS_SEMCTL: usize = 242;
+
+// System V IPC — Message queues
+pub const SYS_MSGGET: usize = 243;
+pub const SYS_MSGSND: usize = 244;
+pub const SYS_MSGRCV: usize = 245;
+pub const SYS_MSGCTL: usize = 246;
+
+// Signals
+pub const SYS_SIGACTION: usize = 247;
+pub const SYS_SIGPROCMASK: usize = 248;
+pub const SYS_SIGRETURN: usize = 249;
+pub const SYS_RT_SIGACTION: usize = 250;
+pub const SYS_RT_SIGPROCMASK: usize = 251;
+pub const SYS_SIGPENDING: usize = 252;
+
+// Filesystem
+pub const SYS_SYMLINK: usize = 253;
+pub const SYS_READLINK: usize = 254;
+pub const SYS_FSYNC: usize = 255;
+pub const SYS_FDATASYNC: usize = 256;
+pub const SYS_FLOCK: usize = 257;
+pub const SYS_FALLOCATE: usize = 258;
+pub const SYS_SENDFILE: usize = 259;
+
+// Process
+pub const SYS_PRCTL: usize = 260;
+pub const SYS_GETPRIORITY: usize = 261;
+pub const SYS_SETPRIORITY: usize = 262;
+pub const SYS_SCHED_GETPARAM: usize = 263;
+pub const SYS_SCHED_SETPARAM: usize = 264;
+
+// Memory
+pub const SYS_MADVISE: usize = 265;
+pub const SYS_MINCORE: usize = 266;
+pub const SYS_MLOCK: usize = 267;
+pub const SYS_MUNLOCK: usize = 268;
+
+// Time
+pub const SYS_SETTIMEOFDAY: usize = 269;
+pub const SYS_TIMER_CREATE: usize = 270;
+pub const SYS_TIMER_DELETE: usize = 271;
+pub const SYS_TIMER_SETTIME: usize = 272;
+pub const SYS_TIMER_GETTIME: usize = 273;
+
+// Socket
+pub const SYS_GETSOCKOPT: usize = 274;
+pub const SYS_SETSOCKOPT: usize = 275;
+pub const SYS_GETPEERNAME: usize = 276;
+pub const SYS_GETSOCKNAME: usize = 277;
+pub const SYS_SHUTDOWN: usize = 278;
+
+// Poll/Select
+pub const SYS_POLL: usize = 279;
+pub const SYS_PPOLL: usize = 280;
+pub const SYS_PSELECT6: usize = 281;
+
 // ── Dispatch ─────────────────────────────────────────────────────────────────
 
 pub fn syscall_dispatch(tf: &mut TrapFrame) {
@@ -480,6 +541,66 @@ pub fn syscall_dispatch(tf: &mut TrapFrame) {
         SYS_MODEL_LIST => proc::sys_model_list(arg0, arg1),
         SYS_INFERENCE_SUBMIT => proc::sys_inference_submit(arg0 as u32, arg1 as u64, arg2 as u64),
         SYS_INFERENCE_STATS => proc::sys_inference_stats(arg0 as u32, arg1),
+
+        // V30 — System V Semaphores
+        SYS_SEMGET => proc::sys_semget(arg0 as u32, arg1, arg2),
+        SYS_SEMOP => proc::sys_semop(arg0 as u32, arg1, arg2),
+        SYS_SEMCTL => proc::sys_semctl(arg0 as u32, arg1 as u32, arg2, arg3),
+
+        // V30 — System V Message Queues
+        SYS_MSGGET => proc::sys_msgget(arg0 as u32, arg1),
+        SYS_MSGSND => proc::sys_msgsnd(arg0 as u32, arg1, arg2, arg3),
+        SYS_MSGRCV => proc::sys_msgrcv(arg0 as u32, arg1, arg2, arg3 as i64, tf.a4),
+        SYS_MSGCTL => proc::sys_msgctl(arg0 as u32, arg1 as u32, arg2),
+
+        // V30 — Signals
+        SYS_SIGACTION => proc::sys_sigaction(arg0 as u32, arg1, arg2),
+        SYS_SIGPROCMASK => proc::sys_sigprocmask(arg0 as u32, arg1, arg2),
+        SYS_SIGRETURN => proc::sys_sigreturn(),
+        SYS_RT_SIGACTION => proc::sys_sigaction(arg0 as u32, arg1, arg2),
+        SYS_RT_SIGPROCMASK => proc::sys_sigprocmask(arg0 as u32, arg1, arg2),
+        SYS_SIGPENDING => proc::sys_sigpending(arg0),
+
+        // V30 — Filesystem
+        SYS_SYMLINK => fs::sys_symlink(arg0, arg1),
+        SYS_READLINK => fs::sys_readlink(arg0, arg1, arg2),
+        SYS_FSYNC => fs::sys_fsync(arg0),
+        SYS_FDATASYNC => fs::sys_fdatasync(arg0),
+        SYS_FLOCK => fs::sys_flock(arg0, arg1),
+        SYS_FALLOCATE => fs::sys_fallocate(arg0, arg1, arg2, arg3),
+        SYS_SENDFILE => fs::sys_sendfile(arg0, arg1, arg2, arg3),
+
+        // V30 — Process
+        SYS_PRCTL => proc::sys_prctl(arg0, arg1, arg2),
+        SYS_GETPRIORITY => proc::sys_getpriority(arg0, arg1),
+        SYS_SETPRIORITY => proc::sys_setpriority(arg0, arg1, arg2),
+        SYS_SCHED_GETPARAM => proc::sys_sched_getparam(arg0 as u32, arg1),
+        SYS_SCHED_SETPARAM => proc::sys_sched_setparam(arg0 as u32, arg1),
+
+        // V30 — Memory
+        SYS_MADVISE => memory::sys_madvise(arg0, arg1, arg2),
+        SYS_MINCORE => memory::sys_mincore(arg0, arg1, arg2),
+        SYS_MLOCK => memory::sys_mlock(arg0, arg1),
+        SYS_MUNLOCK => memory::sys_munlock(arg0, arg1),
+
+        // V30 — Time
+        SYS_SETTIMEOFDAY => time::sys_settimeofday(arg0, arg1),
+        SYS_TIMER_CREATE => time::sys_timer_create(arg0, arg1, arg2),
+        SYS_TIMER_DELETE => time::sys_timer_delete(arg0),
+        SYS_TIMER_SETTIME => time::sys_timer_settime(arg0, arg1, arg2, arg3),
+        SYS_TIMER_GETTIME => time::sys_timer_gettime(arg0, arg1),
+
+        // V30 — Socket
+        SYS_GETSOCKOPT => socket::sys_getsockopt(arg0, arg1, arg2, arg3, tf.a4),
+        SYS_SETSOCKOPT => socket::sys_setsockopt(arg0, arg1, arg2, arg3, tf.a4),
+        SYS_GETPEERNAME => socket::sys_getpeername(arg0, arg1, arg2),
+        SYS_GETSOCKNAME => socket::sys_getsockname(arg0, arg1, arg2),
+        SYS_SHUTDOWN => socket::sys_shutdown(arg0, arg1),
+
+        // V30 — Poll/Select
+        SYS_POLL => proc::sys_poll(arg0, arg1, arg2 as isize),
+        SYS_PPOLL => proc::sys_ppoll(arg0, arg1, arg2, arg3),
+        SYS_PSELECT6 => proc::sys_pselect6(arg0, arg1, arg2, arg3, tf.a4),
 
         // V30 — Linux compat
         SYS_COMPAT_INIT => proc::sys_compat_init(),

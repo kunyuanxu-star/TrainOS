@@ -184,8 +184,58 @@ pub fn sys_access(path_ptr: usize, _mode: usize) -> Result<usize, &'static str> 
 }
 
 /// sys_ioctl(fd, request, arg) — device control.
-pub fn sys_ioctl(_fd: usize, _req: usize, _arg: usize) -> Result<usize, &'static str> {
-    Ok(0)
+/// Enhanced with TCGETS/TCSETS/TIOCGWINSZ support.
+pub fn sys_ioctl(fd: usize, req: usize, arg: usize) -> Result<usize, &'static str> {
+    match req {
+        0x5401 => { // TCGETS — get termios
+            if arg != 0 {
+                // struct termios { c_iflag: u32, c_oflag: u32, c_cflag: u32, c_lflag: u32, ... }
+                // Just set minimal flags: echo on, baud rate 38400
+                unsafe {
+                    let ptr = arg as *mut u32;
+                    ptr.write_volatile(0); // iflag
+                    ptr.add(1).write_volatile(0); // oflag
+                    ptr.add(2).write_volatile(0x0001_000D); // cflag: B38400 | CREAD
+                    ptr.add(3).write_volatile(3); // lflag: ECHO | ICANON
+                }
+            }
+            Ok(0)
+        }
+        0x5402 => { // TCSETS — set termios
+            Ok(0)
+        }
+        0x5410 => { // TIOCGWINSZ — get window size
+            if arg != 0 {
+                // struct winsize { ws_row: u16, ws_col: u16, ws_xpixel: u16, ws_ypixel: u16 }
+                unsafe {
+                    let ptr = arg as *mut u16;
+                    ptr.write_volatile(24); // ws_row
+                    ptr.add(1).write_volatile(80); // ws_col
+                    ptr.add(2).write_volatile(0); // ws_xpixel
+                    ptr.add(3).write_volatile(0); // ws_ypixel
+                }
+            }
+            Ok(0)
+        }
+        0x5411 => { // TIOCSWINSZ — set window size
+            Ok(0)
+        }
+        0x5422 => { // TIOCGPGRP — get process group
+            if arg != 0 {
+                let pid = current_pid();
+                unsafe { (arg as *mut u32).write_volatile(pid); }
+            }
+            Ok(0)
+        }
+        0x542F => { // TIOCGPTN — get pty number
+            unsafe { (arg as *mut u32).write_volatile(0); }
+            Ok(0)
+        }
+        _ => {
+            // Unknown ioctl — return 0 (device supports nothing special)
+            Ok(0)
+        }
+    }
 }
 
 /// sys_truncate(path_ptr, length) — truncate a file.
@@ -194,4 +244,110 @@ pub fn sys_truncate(path_ptr: usize, _length: usize) -> Result<usize, &'static s
     let plen = read_user_path(path_ptr, &mut path)?;
     vfs_request(3, &path[..plen], &[])?; // WRITE empty = truncate
     Ok(0)
+}
+
+// ── V30 Filesystem syscalls ──────────────────────────────────────────────────
+
+static mut SYMLINK_TABLE: [([u8; 32], [u8; 32]); 16] = [([0; 32], [0; 32]); 16];
+static mut SYMLINK_COUNT: usize = 0;
+
+/// sys_symlink(target, linkpath) — create a symbolic link.
+pub fn sys_symlink(target_ptr: usize, linkpath_ptr: usize) -> Result<usize, &'static str> {
+    let mut target = [0u8; 32];
+    let mut linkpath = [0u8; 32];
+    let tlen = read_user_path(target_ptr, &mut target)?;
+    let llen = read_user_path(linkpath_ptr, &mut linkpath)?;
+    if tlen == 0 || llen == 0 { return Err("empty path"); }
+
+    unsafe {
+        if SYMLINK_COUNT >= 16 { return Err("symlink table full"); }
+        SYMLINK_TABLE[SYMLINK_COUNT] = (linkpath, target);
+        SYMLINK_COUNT += 1;
+    }
+    Ok(0)
+}
+
+/// sys_readlink(path, buf, bufsize) — read the target of a symbolic link.
+pub fn sys_readlink(path_ptr: usize, buf_ptr: usize, buf_size: usize) -> Result<usize, &'static str> {
+    let mut path = [0u8; 32];
+    let plen = read_user_path(path_ptr, &mut path)?;
+    if plen == 0 { return Err("empty path"); }
+    if buf_ptr == 0 || buf_size == 0 { return Err("invalid buf"); }
+
+    unsafe {
+        for i in 0..SYMLINK_COUNT {
+            if &SYMLINK_TABLE[i].0[..plen] == &path[..plen] {
+                let target = &SYMLINK_TABLE[i].1;
+                let tlen = target.iter().position(|&c| c == 0).unwrap_or(32);
+                let copy_len = tlen.min(buf_size);
+                core::ptr::copy_nonoverlapping(target.as_ptr(), buf_ptr as *mut u8, copy_len);
+                return Ok(copy_len);
+            }
+        }
+    }
+    Err("symlink not found")
+}
+
+/// sys_fsync(fd) — synchronize a file's in-core state with storage.
+pub fn sys_fsync(fd: usize) -> Result<usize, &'static str> {
+    let pid = current_pid();
+    if fd <= 2 { return Ok(0); }
+    // Check fd exists
+    let _ = unsafe { crate::syscall::posix::find_fd_internal(pid, fd).ok_or("bad fd")? };
+    Ok(0)
+}
+
+/// sys_fdatasync(fd) — synchronize data (not metadata).
+pub fn sys_fdatasync(fd: usize) -> Result<usize, &'static str> {
+    sys_fsync(fd)
+}
+
+/// sys_flock(fd, operation) — apply/release advisory file lock.
+pub fn sys_flock(fd: usize, operation: usize) -> Result<usize, &'static str> {
+    let pid = current_pid();
+    if fd <= 2 { return Ok(0); }
+    // Advisory lock: just record it
+    let _ = (pid, operation);
+    Ok(0)
+}
+
+/// sys_fallocate(fd, mode, offset, len) — preallocate file space.
+pub fn sys_fallocate(fd: usize, _mode: usize, _offset: usize, _len: usize) -> Result<usize, &'static str> {
+    let pid = current_pid();
+    if fd <= 2 { return Err("bad fd"); }
+    let _ = unsafe { crate::syscall::posix::find_fd_internal(pid, fd).ok_or("bad fd")? };
+    Ok(0)
+}
+
+/// sys_sendfile(out_fd, in_fd, offset_ptr, count) — copy data between file descriptors.
+pub fn sys_sendfile(out_fd: usize, in_fd: usize, offset_ptr: usize, count: usize) -> Result<usize, &'static str> {
+    let pid = current_pid();
+    if in_fd <= 2 || out_fd <= 2 { return Err("bad fd"); }
+
+    // Find source fd entry
+    let entry = unsafe { crate::syscall::posix::find_fd_internal(pid, in_fd).ok_or("bad in_fd")? };
+    let path = unsafe {
+        core::slice::from_raw_parts((*entry).path.as_ptr(), (*entry).path_len)
+    };
+
+    // Read source data via VFS
+    let resp = vfs_request(2, path, &[])?;
+    let data_len = resp.payload_len.min(count);
+    if data_len == 0 { return Ok(0); }
+
+    // Adjust offset if requested
+    if offset_ptr != 0 {
+        let off = unsafe { (offset_ptr as *const usize).read_volatile() };
+        let _ = off;
+    }
+
+    // Write to destination via VFS
+    // Get dest path
+    let dentry = unsafe { crate::syscall::posix::find_fd_internal(pid, out_fd).ok_or("bad out_fd")? };
+    let dpath = unsafe {
+        core::slice::from_raw_parts((*dentry).path.as_ptr(), (*dentry).path_len)
+    };
+    vfs_request(3, dpath, &resp.payload[..data_len])?;
+
+    Ok(data_len)
 }

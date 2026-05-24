@@ -107,3 +107,39 @@ pub fn sys_munmap(addr: usize, length: usize) -> Result<usize, &'static str> {
 pub fn sys_mprotect(_addr: usize, _length: usize, _prot: usize) -> Result<usize, &'static str> {
     Ok(0)
 }
+
+// ── V30 Memory syscalls ──────────────────────────────────────────────────────
+
+/// sys_madvise(addr, length, advice) — give memory advice hints.
+pub fn sys_madvise(_addr: usize, _length: usize, _advice: usize) -> Result<usize, &'static str> {
+    Ok(0) // MADV_NORMAL = 0: no special action needed
+}
+
+/// sys_mincore(addr, length, vec) — check if pages are in memory.
+pub fn sys_mincore(addr: usize, length: usize, vec_ptr: usize) -> Result<usize, &'static str> {
+    if vec_ptr == 0 { return Err("null vec"); }
+    if length == 0 { return Ok(0); }
+    let pages = (length + 0xFFF) >> 12;
+    let pid = current_pid()?;
+
+    let pt_root = get_page_table_root(pid).ok_or("no pt")?;
+    unsafe {
+        for i in 0..pages.min(4096) {
+            let va = addr + i * 4096;
+            // Check if page is resident using kernel virt_to_phys
+            let present = crate::mem::sv39::is_user_page_present(pt_root, va);
+            (vec_ptr as *mut u8).add(i).write_volatile(present);
+        }
+    }
+    Ok(0)
+}
+
+/// sys_mlock(addr, len) — lock memory.
+pub fn sys_mlock(_addr: usize, _len: usize) -> Result<usize, &'static str> {
+    Ok(0) // stub: no swapping to disable
+}
+
+/// sys_munlock(addr, len) — unlock memory.
+pub fn sys_munlock(_addr: usize, _len: usize) -> Result<usize, &'static str> {
+    Ok(0)
+}

@@ -1,0 +1,60 @@
+{
+  "fields": {
+    "title": "Confidential Computing & TEE (2024-2026趋势综述)",
+    "conference": "多会议综合 (ASPLOS'24-'26, EuroSys'25, SIGMETRICS'25, USENIX Security'24, OSDI'25)",
+    "year": "2024-2026",
+    "authors": "多作者综合趋势，关键贡献者包括: Misono等 (SIGMETRICS 2025, AMD SEV-SNP/Intel TDX实证分析); Jiacheng Shi, Yang Yu, Jinyu Gu, Yubin Xia (上海交通大学IPADS, CKI/EuroSys 2025); Nils Asmussen, Sebastian Haas, Carsten Weinhold, Michael Roitzsch等 (Barkhausen Institut, TEEM³/ASPLOS 2026); Chuqi Zhang等 (NUS/Intel, Erebor/EuroSys 2025); Till Miemietz等 (Barkhausen Institut/TU Dresden, MettEagle/OSDI 2025)",
+    "institution": "多机构: 上海交通大学IPADS; 慕尼黑工业大学; Barkhausen Institut; TU Dresden; Georgia Tech/Intel Labs; National University of Singapore; Imperial College London; Columbia University",
+    "status": "trend",
+    "paper_theme": "confidential_computing",
+    "key_idea": "机密计算与可信执行环境(TEE)是2024-2026年操作系统和体系结构领域最活跃的研究方向之一。硬件TEE技术(Intel TDX、AMD SEV-SNP、Arm CCA)进入成熟部署阶段，软件-硬件协同设计的安全容器方案(CKI)、微内核容器(MettEagle)、核心独立TEE(TEEM³)等创新推动容器与TEE深度融合。同时针对TEE的物理攻击(TEE.fail)和侧信道攻击(WeSee, HECKLER)持续涌现，推动TCB最小化和形式化验证研究。",
+    "keywords": ["机密计算", "可信执行环境", "Intel TDX", "AMD SEV-SNP", "Arm CCA", "安全容器", "硬件-软件协同设计", "微内核", "TCB最小化"],
+    "technical_contribution_type": "survey",
+    "relevance": "high",
+    "applicable_techniques": [
+      "1. 微内核+TEE融合架构: TEEM³展示M³微内核架构可实现核心独立、协作式TEE，为TrainOS的微内核安全架构提供直接参考",
+      "2. CKI的PKS隔离方案: 利用Protection Keys构建新特权级的思路可借鉴到RISC-V平台的PMP/ePMP隔离机制设计",
+      "3. 安全容器轻量化方案: 避免二阶段地址转换(EPT/NPT)开销的设计思路适用于TrainOS的进程隔离",
+      "4. TCB最小化方法论: 所有TEE研究的核心趋势——减少可信计算基，与微内核哲学高度一致",
+      "5. SVSM/Secure VM Service Module: AMD SEV-SNP的VMPL特权级分离机制可供TrainOS能力系统参考",
+      "6. 机密虚拟机性能优化: TDX/SEV-SNP的性能特征分析为TrainOS的VM/容器安全方案设计提供基线数据",
+      "7. 跨TEE协作通信: TEEM³和Mica(EuroSys)展示的多TEE安全协作模式可适配TrainOS的IPC机制",
+      "8. RISC-V TEE标准化: Keystone开源框架和AP-TEE标准为TrainOS在RISC-V上实现TEE提供路径"
+    ],
+    "roadmap_mapping": "V27_defense_depth",
+    "compatibility_with_rust": "rust_compatible",
+    "implementation_readiness": "needs_prototyping",
+    "maturity": "production",
+    "open_source": "partial",
+    "repo_url": "https://github.com/Barkhausen-Institut/M3 (M³架构); https://github.com/keystone-enclave/keystone (RISC-V TEE参考)",
+    "citations_impact": "highly_cited",
+    "ecosystem_relevance": "important_trend",
+    "effort_estimate": "不确定（多方案整合约48-96人周，取决于选型范围）",
+    "time_sensitivity": "moderately_time_sensitive",
+    "engagement_level": "prototype",
+    "risks_and_caveats": [
+      "1. 硬件TEE方案依赖特定CPU特性: TDX(Intel)、SEV-SNP(AMD)、CCA(Arm)各自绑定特定架构，TrainOS基于RISC-V需要替代方案(如Keystone或自研PMP/ePMP隔离)",
+      "2. 物理攻击威胁: TEE.fail(2025)展示了DDR5确定性AES-XTS加密缺乏Merkle树完整性保护的漏洞，所有服务器级TEE均受影响",
+      "3. 侧信道攻击: WeSee(#VC注入)、HECKLER(中断注入)等攻击表明现有TEE硬件仍有未修复的安全间隙",
+      "4. VMEXIT性能开销: TDX的VMEXIT延迟最高可达基线的6.8倍，影响I/O密集型工作负载",
+      "5. 技术碎片化: 多种TEE方案互不兼容，TrainOS需选择合适的TEE基线或设计抽象层",
+      "6. 成熟度差异: Arm CCA尚未有硬件可用，RISC-V TEE生态(AP-TEE)仍在标准化阶段"
+    ],
+    "suggested_next_step": [
+      "1. 深入研究TEEM³的M³架构设计，评估其核心独立TEE方案在RISC-V+TrainOS微内核上的可行性",
+      "2. 调研RISC-V Keystone开源TEE框架，评估作为TrainOS TEE原型基线的可能性",
+      "3. 跟踪RISC-V AP-TEE标准化进展，确保与未来RISC-V TEE生态兼容",
+      "4. 设计TrainOS安全沙箱原型，融合微内核IPC隔离(已有能力)与轻量级TEE隔离",
+      "5. 研究CKI的PKS隔离方案，探索TrainOS在RISC-V上使用PMP/ePMP实现类似内核态隔离",
+      "6. 与Barkhausen Institut团队(M³/TEEM³)建立联系，了解微内核TEE最佳实践"
+    ]
+  },
+  "uncertain": [
+    "paper_theme: 作为趋势综述，论文主题归类为confidential_computing较为合适，但涵盖多个子主题",
+    "title: 趋势综述无单一论文标题，使用综合描述性标题",
+    "conference: 跨会议综合，非单一会议论文",
+    "authors: 无单一作者集合，列出关键贡献者",
+    "effort_estimate: 多种技术方案整合的工作量难以精确估计",
+    "repo_url: 部分方案开源(M³, Keystone)，部分未开源(TDX, SEV-SNP为厂商闭源)"
+  ]
+}

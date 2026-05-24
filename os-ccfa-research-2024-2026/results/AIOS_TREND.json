@@ -1,0 +1,54 @@
+{
+  "title": "LLM推理与OS协同（AI-OS Collaboration Trend，2024-2026多会议趋势方向）",
+  "conference": "多会议综合趋势：OSDI 2024（8篇LLM推理论文）、SOSP 2024（2篇）、ASPLOS 2024/2025/2026（GPU调度与AI系统）、EuroSys 2024/2025（推理优化）、USENIX ATC 2024/2025",
+  "year": 2024,
+  "authors": "OSDI 2024代表性论文作者包括：Yinmin Zhong（北京大学，DistLLM）、Yao Fu（爱丁堡大学，ServerlessLLM）、Chaoyi Jiang（上海交通大学，Parrot）、Shengyu Liu（北京大学，DistLLM）、Bingyang Wu（北京大学，dLoRA）等",
+  "institution": "主要研究机构：北京大学、上海交通大学（IPADS）、清华大学、阿里巴巴、Microsoft Research、UC Berkeley、UC San Diego、爱丁堡大学、首尔大学、乔治亚理工、CMU、斯坦福大学、Duke大学",
+  "status": "trend",
+  "paper_theme": "ai_os",
+  "key_idea": "2024-2026年操作系统顶级会议（OSDI/SOSP/ASPLOS/EuroSys）爆发性涌入LLM推理系统研究，标志着OS社区研究重心的重大转向。核心主题包括：（1）GPU计算资源的高效调度与复用（Llumnix、dLoRA）；（2）KV-cache内存管理与分页优化（InfiniGen、vLLM开创的PagedAttention）；（3）推理serving系统的Prefill-Decode分离架构（DistServe、Sarathi-Serve）；（4）长上下文推理与弹性并行（LoongServe）；（5）多租户公平调度与服务质量保障（Fairness in Serving LLMs）。",
+  "keywords": [
+    "LLM推理服务",
+    "GPU调度",
+    "KV-cache内存管理",
+    "Prefill-Decode分离",
+    "弹性并行推理"
+  ],
+  "technical_contribution_type": "analysis_improvement",
+  "relevance": "high",
+  "applicable_techniques": [
+    "P/D分离架构（DistServe、Sarathi-Serve）：将推理的Prefill和Decode阶段分离到不同GPU上独立优化。TrainOS V29可设计AI加速器的分段调度器，将计算密集的Prefill和访存密集的Decode映射到不同的硬件资源或调度策略",
+    "Chunked-Prefill + 无停顿批处理（Sarathi-Serve）：将长Prompt切分为小块，与Decode交错执行，消除传统批处理中Prefill导致的Decode停顿。TrainOS可为AI推理服务设计分时调度原语，在微内核层面支持交错执行",
+    "KV-cache分页管理（vLLM PagedAttention思想 + InfiniGen预测预取）：将KV-cache按逻辑页管理，结合CPU-GPU分层存储和注意力模式预测预取。TrainOS可在V22-V25的NUMA/分层内存管理基础设施上构建KV-cache感知的虚拟内存子系统",
+    "弹性序列并行（LoongServe ESP）：动态调整序列在不同GPU间的并行度，适应可变长度请求。TrainOS V24（内核扩展）可设计AI特定系统调用，支持GPU/NPU资源的弹性绑定和解绑",
+    "动态调度与在线迁移（Llumnix）：通过请求的实时迁移在多实例间平衡负载。TrainOS V26（分布式IPC）提供的进程迁移能力可作为底层基础设施，支撑AI推理服务的动态扩缩容",
+    "Serverless LLM冷启动优化（ServerlessLLM）：利用分层存储（HDD/内存）加速模型检查点加载。TrainOS V25 NUMA感知存储管理器可以为分层AI模型缓存提供高效的数据放置策略",
+    "GPU-CPU异构推理（PowerInfer模型激活稀疏性）：根据神经元激活的幂律分布，在GPU/CPU间动态分配计算。TrainOS V29可设计CPU-GPU统一内存管理接口，支持稀疏计算模式下的数据传输优化",
+    "多LoRA适配器动态编排（dLoRA）：在实例级和集群级动态管理多个微调适配器的加载和批处理。TrainOS V24/V28可在内核扩展中支持WASM沙箱化的LoRA推理任务调度",
+    "语义变量抽象（Parrot）：暴露应用级请求依赖关系给调度器，实现DAG级别的推理优化。TrainOS V26 IPC的消息模型中可嵌入类似语义标签，使内核调度感知应用级意图",
+    "KV-cache压缩与量化：通过内存压缩技术减少KV-cache占用（如KVT、SparQ等）。TrainOS V21/V27可引入内存压缩引擎作为安全加固和资源优化的交叉技术"
+  ],
+  "roadmap_mapping": "V29_ai_os",
+  "compatibility_with_rust": "rust_compatible",
+  "implementation_readiness": "needs_prototyping",
+  "maturity": "research",
+  "open_source": "yes",
+  "repo_url": "Sarathi-Serve: https://github.com/microsoft/sarathi-serve; vLLM: https://github.com/vllm-project/vllm; ServerlessLLM: https://github.com/ServerlessLLM/ServerlessLLM",
+  "citations_impact": "highly_cited",
+  "ecosystem_relevance": "ecosystem_defining",
+  "effort_estimate": "不确定",
+  "time_sensitivity": "highly_time_sensitive",
+  "engagement_level": "prototype",
+  "risks_and_caveats": [
+    "AI系统研究领域迭代极快（以月为单位），当前OSDI 2024论文中的技术可能在12个月内被新一代方案部分替代，跟踪投入需要持续资源",
+    "大多数LLM推理系统围绕NVIDIA GPU和CUDA生态设计，TrainOS的RISC-V QEMU环境目前无法运行真实GPU推理负载，所有原型验证需依赖模拟器或交叉编译",
+    "微内核IPC延迟可能成为AI推理中频繁的GPU内存管理调用的瓶颈，需要设计轻量级的GPU服务调用路径",
+    "KV-cache管理和GPU调度的核心逻辑通常运行在GPU driver/kernel态，TrainOS的微内核架构意味着需要将部分调度逻辑下放到特权级服务或设计新的交互模型",
+    "TrainOS V29的目标是AI原生OS，但AI硬件生态（GPU/TPU/NPU）目前主要由x86/CUDA主导，RISC-V AI加速器生态尚在早期（如Tenstorrent、Esperanto），硬件可用性是关键风险",
+    "当前趋势论文主要解决LLM推理问题，未来2-3年OS-AI协同可能转向AI Agent、具身智能、AI for System等新方向，路线图需要保持灵活性"
+  ],
+  "suggested_next_step": "（1）成立AI OS跟踪小组：每周跟踪OSDI/SOSP/ASPLOS/EuroSys最新AI论文，建立论文库和代码仓库索引。（2）优先原型验证P/D分离架构：在TrainOS用户空间中模拟实现一个最小化的Prefill-Decode分离调度原型，验证微内核架构下AI推理调度延迟是否可接受。（3）KV-cache管理原型：基于TrainOS V22之后的NUMA/分层内存基础设施，原型KV-cache的分页管理方案，评估RISC-V Sv39页表对GPU虚拟内存的支持能力。（4）与vLLM/SGLang社区建立联系：了解LLM推理引擎的调度和内存管理需求，为TrainOS V29的AI服务接口设计提供输入。（5）编写AI OS调研报告：系统梳理OSDI'24-SOSP'24-ASPLOS'25/26中AI相关论文，提炼可用于TrainOS的10+项具体技术，形成V29技术储备库。",
+  "uncertain": [
+    "effort_estimate"
+  ]
+}

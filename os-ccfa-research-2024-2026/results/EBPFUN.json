@@ -1,0 +1,45 @@
+{
+  "meta": {
+    "paper_id": "EBPFUN",
+    "research_date": "2026-05-24",
+    "status": "confirmed"
+  },
+  "fields": {
+    "title": "Revealing the Unstable Foundations of eBPF-Based Kernel Extensions",
+    "conference": "EuroSys 2025",
+    "year": 2025,
+    "authors": "Shawn Wanxiang Zhong（第一作者，威斯康星大学麦迪逊分校）、Jing Liu（微软研究院）、Andrea C. Arpaci-Dusseau、Remzi H. Arpaci-Dusseau",
+    "institution": "威斯康星大学麦迪逊分校（University of Wisconsin-Madison）",
+    "status": "confirmed",
+    "paper_theme": "kernel_extension",
+    "key_idea": "系统性地揭示eBPF程序与内核镜像之间的依赖不匹配问题。提出DepSurf工具，自动检测eBPF程序对内核函数、结构体、跟踪点的依赖与内核实际提供的内容之间的差异。分析25个内核镜像（跨度8年、5种架构、5种配置、14种编译器版本）和53个真实eBPF程序，发现83%的程序受依赖不匹配影响。",
+    "keywords": [
+      "eBPF兼容性",
+      "内核扩展",
+      "依赖分析",
+      "编译优化",
+      "DepSurf",
+      "稳定性"
+    ],
+    "technical_contribution_type": "empirical_study",
+    "relevance": "high",
+    "applicable_techniques": "（1）依赖表面分析（Dependency Surface Analysis）：从编译后的内核镜像中提取eBPF程序可用的所有内核构造（函数、结构体、跟踪点），为TrainOS内核扩展API的稳定性评估提供方法论；（2）依赖集分析（Dependency Set Analysis）：分析扩展程序实际依赖的内核构造并与依赖表面进行交叉比对，发现不匹配；（3）跨版本兼容性检查方法：论文分析8年间内核变化规律的方法可直接用于TrainOS内核扩展接口的版本兼容性测试；（4）编译优化感知的稳定性分析：论文揭示编译器内联和签名变换对eBPF程序稳定性的影响，TrainOS设计时应考虑编译器对扩展API的影响。",
+    "roadmap_mapping": "V24_kernel_ext",
+    "compatibility_with_rust": "neutral",
+    "implementation_readiness": "needs_adaptation",
+    "maturity": "research",
+    "open_source": "yes",
+    "repo_url": "https://github.com/ShawnZhong/DepSurf",
+    "citations_impact": "too_early",
+    "ecosystem_relevance": "important_trend",
+
+    "effort_estimate": "8-16人周（基于DepSurf方法论为TrainOS内核扩展构建兼容性检查工具，需要适配TrainOS的扩展接口和架构）",
+    "time_sensitivity": "moderately_time_sensitive",
+    "engagement_level": "read_only",
+    "risks_and_caveats": "（1）DepSurf主要针对Linux eBPF生态分析，TrainOS的自定义内核扩展架构不同（微内核设计、Rust语言、RISC-V架构），其具体分析结果（如函数签名变化率）不能直接迁移；（2）论文方法对内核镜像进行二进制分析（依赖BTF/CTF调试信息），TrainOS缺乏类似调试基础设施，需要开发新的依赖提取方法；（3）论文揭示的问题具有重要警示意义——内核扩展API若不精心设计稳定接口，将导致大量兼容性问题，TrainOS V24应从架构层面设计稳定的扩展API，避免重蹈Linux eBPF的覆辙；（4）论文主要聚焦问题发现，未提供完整的解决方案，需要TrainOS团队自行设计API稳定性保障机制。",
+    "suggested_next_step": "（1）详细阅读论文全文和DepSurf开源代码（MIT协议），理解依赖不匹配的具体分类和检测方法；（2）基于论文的发现，制定TrainOS V24内核扩展API的设计原则：接口应精简化、版本化、向后兼容；（3）参考DepSurf的依赖分析思路，为TrainOS构建扩展程序的依赖检查工具，在编译时和加载时检测API不匹配；（4）在设计TrainOS扩展API时，特别注意避免论文揭示的三类不匹配：API演进导致的变更、配置选项导致的API条件存在、编译器优化导致的API签名变化；（5）重点考虑Rust的trait系统和类型安全如何在编译期捕获这类不匹配，利用Rust语言优势从源头减少运行时兼容性问题。"
+  },
+  "uncertain": [
+    "citations_impact"
+  ]
+}

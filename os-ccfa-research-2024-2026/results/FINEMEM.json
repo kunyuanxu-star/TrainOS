@@ -1,0 +1,53 @@
+{
+  "title": "FineMem: Breaking the Allocation Overhead vs. Memory Waste Dilemma in Fine-Grained Disaggregated Memory Management",
+  "conference": "OSDI 2025 (19th USENIX Symposium on Operating Systems Design and Implementation)",
+  "year": 2025,
+  "authors": "第一作者：Xiaoyang Wang（上海交通大学）；通讯作者：未知；其他作者：Yutong Li, Kan Wu, Wenhao Zhu, Yu Li, Yu Xu",
+  "institution": "上海交通大学（推测，基于作者单位分布和相关RDMA/分解内存研究背景）；部分作者来自xAI（Kan Wu）",
+  "status": "partial_confirmed",
+  "paper_theme": "disaggregated_memory",
+  "key_idea": "提出细粒度（4KB/2MB）远程内存分配器，利用RDMA单边原语实现无锁远程内存分配，通过预注册内存区域+RDMA Memory Window（MW）隔离机制，在消除分配开销与内存浪费之间取得突破，远程分配延迟降低95%，内存利用率提升2.25-2.8倍。",
+  "keywords": [
+    "细粒度分解内存",
+    "RDMA单边协议",
+    "无锁远程分配器",
+    "Memory Window隔离",
+    "预注册内存"
+  ],
+  "technical_contribution_type": "novel_design",
+  "relevance": "high",
+  "applicable_techniques": [
+    "RDMA Memory Window（MW）隔离机制：FineMem在每个计算节点上运行受信分配服务，通过RDMA MW对不同远程内存区域设置独立的L_Key/R_Key权限，实现租户间内存隔离。TrainOS在V29 AI原生OS阶段可参考此设计，在CXL/RDMA远程内存池化场景中实现安全的内存区域隔离",
+    "无锁单边RDMA分配协议：FineMem利用RDMA READ/WRITE原语直接在远程内存节点上进行分配/释放操作，无需远程CPU参与，消除上下文切换开销。TrainOS可在分布式IPC（V26）和远程内存访问路径中嵌入类似无锁协议，降低微内核IPC的远程内存访问延迟",
+    "预注册内存池化策略：FineMem预先注册大块RDMA内存区域，在其上运行自定义分配器管理4KB/2MB块。TrainOS可在VirtIO设备驱动层预注册共享内存区域，减少运行时内存注册开销",
+    "分配粒度与内存效率的权衡模型：FineMem的理论模型分析了固定大小块分配和按需分配之间的权衡。TrainOS在V25 NUMA感知内存管理、V29张量内存分配器设计中可采用类似模型",
+    "跨节点内存分配状态同步：FineMem的计算节点受信分配服务维护远程内存分配元数据，通过RDMA原子操作同步。TrainOS的分布式内存管理模块可借鉴此架构，在IPC消息中携带远程内存分配请求"
+  ],
+  "roadmap_mapping": "V27_defense_depth",
+  "compatibility_with_rust": "rust_compatible",
+  "implementation_readiness": "needs_prototyping",
+  "maturity": "research",
+  "open_source": "partial",
+  "repo_url": "不确定（论文发表于OSDI 2025，开源工件可能随USENIX proceedings发布）",
+  "citations_impact": "too_early",
+  "ecosystem_relevance": "important_trend",
+  "effort_estimate": "不确定",
+  "time_sensitivity": "moderately_time_sensitive",
+  "engagement_level": "prototype",
+  "risks_and_caveats": [
+    "FineMem依赖特定RDMA网卡硬件特性（Memory Window、原子操作），在QEMU模拟的RISC-V环境中无法直接验证，需真实的RDMA硬件或CXL模拟器",
+    "微内核架构下，远程内存分配服务需通过IPC转发，可能引入额外延迟，抵消FineMem的无锁协议优势",
+    "FineMem的受信分配服务运行在计算节点上，假设计算节点本身是可信的，这与TrainOS的capability系统安全模型需要仔细集成和验证",
+    "4KB/2MB固定粒度分配对某些AI推理工作负载（如变长KV-cache块）可能不够灵活，需要额外的分片机制",
+    "当前OSDI'25论文刚发表，社区验证和后续优化工作尚不充分，直接采用存在未知风险",
+    "RDMA Memory Window的规模和数量受硬件限制（RNIC资源有限），大规模部署时需考虑MW资源的复用和回收策略"
+  ],
+  "suggested_next_step": "安排团队成员阅读FineMem论文全文（https://www.usenix.org/system/files/osdi25-wang-xiaoyang.pdf），重点关注第3-5节的设计细节和实验评估。评估在QEMU/RISC-V环境中搭建RDMA模拟测试平台的可行性（如使用SoftRoCE或RDMA over TCP模拟）。与IPADS实验室（上海交通大学）相关团队建立联系，了解RDMA MW在RISC-V平台上的适配经验。在TrainOS V26/V27路线图中，将远程内存分配器列为原型项目，优先实现基于IPC消息的远程内存分配协议草案。",
+  "uncertain": [
+    "authors",
+    "institution",
+    "repo_url",
+    "citations_impact",
+    "effort_estimate"
+  ]
+}

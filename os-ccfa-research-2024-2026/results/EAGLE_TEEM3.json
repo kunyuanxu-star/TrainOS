@@ -1,0 +1,62 @@
+{
+  "fields": {
+    "title": "Eagle (CKI): A Hardware-Software Co-Design for Efficient Secure Containers + TEEM³: Core-Independent and Cooperating Trusted Execution Environments",
+    "conference": "Eagle: EuroSys 2025 (与ASPLOS 2025联合举办) / TEEM³: ASPLOS 2026",
+    "year": "2025 / 2026",
+    "authors": "Eagle (CKI): Jiacheng Shi, Yang Yu, Jinyu Gu, Yubin Xia (上海交通大学IPADS) / TEEM³: Nils Asmussen, Sebastian Haas, Carsten Weinhold, Nicholas Gordon, Stephan Gerhold (TU Dresden), Friedrich Pauls, Nilanjana Das, Michael Roitzsch (Barkhausen Institut)",
+    "institution": "Eagle (CKI): 上海交通大学IPADS / TEEM³: Barkhausen Institut (德累斯顿), TU Dresden",
+    "status": "partial_confirmed",
+    "paper_theme": "confidential_computing",
+    "key_idea": "Eagle (CKI): 利用Intel PKS(Protection Keys for Supervisor)在内核态中构建新特权级，避免使用虚拟化硬件(EPT/NPT)运行安全容器，通过硬件-软件协同设计实现VM级隔离性能提升最高72%(嵌套云场景)。TEEM³: 基于M³微内核架构实现核心独立、可协作的TEE，将TEE从CPU扩展到AI加速器等异构硬件，显著降低可信计算基(TCB)复杂度。两者共同代表容器+TEE融合的最新方向：前者专注安全容器的高效隔离，后者专注TEE的通用化和微内核化。",
+    "keywords": ["安全容器", "硬件-软件协同设计", "PKS", "内核隔离", "微内核TEE", "核心独立TEE", "M³架构", "TCB最小化", "可信执行环境", "异构加速器"],
+    "technical_contribution_type": "novel_design",
+    "relevance": "high",
+    "applicable_techniques": [
+      "1. PKS式特权级扩展: TrainOS可在RISC-V上利用PMP/ePMP/S-mode物理内存保护机制实现类似CKI的内核态隔离层",
+      "2. 单阶段地址转换: CKI避免二阶段地址转换的设计证明虚拟化硬件对容器隔离是不必要的过度设计，TrainOS微内核可天然避免此类开销",
+      "3. Kernel Security Monitor (KSM)模式: 每个安全域内共置一个最小特权监视器处理敏感操作的模式适用于TrainOS的能力系统设计",
+      "4. M³架构的TCU隔离: 硬件TCU(Trusted Communication Unit)实现的核心间隔离可直接启发TrainOS多核安全通信设计",
+      "5. 核心独立TEE: TEEM³展示TEE不必绑定到特定CPU-core，TrainOS可将TEE扩展到RISC-V AI加速器或协处理器",
+      "6. 协作式TEE: 多TEE安全协作的模式适用于TrainOS微内核的服务间安全通信，可结合现有IPC机制",
+      "7. 轻量级中断保护: CKI的IST和自动PKS切换防御中断滥用的机制可适配到RISC-V的中断处理设计",
+      "8. 快速切换门(PKS Switch Gate): 宿主机-客户内核-监视器之间的三级高效切换路径设计对微内核IPC优化有重要参考价值"
+    ],
+    "roadmap_mapping": "V27_defense_depth",
+    "compatibility_with_rust": "rust_compatible",
+    "implementation_readiness": "needs_prototyping",
+    "maturity": "research",
+    "open_source": "partial",
+    "repo_url": "M³/TEEM³: https://github.com/Barkhausen-Institut/M3 / CKI: 论文PDF可从ACM DL获取(DOI: 10.1145/3689031.3717473)",
+    "citations_impact": "too_early",
+    "ecosystem_relevance": "important_trend",
+    "effort_estimate": "Eagle(CKI)方案移植到TrainOS-RISC-V约24-48人周(需PMP/ePMP适配); TEEM³方案借鉴约16-32人周(M³架构学习与概念验证)",
+    "time_sensitivity": "highly_time_sensitive",
+    "engagement_level": "prototype",
+    "risks_and_caveats": [
+      "1. 架构依赖性: CKI的PKS是x86特有功能，RISC-V无直接等价机制，需使用PMP/ePMP/S-mode页表保护替代，效果需验证",
+      "2. Eagle/CKI名称未确认: 搜索未找到以\"Eagle\"命名的ASPLOS/EuroSys 2025论文，该论文官方系统名为CKI(Container Kernel Isolation)。\"Eagle\"可能是任务作者使用的内部代号或笔误(可能混淆MettEagle/OSDI 2025)",
+      "3. 硬件扩展需求: CKI需要PKS硬件扩展(指令隔离)，在RISC-V上需设计等效的硬件支持",
+      "4. M³架构依赖性: TEEM³基于M³硬件架构(含TCU)，在标准RISC-V平台上需纯软件模拟或硬件扩展",
+      "5. 成熟度: CKI和TEEM³均为研究原型，未在生产环境验证",
+      "6. 性能数据有限: TEEM³论文暂无公开详细性能评测数据",
+      "7. MettEagle相关: Barkhausen团队同时发表了MettEagle(OSDI 2025)微内核容器论文，与Eagle(CKI)是不同的独立工作，需注意区分"
+    ],
+    "suggested_next_step": [
+      "1. 阅读CKI论文全文(ACM DL DOI: 10.1145/3689031.3717473)，理解PKS隔离机制的完整设计",
+      "2. 研究TEEM³论文(ACM DL DOI: 10.1145/3779212.3790232)及M³架构(开源GitHub仓库)，评估微内核TEE设计理念",
+      "3. 在TrainOS原型中设计PMP-based隔离方案，对标CKI的KSM模式",
+      "4. 与Barkhausen Institut团队建立技术联系(特别是M³和TEEM³团队)，获取第一手设计经验",
+      "5. 评估TrainOS现有IPC机制如何演进为协作式TEE通信(参考TEEM³的跨TEE协作)",
+      "6. 在RISC-V QEMU上搭建Keystone TEE原型作为对照基线",
+      "7. 设计TrainOS V27安全沙箱方案，结合CKI的单阶段地址转换思路和微内核IPC能力",
+      "8. 考虑联系上海交通大学IPADS团队(夏虞斌教授)了解CKI在非x86平台的移植可能性"
+    ]
+  },
+  "uncertain": [
+    "title: \"Eagle\"系统名称为任务给定的非官方名称，论文官方系统名为CKI(Container Kernel Isolation)，实际标题为\"A Hardware-Software Co-Design for Efficient Secure Containers\"",
+    "conference: Eagle(CKI)实际发表于EuroSys 2025(与ASPLOS 2025联合举办)，非ASPLOS 2025单独发表",
+    "citations_impact: 2025-2026新论文引用量尚低，无法评估长期影响",
+    "effort_estimate: 工作量估算基于对类似RISC-V安全原型的经验推测，需实际验证",
+    "repo_url: CKI论文未明确标注开源仓库地址; M³/TEEM³开源但需要进一步确认TEEM³本身代码是否已发布"
+  ]
+}

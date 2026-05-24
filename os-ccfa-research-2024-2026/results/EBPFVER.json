@@ -1,0 +1,46 @@
+{
+  "meta": {
+    "paper_id": "EBPFVER",
+    "research_date": "2026-05-24",
+    "status": "confirmed"
+  },
+  "fields": {
+    "title": "Validating the eBPF Verifier via State Embedding",
+    "conference": "OSDI 2024",
+    "year": 2024,
+    "authors": "Hao Sun（第一作者，ETH Zurich）、Zhendong Su（通讯作者，ETH Zurich）",
+    "institution": "ETH Zurich（瑞士苏黎世联邦理工学院）",
+    "status": "confirmed",
+    "paper_theme": "kernel_extension",
+    "key_idea": "提出状态嵌入（State Embedding）技术，通过将eBPF程序的具体执行状态嵌入到程序中，利用eBPF验证器自身来检验其抽象近似是否正确。若验证器未能检测到嵌入的sink操作，则表明存在逻辑错误。该技术一个月内发现15个未知逻辑错误，其中2个可被利用进行本地权限提升。",
+    "keywords": [
+      "eBPF验证器",
+      "状态嵌入",
+      "逻辑错误检测",
+      "内核安全",
+      "抽象解释",
+      "SEV"
+    ],
+    "technical_contribution_type": "tool_methodology",
+    "relevance": "high",
+    "applicable_techniques": "（1）状态嵌入验证方法：将程序具体执行状态反注回程序，利用验证器自我检验近似正确性，可用于TrainOS V24内核扩展验证器的正确性测试；（2）灰盒验证器测试方法：不依赖验证器内部实现细节，仅通过观察验证器状态来生成测试用例，降低测试成本；（3）近似正确性检查：通过构造sink条件并观察验证器是否拒绝，发现验证器的过近似和欠近似问题；（4）基于具体状态profile的测试生成：执行已验证过的程序并采集具体寄存器状态，反哺到程序中进行交叉验证。",
+    "roadmap_mapping": "V24_kernel_ext",
+    "compatibility_with_rust": "neutral",
+    "implementation_readiness": "needs_adaptation",
+    "maturity": "research",
+    "open_source": "no",
+    "repo_url": "不确定（Hao Sun的GitHub账户无公开仓库，论文中SEV工具未找到开源代码）",
+    "citations_impact": "highly_cited",
+    "ecosystem_relevance": "important_trend",
+
+    "effort_estimate": "16-24人周（基于论文重新实现SEV的核心状态嵌入算法和sink生成逻辑，并进行TrainOS适配）",
+    "time_sensitivity": "moderately_time_sensitive",
+    "engagement_level": "read_only",
+    "risks_and_caveats": "（1）SEV工具未开源，无法直接使用或二次开发，需要基于论文描述从零实现；（2）状态嵌入技术高度依赖eBPF验证器的具体架构（抽象解释+状态近似），TrainOS的内核扩展验证器如果采用不同验证方法（如符号执行、模型检查），则需要重新设计嵌入策略；（3）论文发现的15个bug反映Linux eBPF验证器的设计缺陷——验证器过于复杂导致难以保证正确性，TrainOS设计验证器时应追求简单、可形式化验证；（4）状态嵌入方法可能产生假阴性（存在bug但未触发），不能作为验证器正确性的完整保证。",
+    "suggested_next_step": "（1）详细阅读论文全文（USENET开放获取），重点理解状态嵌入的核心算法和sink条件的构造方法；（2）分析TrainOS V24内核扩展验证器的架构设计，确定使用抽象解释还是其他验证策略；（3）若采用抽象解释方案，参考SEV的嵌入技术设计TrainOS验证器的自动化测试框架；（4）关注Hao Sun后续工作\"Approximation Enforced Execution\"（USENIX Security 2025）和\"Prove It to the Kernel\"（SOSP 2025），这两项工作延续了状态嵌入思路并进化为更完整的方案；（5）在设计验证器时吸取Linux eBPF验证器的教训：保持验证器核心简单，避免复杂的状态跟踪逻辑，优先考虑可形式化验证的设计。"
+  },
+  "uncertain": [
+    "repo_url",
+    "citations_impact"
+  ]
+}

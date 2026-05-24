@@ -6,6 +6,23 @@ Uses RustSBI as boot firmware, runs on machina emulator.
 
 **Goal**: Surpass Linux in kernel architecture, security, and performance.
 
+## Development Roadmap
+
+The V21–V30 roadmap is defined in [docs/specs/2026-05-18-trainos-v21-v30-roadmap.md](docs/specs/2026-05-18-trainos-v21-v30-roadmap.md).
+
+| Phase | Theme |
+|-------|-------|
+| V21 | Formal verification & security hardening |
+| V22 | High-performance async I/O (io_uring) |
+| V23 | Virtualization & hypervisor |
+| V24 | Programmable kernel extensions (eBPF-like) |
+| V25 | NUMA scalability (256+ cores) |
+| V26 | Distributed IPC & remote memory |
+| V27 | Defense in depth (CHERI, ASLR, sandbox) |
+| V28 | WASM/WASI universal runtime |
+| V29 | AI-native OS (GPU, tensor accelerators) |
+| V30 | Production readiness & Linux ABI compatibility |
+
 ## Iron Rules
 1. Runtime: RustSBI (M-mode) + machina (RISC-V JIT emulator). Non-negotiable.
 2. Architecture: RISC-V 64-bit (rv64gc), Sv39 virtual memory, MIT license.

@@ -24,9 +24,13 @@ All device drivers, filesystems, network stacks, and POSIX compatibility run as 
 3. **Architecture**: RISC-V 64-bit (rv64gc), Sv39 virtual memory.
 4. **License**: MIT.
 
+## Development Roadmap
+
+See [V21-V30 Roadmap](docs/specs/2026-05-18-trainos-v21-v30-roadmap.md) — a 10-version plan to surpass Linux based on top conference research and open-source evolution.
+
 ## Current Status (2026-05-18)
 
-### V13.0 — TCP + VFS + Process Isolation + Kernel Macros
+### V20.0 — Applications & Foundation: BusyBox, Persistent VFS, Shell Pipelines
 
 - **40+ system calls**: Process, IPC, capability, MMIO, block I/O, POSIX (stat/lseek/dup/getcwd), signal, waitpid, shm_map
 - **36+ user-space services**: init, ping, fs(VFS), test_fs, sh, test_fork, uart, test_posix, drv, net, tcp(NEW), echo, test_net, test_c, proc, test_proc, demo, stress, bb, pci, veth, tfs, tfs_jrnl, edit, cat, bench, rustdemo, mkfs, http, test_smp, test_posix2, test_mount, test_http, reg, test_sdp, pkg

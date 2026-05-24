@@ -162,9 +162,12 @@ pub const SYS_EXT_REGISTER: usize = 160;
 pub const SYS_EXT_UNREGISTER: usize = 161;
 pub const SYS_EXT_LIST: usize = 162;
 
-// NUMA (V25): 170-171
+// NUMA (V25): 170-174
 pub const SYS_NUMA_NODES: usize = 170;
 pub const SYS_NUMA_ALLOC: usize = 171;
+pub const SYS_NUMA_MIGRATE: usize = 172;
+pub const SYS_NUMA_INFO: usize = 173;
+pub const SYS_NUMA_BALANCE: usize = 174;
 
 // Distributed (V26): 180-183
 pub const SYS_REMOTE_NODE_ADD: usize = 180;
@@ -401,6 +404,9 @@ pub fn syscall_dispatch(tf: &mut TrapFrame) {
         // V25 — NUMA
         SYS_NUMA_NODES => proc::sys_numa_nodes(arg0, arg1),
         SYS_NUMA_ALLOC => proc::sys_numa_alloc(arg0 as u8),
+        SYS_NUMA_MIGRATE => proc::sys_numa_migrate(arg0, arg1 as u8, arg2 as u8),
+        SYS_NUMA_INFO => proc::sys_numa_info(arg0, arg1),
+        SYS_NUMA_BALANCE => proc::sys_numa_balance(),
 
 
         // V27 — ASLR/Cheri/Sandbox

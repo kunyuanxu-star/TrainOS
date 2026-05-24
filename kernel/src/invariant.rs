@@ -41,41 +41,18 @@ fn check_memory_invariants() {
 }
 
 fn check_scheduler_invariants() {
-    crate::sched::SCHED_LOCK.lock();
-    let sched = unsafe { &*core::ptr::addr_of_mut!(crate::sched::SCHEDULER) };
-    let bitmap = sched.priority_bitmap;
-
-    for prio in 0..64 {
-        if bitmap & (1u64 << prio) != 0 {
-            let q = &sched.ready_queues[prio];
-            if q.is_empty() {
-                crate::println!(
-                    "INVARIANT: priority_bitmap bit {} set but ready_queues[{}] is empty",
-                    prio, prio
-                );
-                continue;
-            }
-            for &t in q.iter() {
-                unsafe {
-                    let state = (*t).state;
-                    match state {
-                        crate::proc::thread::ThreadState::Ready => {}
-                        _ => crate::println!(
-                            "INVARIANT: thread pid={} in ready_queues[{}] has state {:?}",
-                            (*t).owner, prio, state
-                        ),
-                    }
-                }
-            }
-        } else if !sched.ready_queues[prio].is_empty() {
+    // V25: Check NUMA per-node ready queue consistency.
+    let node_count = crate::numa::node_count();
+    for node in 0..node_count {
+        let mut ok = true;
+        let count = crate::numa::check_node_queues(node as u8, &mut ok);
+        if !ok {
             crate::println!(
-                "INVARIANT: priority_bitmap bit {} clear but ready_queues[{}] has threads",
-                prio, prio
+                "INVARIANT: NUMA node {} ready queues inconsistent (count={})",
+                node, count
             );
         }
     }
-
-    crate::sched::SCHED_LOCK.unlock();
 }
 
 fn check_cap_invariants() {

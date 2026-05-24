@@ -1339,18 +1339,62 @@ pub fn sys_ext_list(buf_ptr: usize, buf_len: usize) -> Result<usize, &'static st
 // ── V25 NUMA syscalls ────────────────────────────────────────────────────────
 pub fn sys_numa_nodes(buf_ptr: usize, buf_len: usize) -> Result<usize, &'static str> {
     crate::numa::discover();
-    if buf_ptr == 0 { return Ok(crate::numa::node_count()); }
     let cnt = crate::numa::node_count();
-    let buf = unsafe { core::slice::from_raw_parts_mut(buf_ptr as *mut u8, buf_len.min(cnt * 8)) };
-    for i in 0..cnt {
-        let mask = crate::numa::node_cpu_mask(i as u8);
-        let off = i * 8;
-        buf[off] = i as u8; buf[off+1] = mask as u8; buf[off+2] = (mask>>8) as u8;
+    if buf_ptr == 0 {
+        return Ok(cnt);
     }
-    Ok(cnt)
+    let needed = cnt * 25; // 25 bytes per node
+    let copy_len = buf_len.min(needed);
+    let buf = unsafe { core::slice::from_raw_parts_mut(buf_ptr as *mut u8, copy_len) };
+    Ok(crate::numa::numa_state_buf(buf))
 }
 pub fn sys_numa_alloc(node: u8) -> Result<usize, &'static str> {
     crate::numa::node_alloc_page(node).ok_or("OOM")
+}
+
+/// Migrate a physical page to a target NUMA node.
+/// Arguments: phys_addr, from_node, to_node.
+pub fn sys_numa_migrate(phys: usize, from_node: u8, to_node: u8) -> Result<usize, &'static str> {
+    crate::numa::migrate_page(phys, from_node, to_node)
+}
+
+/// Read EEVDF thread information into a buffer.
+/// Format per thread: [pid:4][vruntime:8][weight:4][deadline:8][node:1] = 25 bytes.
+pub fn sys_numa_info(buf_ptr: usize, buf_len: usize) -> Result<usize, &'static str> {
+    if buf_ptr == 0 || buf_len < 25 {
+        return Err("invalid buffer");
+    }
+    let buf = unsafe { core::slice::from_raw_parts_mut(buf_ptr as *mut u8, buf_len) };
+    let mut written = 0;
+
+    // Iterate over all processes and collect EEVDF info.
+    let procs = crate::proc::PROCESSES.lock();
+    for proc in procs.iter() {
+        if written + 25 > buf_len {
+            break;
+        }
+        if let Some(ref thread) = proc.thread {
+            let off = written;
+            let pid_bytes = proc.pid.to_le_bytes();
+            buf[off..off + 4].copy_from_slice(&pid_bytes);
+            let vruntime_bytes = thread.vruntime.to_le_bytes();
+            buf[off + 4..off + 12].copy_from_slice(&vruntime_bytes);
+            let weight_bytes = thread.weight.to_le_bytes();
+            buf[off + 12..off + 16].copy_from_slice(&weight_bytes);
+            let deadline_bytes = thread.deadline.to_le_bytes();
+            buf[off + 16..off + 24].copy_from_slice(&deadline_bytes);
+            buf[off + 24] = thread.node_id;
+            written += 25;
+        }
+    }
+    drop(procs);
+    Ok(written)
+}
+
+/// Manually trigger NUMA load balancing.
+pub fn sys_numa_balance() -> Result<usize, &'static str> {
+    crate::numa::try_balance();
+    Ok(0)
 }
 
 // ── V26 Distributed IPC syscalls ─────────────────────────────────────────────

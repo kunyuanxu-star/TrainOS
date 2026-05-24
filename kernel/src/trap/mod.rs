@@ -147,6 +147,10 @@ fn timer_interrupt(_tf: &mut TrapFrame) {
         if INVARIANT_TICK % 100 == 0 {
             crate::invariant::run_checks();
         }
+        // V25: NUMA load balancing every 1000 ticks
+        if TICK_COUNT % 1000 == 0 {
+            crate::numa::try_balance();
+        }
     }
 
     crate::sched::schedule();

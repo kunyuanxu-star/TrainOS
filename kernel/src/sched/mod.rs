@@ -6,16 +6,18 @@ use core::sync::atomic::{AtomicU64, Ordering};
 
 pub static CTX_SWITCH_COUNT: AtomicU64 = AtomicU64::new(0);
 
-const NUM_PRIORITIES: usize = 64;
-
 /// Simple FIFO queue backed by a Vec
 pub(crate) struct ThreadQueue {
     items: Vec<*mut Thread>,
     head: usize,
 }
 
+// ThreadQueue is used behind a spin::Mutex, which requires Send.
+// The kernel's single-address-space design with proper locking makes this safe.
+unsafe impl Send for ThreadQueue {}
+
 impl ThreadQueue {
-    const fn new() -> Self {
+    pub(crate) const fn new() -> Self {
         ThreadQueue {
             items: Vec::new(),
             head: 0,
@@ -26,7 +28,7 @@ impl ThreadQueue {
         self.items.push(t);
     }
 
-    fn pop_front(&mut self) -> Option<*mut Thread> {
+    pub(crate) fn pop_front(&mut self) -> Option<*mut Thread> {
         if self.head >= self.items.len() {
             return None;
         }
@@ -47,54 +49,45 @@ impl ThreadQueue {
     pub(crate) fn iter(&self) -> core::slice::Iter<'_, *mut Thread> {
         self.items[self.head..].iter()
     }
+
+    /// Insert a thread into the queue sorted by deadline (ascending).
+    /// Used by EEVDF to maintain deadline order within a priority level.
+    pub(crate) fn insert_sorted_by_deadline(&mut self, t: *mut Thread, deadline: u64) {
+        let mut insert_pos = self.items.len();
+        for i in self.head..self.items.len() {
+            let d = unsafe { (*self.items[i]).deadline };
+            if deadline < d {
+                insert_pos = i;
+                break;
+            }
+        }
+        self.items.insert(insert_pos, t);
+    }
 }
 
 pub struct Scheduler {
-    pub(crate) ready_queues: [ThreadQueue; NUM_PRIORITIES],
-    pub(crate) priority_bitmap: u64,
     pub(crate) current: Option<*mut Thread>,
     pick_count: [u64; 4], // picks per HART
 }
 
 impl Scheduler {
     pub const fn new() -> Self {
-        const EMPTY: ThreadQueue = ThreadQueue::new();
         Scheduler {
-            ready_queues: [EMPTY; NUM_PRIORITIES],
-            priority_bitmap: 0,
             current: None,
             pick_count: [0; 4],
         }
     }
 
+    /// Enqueue a thread — delegates to the NUMA-aware scheduler.
     pub fn enqueue(&mut self, thread: *mut Thread) {
-        unsafe {
-            let pri = (*thread).effective_priority as usize;
-            if pri < NUM_PRIORITIES {
-                (*thread).state = ThreadState::Ready;
-                self.ready_queues[pri].push_back(thread);
-                self.priority_bitmap |= 1u64 << pri;
-            }
-        }
+        crate::numa::enqueue_thread(thread);
     }
 
-    fn highest_priority(&self) -> Option<usize> {
-        if self.priority_bitmap == 0 {
-            return None;
-        }
-        Some(63 - (self.priority_bitmap.leading_zeros() as usize))
-    }
-
+    /// Dequeue the highest-priority thread for the current hart's NUMA node.
     fn dequeue_highest(&mut self) -> Option<*mut Thread> {
-        let pri = self.highest_priority()?;
-        let thread = self.ready_queues[pri].pop_front()?;
-        if self.ready_queues[pri].is_empty() {
-            self.priority_bitmap &= !(1u64 << pri);
-        }
-        unsafe {
-            (*thread).state = ThreadState::Running;
-        }
-        self.pick_count[crate::per_cpu::hart_id()] += 1;
+        let hart = crate::per_cpu::hart_id();
+        let thread = crate::numa::pick_next_for_hart(hart)?;
+        self.pick_count[hart] += 1;
         Some(thread)
     }
 

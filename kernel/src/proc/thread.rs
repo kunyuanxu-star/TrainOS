@@ -73,6 +73,11 @@ pub struct Thread {
     pub trap_frame: Option<TrapFrame>,
     pub kernel_stack_top: usize,
     pub wait_target: Option<WaitTarget>,
+    // V25: NUMA and EEVDF scheduling fields
+    pub node_id: u8,      // NUMA node affinity (0 = default)
+    pub vruntime: u64,    // EEVDF virtual runtime (incremented per tick)
+    pub deadline: u64,    // EEVDF deadline for sorted ready-queue insertion
+    pub weight: u32,      // Scheduling weight (derived from priority, 8..512)
 }
 
 impl Thread {
@@ -98,6 +103,7 @@ impl Thread {
             ..TaskContext::empty()
         };
 
+        let w = (priority as u32 + 1) * 8; // map 0..63 to 8..512
         Thread {
             tid,
             owner,
@@ -108,6 +114,11 @@ impl Thread {
             trap_frame: Some(tf),
             kernel_stack_top: tf_sp + 280, // original top of kernel stack
             wait_target: None,
+            // V25: NUMA / EEVDF defaults
+            node_id: 0,
+            vruntime: 0,
+            deadline: 0,
+            weight: w,
         }
     }
 
@@ -130,6 +141,10 @@ impl Thread {
             trap_frame: None,
             kernel_stack_top: 0,
             wait_target: None,
+            node_id: 0,
+            vruntime: 0,
+            deadline: 0,
+            weight: 8,
         }
     }
 }

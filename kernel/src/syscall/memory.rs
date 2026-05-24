@@ -70,6 +70,12 @@ pub fn sys_mmap(
     let pages = (length + PAGE_SIZE - 1) >> 12;
     let va = if addr == 0 { 0x1000_0000 } else { addr };
 
+    // V27.1: CHERI validation — check that the mmap range is authorized
+    let required_perms = crate::aslr::CHERI_PERM_R | crate::aslr::CHERI_PERM_W;
+    if !crate::aslr::validate_ptr(pid, va, length, required_perms) {
+        return Err("cheri: mmap range not authorized");
+    }
+
     for i in 0..pages {
         let page_va = va + i * PAGE_SIZE;
         let page = buddy::alloc_page().ok_or("OOM")?;

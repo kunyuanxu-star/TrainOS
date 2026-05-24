@@ -182,6 +182,11 @@ pub const SYS_CHERI_CAP_CREATE: usize = 201;
 pub const SYS_CHERI_CAP_CHECK: usize = 202;
 pub const SYS_SANDBOX_ADD: usize = 203;
 pub const SYS_SANDBOX_CHECK: usize = 204;
+pub const SYS_CHERI_CAP_DELETE: usize = 205;
+pub const SYS_SANDBOX_NET_ADD: usize = 206;
+pub const SYS_SANDBOX_UID_MAP: usize = 207;
+pub const SYS_ASLR_ENTROPY: usize = 208;
+pub const SYS_CHERI_STATUS: usize = 209;
 
 // WASM (V28): 210-215
 pub const SYS_WASM_LOAD: usize = 210;
@@ -191,11 +196,24 @@ pub const SYS_WASM_EXECUTE: usize = 213;
 pub const SYS_WASM_MEM_READ: usize = 214;
 pub const SYS_WASM_MEM_WRITE: usize = 215;
 
-// AI/GPU (V29): 220-223
+// AI/GPU (V29): 220-239
 pub const SYS_GPU_REGISTER: usize = 220;
 pub const SYS_GPU_LIST: usize = 221;
 pub const SYS_AI_SUBMIT: usize = 222;
 pub const SYS_AI_NEXT: usize = 223;
+pub const SYS_GPU_SUBMIT_CMD: usize = 224;
+pub const SYS_GPU_WAIT_FENCE: usize = 225;
+pub const SYS_GPU_ALLOC: usize = 226;
+pub const SYS_GPU_FREE: usize = 227;
+pub const SYS_GPU_UTILIZATION: usize = 228;
+pub const SYS_GPU_ACTIVE_WL: usize = 229;
+pub const SYS_AI_COMPLETE: usize = 230;
+pub const SYS_AI_PREEMPT: usize = 231;
+pub const SYS_MODEL_LOAD: usize = 232;
+pub const SYS_MODEL_UNLOAD: usize = 233;
+pub const SYS_MODEL_LIST: usize = 234;
+pub const SYS_INFERENCE_SUBMIT: usize = 235;
+pub const SYS_INFERENCE_STATS: usize = 236;
 
 // Linux Compat (V30): 300-302
 pub const SYS_COMPAT_INIT: usize = 300;
@@ -419,9 +437,14 @@ pub fn syscall_dispatch(tf: &mut TrapFrame) {
         // V27 — ASLR/Cheri/Sandbox
         SYS_ASLR_INIT => proc::sys_aslr_init(),
         SYS_CHERI_CAP_CREATE => proc::sys_cheri_cap_create(arg0, arg1, arg2 as u16),
-        SYS_CHERI_CAP_CHECK => proc::sys_cheri_cap_check(arg0),
+        SYS_CHERI_CAP_CHECK => proc::sys_cheri_cap_check(arg0, arg1, arg2 as u16),
         SYS_SANDBOX_ADD => proc::sys_sandbox_add(arg0, arg1),
         SYS_SANDBOX_CHECK => proc::sys_sandbox_check(arg0, arg1),
+        SYS_CHERI_CAP_DELETE => proc::sys_cheri_cap_delete(arg0 as u32, arg1 as u8),
+        SYS_SANDBOX_NET_ADD => proc::sys_sandbox_net_add(arg0 as u32, arg1 as u16, arg2 as u16, arg3),
+        SYS_SANDBOX_UID_MAP => proc::sys_sandbox_uid_map(arg0 as u32, arg1 as u32, arg2 as u32),
+        SYS_ASLR_ENTROPY => proc::sys_aslr_entropy(),
+        SYS_CHERI_STATUS => proc::sys_cheri_status(arg0, arg1),
 
         // V28 — WASM
         SYS_WASM_LOAD => proc::sys_wasm_load(arg0, arg1),
@@ -436,6 +459,19 @@ pub fn syscall_dispatch(tf: &mut TrapFrame) {
         SYS_GPU_LIST => proc::sys_gpu_list(arg0, arg1),
         SYS_AI_SUBMIT => proc::sys_ai_submit(arg0 as u32, arg1, arg2 as u8, arg3),
         SYS_AI_NEXT => proc::sys_ai_next(arg0, arg1),
+        SYS_GPU_SUBMIT_CMD => proc::sys_gpu_submit_cmd(arg0 as u32, arg1, arg2),
+        SYS_GPU_WAIT_FENCE => proc::sys_gpu_wait_fence(arg0 as u32, arg1 as u64),
+        SYS_GPU_ALLOC => proc::sys_gpu_alloc(arg0 as u32, arg1),
+        SYS_GPU_FREE => proc::sys_gpu_free(arg0 as u32, arg1),
+        SYS_GPU_UTILIZATION => proc::sys_gpu_utilization(arg0 as u32),
+        SYS_GPU_ACTIVE_WL => proc::sys_gpu_active_wl(arg0 as u32),
+        SYS_AI_COMPLETE => proc::sys_ai_complete(arg0, arg1),
+        SYS_AI_PREEMPT => proc::sys_ai_preempt(arg0),
+        SYS_MODEL_LOAD => proc::sys_model_load(arg0 as u32, arg1, arg2),
+        SYS_MODEL_UNLOAD => proc::sys_model_unload(arg0 as u32),
+        SYS_MODEL_LIST => proc::sys_model_list(arg0, arg1),
+        SYS_INFERENCE_SUBMIT => proc::sys_inference_submit(arg0 as u32, arg1 as u64, arg2 as u64),
+        SYS_INFERENCE_STATS => proc::sys_inference_stats(arg0 as u32, arg1),
 
         // V30 — Linux compat
         SYS_COMPAT_INIT => proc::sys_compat_init(),

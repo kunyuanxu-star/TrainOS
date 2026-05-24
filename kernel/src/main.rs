@@ -170,6 +170,10 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
     ipc::init();
     println!("  IPC subsystem initialized");
 
+    // V26: Initialize distributed IPC subsystem (cluster node 0)
+    crate::distributed::init(0);
+    println!("  Distributed IPC initialized");
+
     mem::sv39::enable_mmu();
     println!("  MMU enabled (Sv39)");
 

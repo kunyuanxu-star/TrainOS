@@ -1437,21 +1437,93 @@ pub fn sys_remote_send(node_id: u32, ep: usize, data_ptr: usize, data_len: usize
 
 // ── V27 ASLR/Cheri/Sandbox syscalls ─────────────────────────────────────────
 pub fn sys_aslr_init() -> Result<usize, &'static str> { crate::aslr::aslr_init(); Ok(0) }
+
+/// Create a CHERI capability for the current process.
 pub fn sys_cheri_cap_create(addr: usize, len: usize, perms: u16) -> Result<usize, &'static str> {
-    // Return the CheriCap as a packed u128 (simplified: return addr)
-    Ok(addr)
-}
-pub fn sys_cheri_cap_check(_cap_ptr: usize) -> Result<usize, &'static str> { Ok(0) }
-pub fn sys_sandbox_add(path_ptr: usize, mode: usize) -> Result<usize, &'static str> {
     let pid = crate::sched::current_thread().map(|t| unsafe { (*t).owner }).ok_or("no proc")?;
-    let path = unsafe { core::slice::from_raw_parts(path_ptr as *const u8, 32) };
-    let allow_w = (mode & 1) != 0; let allow_r = (mode & 2) != 0;
-    crate::aslr::sandbox_add(pid, path, allow_r, allow_w)?;
+    let cap_id = crate::aslr::cap_create(pid, addr, len, perms)?;
+    Ok(cap_id as usize)
+}
+
+/// Check if [addr, addr+len) is authorized by any CHERI capability.
+pub fn sys_cheri_cap_check(addr: usize, len: usize, perms: u16) -> Result<usize, &'static str> {
+    let pid = crate::sched::current_thread().map(|t| unsafe { (*t).owner }).ok_or("no proc")?;
+    let valid = crate::aslr::validate_ptr(pid, addr, len, perms);
+    Ok(if valid { 1 } else { 0 })
+}
+
+/// Delete a CHERI capability by cap_id.
+pub fn sys_cheri_cap_delete(pid: u32, cap_id: u8) -> Result<usize, &'static str> {
+    crate::aslr::cap_delete(pid, cap_id)?;
     Ok(0)
 }
+
+/// Read CHERI capability status into a buffer (for /proc/cheri).
+pub fn sys_cheri_status(buf_ptr: usize, buf_len: usize) -> Result<usize, &'static str> {
+    if buf_ptr == 0 { return Err("null buf"); }
+    let buf = unsafe { core::slice::from_raw_parts_mut(buf_ptr as *mut u8, buf_len) };
+    Ok(crate::aslr::cheri_status_format(buf))
+}
+
+/// Add a path-based sandbox rule for the current process.
+pub fn sys_sandbox_add(path_ptr: usize, mode: usize) -> Result<usize, &'static str> {
+    let pid = crate::sched::current_thread().map(|t| unsafe { (*t).owner }).ok_or("no proc")?;
+    let mut path_buf = [0u8; 32];
+    let plen = {
+        let mut len = 0;
+        if path_ptr == 0 { return Err("null path"); }
+        unsafe {
+            let src = path_ptr as *const u8;
+            while len < 31 {
+                let c = src.add(len).read_volatile();
+                if c == 0 { break; }
+                path_buf[len] = c;
+                len += 1;
+            }
+        }
+        len
+    };
+    let allow_w = (mode & 1) != 0;
+    let allow_r = (mode & 2) != 0;
+    crate::aslr::sandbox_add(pid, &path_buf[..plen], allow_r, allow_w)?;
+    Ok(0)
+}
+
+/// Check if a path is allowed by the sandbox for a given process.
 pub fn sys_sandbox_check(pid: usize, path_ptr: usize) -> Result<usize, &'static str> {
-    let path = unsafe { core::slice::from_raw_parts(path_ptr as *const u8, 32) };
-    Ok(crate::aslr::sandbox_check(pid as u32, path, false) as usize)
+    let mut path_buf = [0u8; 32];
+    let plen = {
+        let mut len = 0;
+        if path_ptr == 0 { return Err("null path"); }
+        unsafe {
+            let src = path_ptr as *const u8;
+            while len < 31 {
+                let c = src.add(len).read_volatile();
+                if c == 0 { break; }
+                path_buf[len] = c;
+                len += 1;
+            }
+        }
+        len
+    };
+    Ok(crate::aslr::sandbox_check(pid as u32, &path_buf[..plen], false) as usize)
+}
+
+/// Add a network port sandbox rule for a process.
+pub fn sys_sandbox_net_add(pid: u32, port_start: u16, port_end: u16, allow: usize) -> Result<usize, &'static str> {
+    crate::aslr::sandbox_net_add(pid, port_start, port_end, allow != 0)?;
+    Ok(0)
+}
+
+/// Add a UID mapping entry (inner_uid -> outer_uid) for a process.
+pub fn sys_sandbox_uid_map(pid: u32, inner_uid: u32, outer_uid: u32) -> Result<usize, &'static str> {
+    crate::aslr::sandbox_uid_map(pid, inner_uid, outer_uid)?;
+    Ok(0)
+}
+
+/// Report bits of entropy from the ASLR subsystem.
+pub fn sys_aslr_entropy() -> Result<usize, &'static str> {
+    Ok(crate::aslr::aslr_entropy() as usize)
 }
 
 // ── V28 WASM syscalls ────────────────────────────────────────────────────────
@@ -1509,20 +1581,118 @@ pub fn sys_wasm_mem_write(module_id: usize, offset: usize, data_ptr: usize, data
 }
 
 // ── V29 AI/GPU syscalls ──────────────────────────────────────────────────────
+
+/// Register a GPU device (mmio_base, memory_base, memory_size) -> gpu_id
 pub fn sys_gpu_register(mmio: usize, mem_base: usize, mem_size: usize) -> Result<usize, &'static str> {
     crate::ai::gpu_register(mmio, mem_base, mem_size).map(|id| id as usize).ok_or("full")
 }
+
+/// List GPU devices into a buffer
 pub fn sys_gpu_list(buf_ptr: usize, buf_len: usize) -> Result<usize, &'static str> {
     if buf_ptr == 0 { return Err("null buf"); }
     let buf = unsafe { core::slice::from_raw_parts_mut(buf_ptr as *mut u8, buf_len) };
     Ok(crate::ai::gpu_list(buf))
 }
+
+/// Submit an AI workload to the GPU queue
 pub fn sys_ai_submit(gpu_id: u32, priority: usize, batch_size: u8, _data_ptr: usize) -> Result<usize, &'static str> {
     let pid = crate::sched::current_thread().map(|t| unsafe { (*t).owner }).ok_or("no proc")?;
     crate::ai::ai_submit(pid, gpu_id, priority as u8, batch_size as usize).ok_or("queue full")
 }
+
+/// Get next queued AI workload (for scheduler polling service)
 pub fn sys_ai_next(_buf_ptr: usize, _buf_len: usize) -> Result<usize, &'static str> {
     crate::ai::ai_next_workload().ok_or("no work")
+}
+
+/// Submit GPU commands: gpu_id, cmd_buf_ptr, cmd_len
+pub fn sys_gpu_submit_cmd(gpu_id: u32, cmd_buf_ptr: usize, cmd_len: usize) -> Result<usize, &'static str> {
+    if cmd_buf_ptr == 0 || cmd_len == 0 || cmd_len > 4096 {
+        return Err("invalid cmd args");
+    }
+    let cmd_buf = unsafe { core::slice::from_raw_parts(cmd_buf_ptr as *const u8, cmd_len) };
+    crate::ai::gpu_submit_command(gpu_id as usize, cmd_buf, cmd_len)?;
+    Ok(0)
+}
+
+/// Wait for a fence value on a GPU
+pub fn sys_gpu_wait_fence(gpu_id: u32, fence: u64) -> Result<usize, &'static str> {
+    crate::ai::gpu_wait_fence(gpu_id as usize, fence)?;
+    Ok(0)
+}
+
+/// Allocate GPU memory: gpu_id, size -> gpu_va
+pub fn sys_gpu_alloc(gpu_id: u32, size: usize) -> Result<usize, &'static str> {
+    crate::ai::gpu_alloc(gpu_id, size).ok_or("gpu alloc failed")
+}
+
+/// Free GPU memory: gpu_id, gpu_va
+pub fn sys_gpu_free(gpu_id: u32, gpu_va: usize) -> Result<usize, &'static str> {
+    if crate::ai::gpu_free(gpu_id, gpu_va) { Ok(0) } else { Err("gpu free failed") }
+}
+
+/// Get GPU utilization (0-1000)
+pub fn sys_gpu_utilization(gpu_id: u32) -> Result<usize, &'static str> {
+    Ok(crate::ai::gpu_utilization(gpu_id) as usize)
+}
+
+/// Get number of active workloads on a GPU
+pub fn sys_gpu_active_wl(gpu_id: u32) -> Result<usize, &'static str> {
+    Ok(crate::ai::gpu_active_workloads(gpu_id))
+}
+
+/// Mark an AI workload as completed
+pub fn sys_ai_complete(workload_id: usize, result: usize) -> Result<usize, &'static str> {
+    if crate::ai::ai_complete(workload_id, result != 0) { Ok(0) } else { Err("bad workload id") }
+}
+
+/// Preempt a running AI workload
+pub fn sys_ai_preempt(workload_id: usize) -> Result<usize, &'static str> {
+    if crate::ai::ai_preempt(workload_id) { Ok(0) } else { Err("preempt failed") }
+}
+
+/// Load an ML model into GPU memory
+pub fn sys_model_load(gpu_id: u32, model_data_ptr: usize, model_len: usize) -> Result<usize, &'static str> {
+    if model_data_ptr == 0 || model_len == 0 || model_len > 0x100000 {
+        return Err("invalid model data");
+    }
+    let model_data = model_data_ptr as *const u8;
+    crate::ai::model_load(gpu_id, model_data, model_len)
+        .map(|id| id as usize)
+        .ok_or("model load failed")
+}
+
+/// Unload a model from GPU memory
+pub fn sys_model_unload(model_id: u32) -> Result<usize, &'static str> {
+    if crate::ai::model_unload(model_id) { Ok(0) } else { Err("unload failed") }
+}
+
+/// List loaded models into a buffer
+pub fn sys_model_list(buf_ptr: usize, buf_len: usize) -> Result<usize, &'static str> {
+    if buf_ptr == 0 { return Err("null buf"); }
+    let buf = unsafe { core::slice::from_raw_parts_mut(buf_ptr as *mut u8, buf_len) };
+    Ok(crate::ai::model_list(buf))
+}
+
+/// Submit an inference job: model_id, input_gpu_va, output_gpu_va -> workload_id
+pub fn sys_inference_submit(model_id: u32, input_tensor: u64, output_tensor: u64) -> Result<usize, &'static str> {
+    crate::ai::inference_submit(model_id, input_tensor, output_tensor).ok_or("inference submit failed")
+}
+
+/// Get inference statistics for a model into a buffer
+/// Returns: [count:8][total_us:8][max_us:8] = 24 bytes
+pub fn sys_inference_stats(model_id: u32, buf_ptr: usize) -> Result<usize, &'static str> {
+    if buf_ptr == 0 { return Err("null buf"); }
+    match crate::ai::inference_stats(model_id) {
+        Some((count, total_us, max_us)) => {
+            let buf = unsafe { core::slice::from_raw_parts_mut(buf_ptr as *mut u8, 24) };
+            buf[0..8].copy_from_slice(&count.to_le_bytes());
+            buf[8..16].copy_from_slice(&total_us.to_le_bytes());
+            buf[16..24].copy_from_slice(&max_us.to_le_bytes());
+            Ok(24)
+        }
+        None => Err("model not found"),
+    }
 }
 
 // ── V30 Linux compat syscalls ────────────────────────────────────────────────

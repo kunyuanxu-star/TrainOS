@@ -2,6 +2,7 @@ pub mod buddy;
 pub mod heap;
 pub mod layout;
 pub mod sv39;
+pub mod txmmu;
 
 use layout::allocatable_range;
 

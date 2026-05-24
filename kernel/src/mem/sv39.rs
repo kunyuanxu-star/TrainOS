@@ -654,6 +654,277 @@ pub unsafe fn setup_kernel_mapping() {
     l1_mmio[ecam_l1_idx] = ecam_pte;
 }
 
+// ── V31: One-Level Memory Management ──────────────────────────────────────
+
+/// Map a page with full flag control (R, W, X, U).
+///
+/// Unlike `map_user_page` (which forces X=false, U=true), this function
+/// accepts arbitrary flags and is suitable for use by the PteManager and TxMMU.
+pub unsafe fn map_page(
+    root_phys: usize,
+    va: usize,
+    pa: usize,
+    r: bool,
+    w: bool,
+    x: bool,
+    u: bool,
+) -> Result<(), &'static str> {
+    let (l0_phys, idx) =
+        walk_process_pt(root_phys, va, true).ok_or("map_page: walk failed")?;
+    let l0 = &mut *(pa_to_kva(l0_phys) as *mut [PTE; 512]);
+    let mut pte = PTE::empty();
+    pte.set_ppn(pa >> 12);
+    pte.set_flags(r, w, x, u);
+    pte.set_accessed(true);
+    pte.set_dirty(true);
+    l0[idx] = pte;
+    Ok(())
+}
+
+/// Unmap a user page from a process-specific page table and return its
+/// physical address.  Returns `None` if the VA was not mapped.
+pub unsafe fn unmap_user_page_phys(root_phys: usize, va: usize) -> Option<usize> {
+    let (l0_phys, idx) = walk_process_pt(root_phys, va, false)?;
+    let l0 = &mut *(pa_to_kva(l0_phys) as *mut [PTE; 512]);
+    let pte = l0[idx];
+    if pte.is_valid() && pte.is_leaf() {
+        l0[idx] = PTE::empty();
+        Some(pte.phys_addr())
+    } else {
+        None
+    }
+}
+
+/// Page table statistics: counts of pages at each granularity and total bytes.
+#[derive(Debug, Clone, Copy)]
+pub struct PteStats {
+    pub mapped_4k: usize,
+    pub mapped_2m: usize,
+    pub mapped_1g: usize,
+    pub total_bytes: usize,
+}
+
+/// Direct page table manager — operates directly on page tables without
+/// intermediate software abstractions (VMA, region, etc.).
+///
+/// All ranges are expressed as byte-ranges [va, va+len); they are
+/// automatically page-aligned internally.
+pub struct PteManager {
+    root_phys: usize,
+}
+
+impl PteManager {
+    /// Create a new manager for the page table rooted at `root_phys`.
+    pub fn new(root_phys: usize) -> Self {
+        PteManager { root_phys }
+    }
+
+    /// Map a range [va, va+len) to physical pages allocated on-demand.
+    ///
+    /// `flags` is a bitwise OR of R(1), W(2), X(4), U(8) matching the
+    /// TxMMU `FLAG_*` constants.  Each allocated page is zeroed before
+    /// mapping.
+    pub unsafe fn map_range(
+        &mut self,
+        va: usize,
+        len: usize,
+        flags: u8,
+    ) -> Result<(), &'static str> {
+        let r = flags & 1 != 0;
+        let w = flags & 2 != 0;
+        let x = flags & 4 != 0;
+        let u = flags & 8 != 0;
+
+        let start = page_align_down(va);
+        let end = page_align_up(va + len);
+        let mut page_va = start;
+        while page_va < end {
+            let pa = super::buddy::alloc_page().ok_or("PteManager map_range: OOM")?;
+            core::ptr::write_bytes(pa_to_kva(pa) as *mut u8, 0, PAGE_SIZE);
+            map_page(self.root_phys, page_va, pa, r, w, x, u)?;
+            page_va += PAGE_SIZE;
+        }
+        Ok(())
+    }
+
+    /// Unmap a range [va, va+len) and free the underlying physical pages.
+    pub unsafe fn unmap_range(
+        &mut self,
+        va: usize,
+        len: usize,
+    ) -> Result<(), &'static str> {
+        let start = page_align_down(va);
+        let end = page_align_up(va + len);
+        let mut page_va = start;
+        while page_va < end {
+            if let Some(pa) = unmap_user_page_phys(self.root_phys, page_va) {
+                super::buddy::free_page(pa, 0);
+            }
+            page_va += PAGE_SIZE;
+        }
+        Ok(())
+    }
+
+    /// Change protection flags on a range of mapped pages.
+    ///
+    /// `flags` uses the same bit encoding as `map_range`.
+    pub unsafe fn protect_range(
+        &mut self,
+        va: usize,
+        len: usize,
+        flags: u8,
+    ) -> Result<(), &'static str> {
+        let r = flags & 1 != 0;
+        let w = flags & 2 != 0;
+        let x = flags & 4 != 0;
+        let u = flags & 8 != 0;
+
+        let start = page_align_down(va);
+        let end = page_align_up(va + len);
+        let mut page_va = start;
+        while page_va < end {
+            if let Some((l0_phys, idx)) = walk_process_pt(self.root_phys, page_va, false) {
+                let l0 = &mut *(pa_to_kva(l0_phys) as *mut [PTE; 512]);
+                if l0[idx].is_valid() {
+                    l0[idx].set_flags(r, w, x, u);
+                }
+            }
+            page_va += PAGE_SIZE;
+        }
+        Ok(())
+    }
+
+    /// Count the number of allocated (leaf) pages mapped in this page table.
+    pub fn count_allocated(&self) -> usize {
+        let mut count = 0usize;
+        unsafe {
+            let l2 = &*(pa_to_kva(self.root_phys) as *const [PTE; 512]);
+            for vpn2 in 0..256 {
+                let l2e = l2[vpn2];
+                if !l2e.is_valid() || l2e.is_leaf() {
+                    continue;
+                }
+                let l1 = &*(pa_to_kva(l2e.phys_addr()) as *const [PTE; 512]);
+                for vpn1 in 0..512 {
+                    let l1e = l1[vpn1];
+                    if !l1e.is_valid() {
+                        continue;
+                    }
+                    if l1e.is_leaf() {
+                        count += 1; // 2 MiB superpage
+                        continue;
+                    }
+                    let l0 = &*(pa_to_kva(l1e.phys_addr()) as *const [PTE; 512]);
+                    for vpn0 in 0..512 {
+                        if l0[vpn0].is_valid() && l0[vpn0].is_leaf() {
+                            count += 1; // 4 KiB page
+                        }
+                    }
+                }
+            }
+        }
+        count
+    }
+
+    /// Find a free virtual address range of the given size (in bytes).
+    ///
+    /// Scans the user address space (L2 indices 0..255) linearly, starting
+    /// from a safe offset, and returns the first gap large enough to hold
+    /// `size` bytes.
+    pub fn find_free_va(&self, size: usize) -> Option<usize> {
+        let pages_needed = (size + PAGE_SIZE - 1) / PAGE_SIZE;
+        if pages_needed == 0 {
+            return None;
+        }
+
+        // Start scanning at 64 KiB to avoid low-zero-page trickery.
+        let mut candidate = 0x1_0000usize;
+        let end_limit = 0x0000_003F_FFFF_F000usize;
+
+        while candidate < end_limit {
+            let mut free_count = 0usize;
+            let mut page_va = candidate;
+
+            // Count consecutive free pages.
+            while free_count < pages_needed && page_va < end_limit {
+                unsafe {
+                    if self.is_mapped(page_va) {
+                        break;
+                    }
+                }
+                free_count += 1;
+                page_va += PAGE_SIZE;
+            }
+
+            if free_count >= pages_needed {
+                return Some(candidate);
+            }
+
+            // Advance past the occupied page.
+            candidate = page_align_up(page_va + 1);
+        }
+
+        None
+    }
+
+    /// Return `true` if the given VA is mapped and leaf-valid.
+    unsafe fn is_mapped(&self, va: usize) -> bool {
+        if let Some((l0_phys, idx)) = walk_process_pt(self.root_phys, va, false) {
+            let l0 = &*(pa_to_kva(l0_phys) as *const [PTE; 512]);
+            l0[idx].is_valid() && l0[idx].is_leaf()
+        } else {
+            false
+        }
+    }
+
+    /// Gather page table statistics.
+    pub fn stats(&self) -> PteStats {
+        let mut s = PteStats {
+            mapped_4k: 0,
+            mapped_2m: 0,
+            mapped_1g: 0,
+            total_bytes: 0,
+        };
+        unsafe {
+            let l2 = &*(pa_to_kva(self.root_phys) as *const [PTE; 512]);
+            for vpn2 in 0..256 {
+                let l2e = l2[vpn2];
+                if !l2e.is_valid() {
+                    continue;
+                }
+                if l2e.is_leaf() {
+                    // 1 GiB superpage
+                    s.mapped_1g += 1;
+                    s.total_bytes += 1 << 30;
+                    continue;
+                }
+                let l1 = &*(pa_to_kva(l2e.phys_addr()) as *const [PTE; 512]);
+                for vpn1 in 0..512 {
+                    let l1e = l1[vpn1];
+                    if !l1e.is_valid() {
+                        continue;
+                    }
+                    if l1e.is_leaf() {
+                        // 2 MiB superpage
+                        s.mapped_2m += 1;
+                        s.total_bytes += 2 * 1024 * 1024;
+                        continue;
+                    }
+                    let l0 = &*(pa_to_kva(l1e.phys_addr()) as *const [PTE; 512]);
+                    for vpn0 in 0..512 {
+                        if l0[vpn0].is_valid() && l0[vpn0].is_leaf() {
+                            // 4 KiB page
+                            s.mapped_4k += 1;
+                            s.total_bytes += PAGE_SIZE;
+                        }
+                    }
+                }
+            }
+        }
+        s
+    }
+}
+
 /// Share a physical page from one process with another.
 ///
 /// Looks up the physical page mapped at `src_va` in the source process's

@@ -277,6 +277,229 @@ pub fn load_elf(elf_data: &[u8], page_table_root: usize) -> Option<(usize, usize
     Some((entry, stack_bottom + PAGE_SIZE - 16))
 }
 
+// ── V31: Transactional ELF loading using TxMMU ─────────────────────────────
+
+/// Information about a single mapped page in the transactional loader.
+#[derive(Clone, Copy)]
+struct MapEntry {
+    va: usize,
+    pa: usize,
+    flags: u8,
+}
+
+/// Information about one PT_LOAD segment for data-copy phase.
+#[derive(Clone, Copy)]
+struct SegInfo {
+    data_offset: usize,
+    vaddr: usize,
+    filesz: usize,
+    page_start_idx: usize,
+    page_count: usize,
+}
+
+/// Load an ELF64 binary using the Transactional MMU.
+///
+/// All PT_LOAD segments are mapped atomically: either every page in every
+/// segment is mapped, or no pages are mapped (if any allocation fails).
+///
+/// Returns `(entry_point, user_stack_top)` on success, `None` on failure.
+pub fn load_elf_transactional(
+    elf_data: &[u8],
+    page_table_root: usize,
+) -> Option<(usize, usize)> {
+    use crate::mem::txmmu::{TxMMU, FLAG_R, FLAG_W, FLAG_X, FLAG_U};
+    use crate::mem::layout::PAGE_SIZE;
+
+    if elf_data.len() < core::mem::size_of::<Elf64Header>() {
+        crate::console::puts("elf_tx:fail_header_size\n");
+        return None;
+    }
+
+    // SAFETY: bounds checked above.
+    let header = unsafe { &*(elf_data.as_ptr() as *const Elf64Header) };
+
+    if &header.ident[0..4] != b"\x7FELF" {
+        crate::console::puts("elf_tx:fail_magic\n");
+        return None;
+    }
+    if header.e_machine != 243 {
+        crate::console::puts("elf_tx:fail_machine\n");
+        return None;
+    }
+
+    let entry = header.e_entry as usize;
+    let phoff = header.e_phoff as usize;
+    let phentsize = header.e_phentsize as usize;
+    let phnum = header.e_phnum as usize;
+
+    if phoff + phnum * phentsize > elf_data.len() {
+        crate::console::puts("elf_tx:fail_bounds\n");
+        return None;
+    }
+
+    // ── Fixed-size working area (no_std, no heap) ──────────────────────
+    let mut va_buf = [0usize; 512];
+    let mut pa_buf = [0usize; 512];
+    let mut flags_buf = [0u8; 512];
+    let mut num_entries = 0usize;
+
+    let mut segs = [SegInfo {
+        data_offset: 0,
+        vaddr: 0,
+        filesz: 0,
+        page_start_idx: 0,
+        page_count: 0,
+    }; 8];
+    let mut num_segs = 0usize;
+
+    // ── Phase 1: Parse headers, allocate physical pages, collect maps ──
+    for i in 0..phnum {
+        // SAFETY: bounds checked above.
+        let phdr_ptr = unsafe { elf_data.as_ptr().add(phoff + i * phentsize) };
+        let phdr = unsafe { &*(phdr_ptr as *const Elf64Phdr) };
+
+        if phdr.p_type != PT_LOAD {
+            continue;
+        }
+
+        let vaddr = phdr.p_vaddr as usize;
+        let filesz = phdr.p_filesz as usize;
+        let memsz = phdr.p_memsz as usize;
+        let offset = phdr.p_offset as usize;
+
+        if memsz == 0 {
+            continue;
+        }
+
+        // Build flags byte: R=1, W=2, X=4, U=8
+        let r = (phdr.p_flags & PF_R) != 0;
+        let w = (phdr.p_flags & PF_W) != 0;
+        let x = (phdr.p_flags & PF_X) != 0;
+        let flags: u8 = (if r { FLAG_R } else { 0 })
+            | (if w { FLAG_W } else { 0 })
+            | (if x { FLAG_X } else { 0 })
+            | FLAG_U; // user-accessible
+
+        let seg_start = crate::mem::sv39::page_align_down(vaddr);
+        let seg_end = crate::mem::sv39::page_align_up(vaddr + memsz);
+
+        let page_start_idx = num_entries;
+        let page_count = (seg_end - seg_start) / PAGE_SIZE;
+
+        if num_entries + page_count > 512 || num_segs >= 8 {
+            crate::console::puts("elf_tx: overflow\n");
+            return None;
+        }
+
+        // Allocate and zero each physical page.
+        for page_va in (seg_start..seg_end).step_by(PAGE_SIZE) {
+            let phys = crate::mem::buddy::alloc_page()?;
+            unsafe {
+                core::ptr::write_bytes(
+                    crate::mem::sv39::pa_to_kva(phys) as *mut u8,
+                    0,
+                    PAGE_SIZE,
+                );
+            }
+            va_buf[num_entries] = page_va;
+            pa_buf[num_entries] = phys;
+            flags_buf[num_entries] = flags;
+            num_entries += 1;
+        }
+
+        segs[num_segs] = SegInfo {
+            data_offset: offset,
+            vaddr,
+            filesz,
+            page_start_idx,
+            page_count,
+        };
+        num_segs += 1;
+    }
+
+    // ── Phase 2: Queue all mappings in a single transaction ────────────
+    {
+        let mut tx = TxMMU::begin(page_table_root);
+        for i in 0..num_entries {
+            tx.map(va_buf[i], pa_buf[i], flags_buf[i]).ok()?;
+        }
+
+        // Check for conflicts before committing.
+        if tx.rollback_on_conflict() {
+            // Conflict detected — free allocated pages and retry is up to caller.
+            for i in 0..num_entries {
+                crate::mem::buddy::free_page(pa_buf[i], 0);
+            }
+            return None;
+        }
+
+        tx.commit().ok()?;
+    }
+
+    // ── Phase 3: Copy ELF segment data into the mapped pages ───────────
+    for si in 0..num_segs {
+        let seg = &segs[si];
+        if seg.filesz == 0 {
+            continue;
+        }
+        if seg.data_offset + seg.filesz > elf_data.len() {
+            continue;
+        }
+
+        let mut remaining = seg.filesz;
+        let mut copy_va = seg.vaddr;
+        while remaining > 0 {
+            let page_off = copy_va & (PAGE_SIZE - 1);
+            let chunk = core::cmp::min(remaining, PAGE_SIZE - page_off);
+
+            // Locate the physical page for this VA.
+            let page_idx = (copy_va - va_buf[seg.page_start_idx]) / PAGE_SIZE;
+            let actual_idx = seg.page_start_idx + page_idx;
+            let phys = pa_buf[actual_idx];
+
+            let dst =
+                unsafe { crate::mem::sv39::pa_to_kva(phys + page_off) as *mut u8 };
+            let src = unsafe {
+                elf_data
+                    .as_ptr()
+                    .add(seg.data_offset + (copy_va - seg.vaddr))
+            };
+            unsafe {
+                core::ptr::copy_nonoverlapping(src, dst, chunk);
+            }
+            copy_va += chunk;
+            remaining -= chunk;
+        }
+    }
+
+    // ── Phase 4: Allocate and map the user stack ───────────────────────
+    let stack_bottom = 0x0000_003F_FFFF_F000usize;
+    let stack_phys = crate::mem::buddy::alloc_page()?;
+    unsafe {
+        core::ptr::write_bytes(
+            crate::mem::sv39::pa_to_kva(stack_phys) as *mut u8,
+            0,
+            PAGE_SIZE,
+        );
+    }
+
+    {
+        let mut tx = TxMMU::begin(page_table_root);
+        // Stack: R=1, W=1, X=0, U=1 => flags = 1 | 2 | 8 = 11 (0b1011)
+        tx.map(stack_bottom, stack_phys, FLAG_R | FLAG_W | FLAG_U)
+            .ok()?;
+        tx.commit().ok()?;
+    }
+
+    // V21.10: Enforce W^X
+    let fixed = crate::mem::sv39::force_wxorx(page_table_root);
+    if fixed > 0 {
+        crate::println!("W^X: fixed {} pages during transactional ELF load", fixed);
+    }
+
+    Some((entry, stack_bottom + PAGE_SIZE - 16))
+}
+
 /// Map a physical page (e.g. MMIO region) into a process's page table.
 /// Returns the virtual address at which it was mapped.
 /// The VA is computed as 0x4000_0000 + offset from the physical address.

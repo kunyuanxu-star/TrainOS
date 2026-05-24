@@ -1238,3 +1238,22 @@ pub fn sys_reboot(magic: usize, _cmd: usize) -> Result<usize, &'static str> {
     unsafe { core::arch::asm!("ecall", in("a7") 8usize, in("a0") 0usize, in("a1") 0usize); }
     Err("reset failed")
 }
+
+// ── V21 Security syscalls ────────────────────────────────────────────────────
+
+/// sys_seccomp_add(syscall_nr, action) — add a seccomp rule for the calling process.
+/// action: 0=allow, 1=kill, 2=log
+pub fn sys_seccomp_add(syscall_nr: u32, action: usize) -> Result<usize, &'static str> {
+    let pid = crate::sched::current_thread()
+        .map(|t| unsafe { (*t).owner })
+        .ok_or("no proc")?;
+    crate::security::seccomp_add_rule(pid, syscall_nr as usize, action as u8)?;
+    Ok(0)
+}
+
+/// sys_cap_audit(buf_ptr, buf_len) — read capability audit log.
+pub fn sys_cap_audit(buf_ptr: usize, buf_len: usize) -> Result<usize, &'static str> {
+    if buf_ptr == 0 || buf_len == 0 { return Err("null buf"); }
+    let mut buf = unsafe { core::slice::from_raw_parts_mut(buf_ptr as *mut u8, buf_len) };
+    Ok(crate::security::cap_audit_read(&mut buf))
+}

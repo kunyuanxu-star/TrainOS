@@ -230,6 +230,12 @@ fn page_fault(tf: &mut TrapFrame) {
 }
 
 /// Kill a process by PID — marks it as Dead and removes its thread.
+/// Public for use by seccomp and security subsystem.
+pub fn kill_process_impl(pid: u32) {
+    kill_process(pid);
+    crate::sched::schedule(); // reschedule immediately after killing
+}
+
 fn kill_process(pid: u32) {
     let mut procs = crate::proc::PROCESSES.lock();
     if let Some(proc) = procs.iter_mut().find(|p| p.pid == pid) {

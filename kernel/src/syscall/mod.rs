@@ -135,13 +135,28 @@ pub const SYS_LIST_DRVS: usize = 120;
 pub const SYS_SYNC: usize = 121;
 pub const SYS_REBOOT: usize = 122;
 
+// Security (V21): 130-131
+pub const SYS_SECCOMP_ADD: usize = 130;
+pub const SYS_CAP_AUDIT: usize = 131;
+
 // ── Dispatch ─────────────────────────────────────────────────────────────────
 
 pub fn syscall_dispatch(tf: &mut TrapFrame) {
-    // Account system time for the calling process
-    crate::syscall::proc::account_stime();
-
     let nr = tf.a7;
+
+    // V21: Seccomp check before syscall execution
+    {
+        let pid = crate::sched::current_thread()
+            .map(|t| unsafe { (*t).owner })
+            .unwrap_or(0);
+        let (allowed, should_kill) = crate::security::seccomp_check(pid, nr);
+        if should_kill {
+            crate::println!("seccomp: killing pid={} for syscall nr={}", pid, nr);
+            crate::trap::kill_process_impl(pid);
+        }
+        if !allowed { tf.a0 = usize::MAX; return; }
+    }
+    crate::syscall::proc::account_stime();
     let arg0 = tf.a0;
     let arg1 = tf.a1;
     let arg2 = tf.a2;
@@ -277,6 +292,10 @@ pub fn syscall_dispatch(tf: &mut TrapFrame) {
         // V15.0 — System
         SYS_SYNC => proc::sys_sync(),
         SYS_REBOOT => proc::sys_reboot(arg0, arg1),
+
+        // V21 — Security
+        SYS_SECCOMP_ADD => proc::sys_seccomp_add(arg0 as u32, arg1),
+        SYS_CAP_AUDIT => proc::sys_cap_audit(arg0, arg1),
 
         _ => Err("unknown syscall"),
     };

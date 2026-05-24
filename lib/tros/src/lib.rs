@@ -989,3 +989,20 @@ pub fn reboot(magic: usize, cmd: usize) -> usize {
     unsafe { core::arch::asm!("ecall", in("a7") 122usize, in("a0") magic, in("a1") cmd, lateout("a0") r); }
     r
 }
+
+// ── V21 Security syscalls ────────────────────────────────────────────────────
+
+/// seccomp_add(syscall_nr, action) — add seccomp rule (syscall 130).
+/// action: 0=allow, 1=kill, 2=log
+pub fn seccomp_add(syscall_nr: usize, action: usize) -> usize {
+    let r: usize;
+    unsafe { core::arch::asm!("ecall", in("a7") 130usize, in("a0") syscall_nr, in("a1") action, lateout("a0") r); }
+    r
+}
+
+/// cap_audit(buf, len) — read capability audit log (syscall 131).
+pub fn cap_audit(buf: &mut [u8]) -> usize {
+    let r: usize;
+    unsafe { core::arch::asm!("ecall", in("a7") 131usize, in("a0") buf.as_ptr() as usize, in("a1") buf.len(), lateout("a0") r); }
+    r
+}

@@ -50,6 +50,9 @@ mod ns;
 #[cfg(not(test))]
 mod device;
 
+#[cfg(not(test))]
+mod security;
+
 #[cfg(test)]
 mod mem;
 

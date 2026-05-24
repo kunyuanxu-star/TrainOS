@@ -28,7 +28,7 @@ The V21–V30 roadmap is defined in [docs/specs/2026-05-18-trainos-v21-v30-roadm
 2. Architecture: RISC-V 64-bit (rv64gc), Sv39 virtual memory, MIT license.
 3. Language: Rust nightly (`no_std` kernel + user-space, no heap in services).
 
-## Current Status (2026-05-24) — V30.0 (Complete)
+## Current Status (2026-05-24) — V34.0 (Research-Driven Next Phase)
 
 ### Completed
 - **Dynamic process spawning**: `sys_spawn` (syscall 3) creates new processes from user-provided ELF data
@@ -135,6 +135,34 @@ The V21–V30 roadmap is defined in [docs/specs/2026-05-18-trainos-v21-v30-roadm
 - **Dynamic linker**: .interp/.dynamic parsing, DT_NEEDED resolution, R_RISCV_RELATIVE/GLOB_DAT/JUMP_SLOT relocations
 - **Self-hosting**: rustc/cargo runtime framework, 256MB memory requirement, cross→native bootstrap path
 - **Production deployment**: QEMU/HiFive/VisionFive2/K230 platform configs, systemd-lite service manager (dependency-based boot, auto-restart), DHCP/DNS network config, package manager (install/remove/list)
+
+### V31-V34 (Research-Driven) — 2026-05-24
+
+Based on OS CCF-A conference paper research (SOSP/OSDI/EuroSys/ASPLOS 2024-2026). See `os-ccfa-research-2024-2026/report.md` for full analysis.
+
+#### V31 — One-Level Memory Management (CortenMM-inspired, SOSP'25 Best Paper)
+- **Transactional MMU**: `TxMMU` with begin/map/unmap/protect/commit/abort, 16-op queue, optimistic concurrency with rollback-on-conflict
+- **PteManager**: Direct page table operations (map_range/unmap_range/protect_range), find_free_va, PteStats (4K/2M/1G page counts)
+- **Transactional ELF loading**: `load_elf_transactional()` — all-or-nothing segment loading with atomic commit
+- **One-level invariant**: Page table consistency check (mapped pages ≤ buddy allocated pages)
+
+#### V32 — WASM Runtime Enhancement (WABI-inspired, EuroSys'25)
+- **Syscall-as-host-function**: `WasmSyscallTable` (256 entries), ~55 syscalls across 10 WASI module namespaces (tros:io/fs/proc/mem/clock/net/ipc/cap/sys/aio)
+- **eBPF+WASM hybrid**: `HybridPolicy` — V24 eBPF hooks for hot-path filtering, WASM for complex policy, `run_hybrid_hook()` with delegate flag
+- **Hot reload**: `wasm_hot_reload()` — validate new bytecode, reset interpreter state, preserve linear memory
+- **Performance stats**: `WasmPerfStats` (invocations/total_cycles/avg/max/syscall_forward_count)
+
+#### V33 — Confidential Computing (TEEM³-inspired, ASPLOS'26)
+- **PMP-based TEE**: 16 PMP entries, enclave create/enter/exit, SHA-256 measurement + HMAC-SHA256 attestation
+- **Enclave secure IPC**: Capability-protected channels (32 max), send/recv between enclaves
+- **Heterogeneous TEE**: CPU+GPU TEE spanning enclave + GPU memory, secure cpu_to_gpu/gpu_to_cpu transfers
+- **TCB measurement**: `tcb_size()` via linker symbols, `TcbReport` for auditing
+
+#### V34 — AI-Native Scheduling (OSDI'24 LLM papers-inspired)
+- **P/D separation**: `PdScheduler` — Prefill (throughput-batched) vs Decode (latency-critical), separate queues, preemption with state save
+- **KV-cache paged management**: `KvPageTable` (1024 pages), bitmap allocator, LRU eviction, ref-counted sharing between prefill/decode, dirty page writeback
+- **GPU-CPU heterogeneous scheduling**: `HeteroScheduler` — GPU↔NUMA topology mapping, workload migration, load balancing
+- **14 new syscalls (282-295)**: pd_submit/next_decode/next_prefill/preempt/resume, kv_alloc/free/share/stats, gpu_hetero_sched/migrate/balance, ai_sched_stats/reset
 
 ### Architecture
 **Microkernel** — kernel provides:

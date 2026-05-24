@@ -182,9 +182,18 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
     crate::aslr::kaslr_init();
     println!("  ASLR/KASLR initialized");
 
+    // V33: Initialize Confidential Computing TEE subsystem
+    crate::security::tee::tee_init();
+    println!("  TEE subsystem initialized");
+
     // V28: Initialize WASM/WASI subsystem
     wasm::wasi::wasi_init();
     println!("  WASI subsystem initialized");
+
+    // V32: Initialize WASM host-call interface + eBPF+WASM hybrid
+    wasm::hostcall::init_wasm_syscall_table();
+    wasm::hybrid::init_hybrid();
+    println!("  V32: WASM host-call + hybrid engine initialized");
 
     // V30: Initialize Linux ABI compatibility subsystem
     compat::compat_init();

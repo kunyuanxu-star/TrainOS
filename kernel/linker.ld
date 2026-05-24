@@ -6,6 +6,7 @@ BASE_ADDRESS = 0x80200000;
 SECTIONS
 {
     . = BASE_ADDRESS;
+    PROVIDE(_kernel_start = .);
     .text : {
         *(.text.entry)
         *(.text)

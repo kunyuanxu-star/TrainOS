@@ -6,6 +6,15 @@
 //   - Capability audit logging
 //   - Kernel stack canary verification
 //   - Heap overflow detection via guard pages
+//
+// V33: Confidential Computing TEE submodules
+//   - tee: PMP-based TEE enclaves
+//   - enclave_ipc: Enclave secure IPC
+//   - hetero_tee: CPU+GPU heterogeneous TEE
+
+pub mod tee;
+pub mod enclave_ipc;
+pub mod hetero_tee;
 
 use crate::mem::{sv39, layout::PAGE_SIZE};
 

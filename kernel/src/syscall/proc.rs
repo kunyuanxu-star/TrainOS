@@ -1434,6 +1434,85 @@ pub fn sys_remote_send(node_id: u32, ep: usize, data_ptr: usize, data_len: usize
     Ok(0)
 }
 
+/// Probe a remote node for liveness.
+pub fn sys_remote_probe(node_id: u32) -> Result<usize, &'static str> {
+    if crate::distributed::node_probe(node_id) {
+        Ok(1)
+    } else {
+        Ok(0)
+    }
+}
+
+/// Receive a message from a remote node.
+pub fn sys_remote_recv(buf_ptr: usize, buf_len: usize) -> Result<usize, &'static str> {
+    let (src_node, src_ep, payload, payload_len) = crate::distributed::remote_recv()?;
+    if buf_ptr != 0 && buf_len >= 4 {
+        let copy_len = (payload_len + 4).min(buf_len).min(68);
+        unsafe {
+            let buf = buf_ptr as *mut u8;
+            buf.write(src_node);
+            let ep_bytes = src_ep.to_le_bytes();
+            buf.add(1).write(ep_bytes[0]);
+            buf.add(2).write(ep_bytes[1]);
+            buf.add(3).write(payload_len as u8);
+            if copy_len > 4 {
+                core::ptr::copy_nonoverlapping(payload.as_ptr(), buf.add(4), copy_len - 4);
+            }
+        }
+        Ok(copy_len)
+    } else {
+        Ok(4)
+    }
+}
+
+/// Allocate pages from a remote node memory pool.
+pub fn sys_remote_mem_alloc(node_id: u8, num_pages: usize) -> Result<usize, &'static str> {
+    crate::distributed::remote_alloc_pages(node_id, num_pages).ok_or("OOM")
+}
+
+/// Free a remote page by handle.
+pub fn sys_remote_mem_free(handle: u64) -> Result<usize, &'static str> {
+    if crate::distributed::remote_free_page(handle) { Ok(0) } else { Err("free failed") }
+}
+
+/// Request process list from a remote node.
+pub fn sys_remote_proclist(node_id: u32, buf_ptr: usize, buf_len: usize) -> Result<usize, &'static str> {
+    if buf_ptr == 0 || buf_len < 6 { return Err("invalid buffer"); }
+    let mut entries = [crate::distributed::protocol::RemoteProcEntry { pid: 0, state: 0, name: [0u8; 48], name_len: 0 }; 32];
+    let count = crate::distributed::remote_proclist(node_id, &mut entries)?;
+    let mut written = 0usize;
+    let buf = unsafe { core::slice::from_raw_parts_mut(buf_ptr as *mut u8, buf_len) };
+    for i in 0..count {
+        let entry = &entries[i];
+        let entry_size = 6 + entry.name_len;
+        if written + entry_size > buf_len { break; }
+        let pid_bytes = entry.pid.to_le_bytes();
+        buf[written] = pid_bytes[0]; buf[written + 1] = pid_bytes[1];
+        buf[written + 2] = pid_bytes[2]; buf[written + 3] = pid_bytes[3];
+        buf[written + 4] = entry.state;
+        buf[written + 5] = entry.name_len as u8;
+        buf[written + 6..written + 6 + entry.name_len].copy_from_slice(&entry.name[..entry.name_len]);
+        written += entry_size;
+    }
+    Ok(written)
+}
+
+/// Mint a capability and send it to a remote node.
+pub fn sys_remote_mint(node_id: u32, local_slot: u32, remote_cnode: u32) -> Result<usize, &'static str> {
+    crate::distributed::remote_mint(node_id, local_slot, remote_cnode)?;
+    Ok(0)
+}
+
+/// Migrate a page from one node to another.
+pub fn sys_remote_migrate_page(phys: usize, from_node: u8, to_node: u8) -> Result<usize, &'static str> {
+    crate::distributed::migrate_page_local(phys, from_node, to_node)
+}
+
+/// Get the local cluster node ID.
+pub fn sys_node_id() -> Result<usize, &'static str> {
+    Ok(crate::distributed::get_cluster_node_id() as usize)
+}
+
 
 // ── V27 ASLR/Cheri/Sandbox syscalls ─────────────────────────────────────────
 pub fn sys_aslr_init() -> Result<usize, &'static str> { crate::aslr::aslr_init(); Ok(0) }

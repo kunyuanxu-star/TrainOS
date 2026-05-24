@@ -174,6 +174,14 @@ pub const SYS_REMOTE_NODE_ADD: usize = 180;
 pub const SYS_REMOTE_EP_PUBLISH: usize = 181;
 pub const SYS_REMOTE_EP_LOOKUP: usize = 182;
 pub const SYS_REMOTE_SEND: usize = 183;
+pub const SYS_REMOTE_PROBE: usize = 184;
+pub const SYS_REMOTE_RECV: usize = 185;
+pub const SYS_REMOTE_MEM_ALLOC: usize = 186;
+pub const SYS_REMOTE_MEM_FREE: usize = 187;
+pub const SYS_REMOTE_PROCLIST: usize = 188;
+pub const SYS_REMOTE_MINT: usize = 189;
+pub const SYS_REMOTE_MIGRATE_PAGE: usize = 190;
+pub const SYS_NODE_ID: usize = 191;
 
 
 // ASLR/Cheri (V27): 200-205
@@ -483,6 +491,14 @@ pub fn syscall_dispatch(tf: &mut TrapFrame) {
         SYS_REMOTE_EP_PUBLISH => proc::sys_remote_ep_publish(arg0, arg1, arg2),
         SYS_REMOTE_EP_LOOKUP => proc::sys_remote_ep_lookup(arg0, arg1),
         SYS_REMOTE_SEND => proc::sys_remote_send(arg0 as u32, arg1, arg2, arg3),
+        SYS_REMOTE_PROBE => proc::sys_remote_probe(arg0 as u32),
+        SYS_REMOTE_RECV => proc::sys_remote_recv(arg0, arg1),
+        SYS_REMOTE_MEM_ALLOC => proc::sys_remote_mem_alloc(arg0 as u8, arg1),
+        SYS_REMOTE_MEM_FREE => proc::sys_remote_mem_free(arg0 as u64),
+        SYS_REMOTE_PROCLIST => proc::sys_remote_proclist(arg0 as u32, arg1, arg2),
+        SYS_REMOTE_MINT => proc::sys_remote_mint(arg0 as u32, arg1 as u32, arg2 as u32),
+        SYS_REMOTE_MIGRATE_PAGE => proc::sys_remote_migrate_page(arg0, arg1 as u8, arg2 as u8),
+        SYS_NODE_ID => proc::sys_node_id(),
 
         // V21 — Security
         SYS_SECCOMP_ADD => proc::sys_seccomp_add(arg0 as u32, arg1),

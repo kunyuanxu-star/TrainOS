@@ -151,6 +151,10 @@ fn timer_interrupt(_tf: &mut TrapFrame) {
         if TICK_COUNT % 1000 == 0 {
             crate::numa::try_balance();
         }
+        // V26: Distributed IPC heartbeat every 500 ticks
+        if TICK_COUNT % 500 == 0 {
+            crate::distributed::heartbeat_tick();
+        }
     }
 
     // V24: TIMER hook

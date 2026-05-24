@@ -363,7 +363,7 @@ pub fn write_proclist_resp(buf: &mut [u8], entries: &[(u32, u8, &[u8])]) -> Opti
 }
 
 /// A parsed remote process entry.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct RemoteProcEntry {
     pub pid: u32,
     pub state: u8,

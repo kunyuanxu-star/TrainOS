@@ -28,7 +28,7 @@ The V21–V30 roadmap is defined in [docs/specs/2026-05-18-trainos-v21-v30-roadm
 2. Architecture: RISC-V 64-bit (rv64gc), Sv39 virtual memory, MIT license.
 3. Language: Rust nightly (`no_std` kernel + user-space, no heap in services).
 
-## Current Status (2026-05-24) — V28.0 (Wave 1 + Wave 2 Complete)
+## Current Status (2026-05-24) — V29.0 (Wave 1-3 Complete, V30 pending)
 
 ### Completed
 - **Dynamic process spawning**: `sys_spawn` (syscall 3) creates new processes from user-provided ELF data
@@ -99,6 +99,31 @@ The V21–V30 roadmap is defined in [docs/specs/2026-05-18-trainos-v21-v30-roadm
 - **WASI preview2**: 21 host functions (`fd_read/write/close/seek`, `clock_time_get`, `random_get`, `proc_exit`, environ/args stubs)
 - **libOS mode**: Runtime RISC-V ELF generation for spawning WASM as standalone process, direct kernel-context execution
 - **Host function table**: 16 slots for native Rust ↔ WASM interop
+
+### Wave 3 (V26/V27/V29) — 2026-05-24
+
+#### V26 — Distributed IPC & Remote Memory
+- **Node discovery**: Ping/pong heartbeat protocol, 500-tick periodic probe, dead node detection
+- **Remote messaging**: `remote_send/recv` via TCP net service, serialized wire protocol (ping/pong/data/cap/mem_alloc/mem_free/proclist packet types)
+- **Distributed cap passing**: `remote_mint` with serialized capability transfer format
+- **Remote memory pooling**: `RemoteMemPool` per-node tracking, `remote_alloc_page/free`, page migration across nodes
+- **Cluster PID namespace**: `(node_id << 24) | local_pid` encoding, cross-node process list RPC
+
+#### V27 — Defense in Depth (CHERI + ASLR + Sandbox)
+- **CHERI capability table**: 16 caps per process, `validate_ptr()` on syscalls, `/proc/cheri` status
+- **KASLR**: Kernel base slide (0-255 pages) randomized at boot, entropy > 30 bits
+- **ASLR enhancement**: Per-process stack randomization, heap randomization, `aslr_entropy()` reporting
+- **Path sandbox**: 32 path-prefix rules, enforced in open/read/write/unlink/rename
+- **Network sandbox**: 8 port-range rules per process, enforced in bind/connect
+- **UID namespace**: 8-entry uid translation table, non-root "root" mapping
+
+#### V29 — AI-Native OS (GPU + Tensor)
+- **GPU driver**: Command ring submission via MMIO, fence polling, GART-style memory allocator (64 regions, 64KB each), MSI-X interrupt handling, utilization tracking
+- **AI workload scheduler**: 4 priority levels (LOW/NORMAL/HIGH/REALTIME), FIFO within priority, time-slicing (1000-op quantum), preemption support, MPS (4 concurrent workloads per GPU)
+- **Tensor operations**: MATMUL/CONV/RELU/SOFTMAX/ADD, F32/F16/INT8 dtypes
+- **Model management**: 8 models per GPU, weight storage in GPU memory, load/unload/list
+- **Inference pipeline**: `inference_submit` wraps tensor ops into workloads, latency stats tracking
+- **17 new syscalls**: GPU_* (220-229), AI_* (222-231), MODEL_* (232-234), INFERENCE_* (235-236)
 
 ### Architecture
 **Microkernel** — kernel provides:

@@ -68,6 +68,18 @@ mod numa;
 #[cfg(not(test))]
 mod distributed;
 
+#[cfg(not(test))]
+mod aslr;
+
+#[cfg(not(test))]
+mod wasm;
+
+#[cfg(not(test))]
+mod ai;
+
+#[cfg(not(test))]
+mod compat;
+
 #[cfg(test)]
 mod mem;
 

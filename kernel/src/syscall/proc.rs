@@ -1341,3 +1341,63 @@ pub fn sys_remote_send(node_id: u32, ep: usize, data_ptr: usize, data_len: usize
     crate::distributed::remote_send(node_id, ep, data)?;
     Ok(0)
 }
+
+
+// ── V27 ASLR/Cheri/Sandbox syscalls ─────────────────────────────────────────
+pub fn sys_aslr_init() -> Result<usize, &'static str> { crate::aslr::aslr_init(); Ok(0) }
+pub fn sys_cheri_cap_create(addr: usize, len: usize, perms: u16) -> Result<usize, &'static str> {
+    // Return the CheriCap as a packed u128 (simplified: return addr)
+    Ok(addr)
+}
+pub fn sys_cheri_cap_check(_cap_ptr: usize) -> Result<usize, &'static str> { Ok(0) }
+pub fn sys_sandbox_add(path_ptr: usize, mode: usize) -> Result<usize, &'static str> {
+    let pid = crate::sched::current_thread().map(|t| unsafe { (*t).owner }).ok_or("no proc")?;
+    let path = unsafe { core::slice::from_raw_parts(path_ptr as *const u8, 32) };
+    let allow_w = (mode & 1) != 0; let allow_r = (mode & 2) != 0;
+    crate::aslr::sandbox_add(pid, path, allow_r, allow_w)?;
+    Ok(0)
+}
+pub fn sys_sandbox_check(pid: usize, path_ptr: usize) -> Result<usize, &'static str> {
+    let path = unsafe { core::slice::from_raw_parts(path_ptr as *const u8, 32) };
+    Ok(crate::aslr::sandbox_check(pid as u32, path, false) as usize)
+}
+
+// ── V28 WASM syscalls ────────────────────────────────────────────────────────
+pub fn sys_wasm_load(name_ptr: usize, bytecode_ptr: usize) -> Result<usize, &'static str> {
+    let pid = crate::sched::current_thread().map(|t| unsafe { (*t).owner }).ok_or("no proc")?;
+    let name = unsafe { core::slice::from_raw_parts(name_ptr as *const u8, 32) };
+    let bc = unsafe { core::slice::from_raw_parts(bytecode_ptr as *const u8, 4096) };
+    crate::wasm::wasm_load(pid, name, bc).ok_or("load failed")
+}
+pub fn sys_wasm_unload(module_id: usize) -> Result<usize, &'static str> { Ok(0) }
+pub fn sys_wasm_list(buf_ptr: usize, buf_len: usize) -> Result<usize, &'static str> {
+    if buf_ptr == 0 { return Err("null buf"); }
+    let buf = unsafe { core::slice::from_raw_parts_mut(buf_ptr as *mut u8, buf_len) };
+    Ok(crate::wasm::wasm_list(buf))
+}
+
+// ── V29 AI/GPU syscalls ──────────────────────────────────────────────────────
+pub fn sys_gpu_register(mmio: usize, mem_base: usize, mem_size: usize) -> Result<usize, &'static str> {
+    crate::ai::gpu_register(mmio, mem_base, mem_size).map(|id| id as usize).ok_or("full")
+}
+pub fn sys_gpu_list(buf_ptr: usize, buf_len: usize) -> Result<usize, &'static str> {
+    if buf_ptr == 0 { return Err("null buf"); }
+    let buf = unsafe { core::slice::from_raw_parts_mut(buf_ptr as *mut u8, buf_len) };
+    Ok(crate::ai::gpu_list(buf))
+}
+pub fn sys_ai_submit(gpu_id: u32, priority: usize, batch_size: u8, _data_ptr: usize) -> Result<usize, &'static str> {
+    let pid = crate::sched::current_thread().map(|t| unsafe { (*t).owner }).ok_or("no proc")?;
+    crate::ai::ai_submit(pid, gpu_id, priority as u8, batch_size as usize).ok_or("queue full")
+}
+pub fn sys_ai_next(_buf_ptr: usize, _buf_len: usize) -> Result<usize, &'static str> {
+    crate::ai::ai_next_workload().ok_or("no work")
+}
+
+// ── V30 Linux compat syscalls ────────────────────────────────────────────────
+pub fn sys_compat_init() -> Result<usize, &'static str> { crate::compat::compat_init(); Ok(0) }
+pub fn sys_compat_translate(linux_nr: usize) -> Result<usize, &'static str> {
+    crate::compat::translate_syscall(linux_nr).ok_or("no mapping")
+}
+pub fn sys_compat_setup_auxv(stack_top: usize, entry: usize, phdr: usize, phent: usize, phnum: usize) -> Result<usize, &'static str> {
+    Ok(crate::compat::setup_auxv(stack_top, entry, phdr, phent, phnum))
+}

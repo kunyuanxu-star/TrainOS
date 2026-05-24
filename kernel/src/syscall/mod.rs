@@ -166,6 +166,30 @@ pub const SYS_REMOTE_EP_PUBLISH: usize = 181;
 pub const SYS_REMOTE_EP_LOOKUP: usize = 182;
 pub const SYS_REMOTE_SEND: usize = 183;
 
+
+// ASLR/Cheri (V27): 200-205
+pub const SYS_ASLR_INIT: usize = 200;
+pub const SYS_CHERI_CAP_CREATE: usize = 201;
+pub const SYS_CHERI_CAP_CHECK: usize = 202;
+pub const SYS_SANDBOX_ADD: usize = 203;
+pub const SYS_SANDBOX_CHECK: usize = 204;
+
+// WASM (V28): 210-213
+pub const SYS_WASM_LOAD: usize = 210;
+pub const SYS_WASM_UNLOAD: usize = 211;
+pub const SYS_WASM_LIST: usize = 212;
+
+// AI/GPU (V29): 220-223
+pub const SYS_GPU_REGISTER: usize = 220;
+pub const SYS_GPU_LIST: usize = 221;
+pub const SYS_AI_SUBMIT: usize = 222;
+pub const SYS_AI_NEXT: usize = 223;
+
+// Linux Compat (V30): 300-302
+pub const SYS_COMPAT_INIT: usize = 300;
+pub const SYS_COMPAT_TRANSLATE: usize = 301;
+pub const SYS_COMPAT_SETUP_AUXV: usize = 302;
+
 // ── Dispatch ─────────────────────────────────────────────────────────────────
 
 pub fn syscall_dispatch(tf: &mut TrapFrame) {
@@ -340,6 +364,30 @@ pub fn syscall_dispatch(tf: &mut TrapFrame) {
         // V25 — NUMA
         SYS_NUMA_NODES => proc::sys_numa_nodes(arg0, arg1),
         SYS_NUMA_ALLOC => proc::sys_numa_alloc(arg0 as u8),
+
+
+        // V27 — ASLR/Cheri/Sandbox
+        SYS_ASLR_INIT => proc::sys_aslr_init(),
+        SYS_CHERI_CAP_CREATE => proc::sys_cheri_cap_create(arg0, arg1, arg2 as u16),
+        SYS_CHERI_CAP_CHECK => proc::sys_cheri_cap_check(arg0),
+        SYS_SANDBOX_ADD => proc::sys_sandbox_add(arg0, arg1),
+        SYS_SANDBOX_CHECK => proc::sys_sandbox_check(arg0, arg1),
+
+        // V28 — WASM
+        SYS_WASM_LOAD => proc::sys_wasm_load(arg0, arg1),
+        SYS_WASM_UNLOAD => proc::sys_wasm_unload(arg0),
+        SYS_WASM_LIST => proc::sys_wasm_list(arg0, arg1),
+
+        // V29 — AI/GPU
+        SYS_GPU_REGISTER => proc::sys_gpu_register(arg0, arg1, arg2),
+        SYS_GPU_LIST => proc::sys_gpu_list(arg0, arg1),
+        SYS_AI_SUBMIT => proc::sys_ai_submit(arg0 as u32, arg1, arg2 as u8, arg3),
+        SYS_AI_NEXT => proc::sys_ai_next(arg0, arg1),
+
+        // V30 — Linux compat
+        SYS_COMPAT_INIT => proc::sys_compat_init(),
+        SYS_COMPAT_TRANSLATE => proc::sys_compat_translate(arg0),
+        SYS_COMPAT_SETUP_AUXV => proc::sys_compat_setup_auxv(arg0, arg1, arg2, arg3, tf.a4 as usize),
 
         // V26 — Distributed
         SYS_REMOTE_NODE_ADD => proc::sys_remote_node_add(arg0, arg1),

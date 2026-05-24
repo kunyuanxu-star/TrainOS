@@ -1042,3 +1042,37 @@ pub fn remote_node_add(ip: &[u8], port: u16) -> usize {
     unsafe { core::arch::asm!("ecall", in("a7") 180usize, in("a0") ip.as_ptr() as usize, in("a1") port as usize, lateout("a0") r); }
     r
 }
+
+// ── V27-V30 syscall wrappers ─────────────────────────────────────────────────
+pub fn aslr_init() -> usize {
+    let r: usize; unsafe { core::arch::asm!("ecall", in("a7") 200usize, lateout("a0") r); }
+    r
+}
+pub fn sandbox_add(path: &[u8], mode: usize) -> usize {
+    let r: usize;
+    unsafe { core::arch::asm!("ecall", in("a7") 203usize, in("a0") path.as_ptr() as usize, in("a1") mode, lateout("a0") r); }
+    r
+}
+pub fn wasm_load(name: &[u8], bytecode: &[u8]) -> usize {
+    let r: usize;
+    unsafe { core::arch::asm!("ecall", in("a7") 210usize, in("a0") name.as_ptr() as usize, in("a1") bytecode.as_ptr() as usize, lateout("a0") r); }
+    r
+}
+pub fn gpu_register(mmio: usize, mem_base: usize, mem_size: usize) -> usize {
+    let r: usize;
+    unsafe { core::arch::asm!("ecall", in("a7") 220usize, in("a0") mmio, in("a1") mem_base, in("a2") mem_size, lateout("a0") r); }
+    r
+}
+pub fn ai_submit(gpu_id: u32, priority: usize, batch_size: u8) -> usize {
+    let r: usize;
+    unsafe { core::arch::asm!("ecall", in("a7") 222usize, in("a0") gpu_id as usize, in("a1") priority, in("a2") batch_size as usize, lateout("a0") r); }
+    r
+}
+pub fn compat_init() -> usize {
+    let r: usize; unsafe { core::arch::asm!("ecall", in("a7") 300usize, lateout("a0") r); }
+    r
+}
+pub fn compat_translate(linux_nr: usize) -> usize {
+    let r: usize; unsafe { core::arch::asm!("ecall", in("a7") 301usize, in("a0") linux_nr, lateout("a0") r); }
+    r
+}

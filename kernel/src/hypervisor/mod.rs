@@ -11,6 +11,10 @@
 
 pub mod csr;
 pub mod mmu;
+pub mod plic;
+pub mod snapshot;
+pub mod timer;
+pub mod virtio;
 
 
 /// Maximum number of concurrent virtual machines.

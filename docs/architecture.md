@@ -13,7 +13,7 @@ All other functionality (filesystem, network, device drivers, shell, POSIX) runs
 
 ## Boot Sequence
 
-1. machina loads RustSBI at 0x80000000
+1. QEMU loads RustSBI at 0x80000000
 2. RustSBI loads kernel ELF at 0x80200000, jumps to `_start` in S-mode
 3. `_start`: clear BSS, set per-HART stack, call `rust_main`
 4. `rust_main`: clear BSS, init memory (buddy + Sv39 + heap), init CLINT/trap, init cap/ipc, enable MMU, spawn embedded services, start scheduler

@@ -19,7 +19,7 @@ All device drivers, filesystems, network stacks, and POSIX compatibility run as 
 
 ## Iron Rules
 
-1. **Runtime**: RustSBI (M-mode firmware) + machina (RISC-V JIT emulator).
+1. **Runtime**: RustSBI (M-mode firmware) + QEMU (RISC-V `-machine virt`).
 2. **Language**: Rust nightly (`no_std` kernel, `no_std` user-space).
 3. **Architecture**: RISC-V 64-bit (rv64gc), Sv39 virtual memory.
 4. **License**: MIT.
@@ -66,7 +66,7 @@ cargo build --release -p init -p ping -p fs -p test_fs -p sh \
 cp target/riscv64gc-unknown-none-elf/release/* kernel/src/
 cargo build --release -p kernel
 
-# Run on machina (2 CPUs)
+# Run on QEMU (2 CPUs)
 cd .. && ./machina/target/release/machina \
   -M riscv64-ref -smp 2 \
   -bios machina/pc-bios/rustsbi-riscv64-machina-fw_dynamic.bin \

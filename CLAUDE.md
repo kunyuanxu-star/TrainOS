@@ -24,7 +24,7 @@ The V21–V30 roadmap is defined in [docs/specs/2026-05-18-trainos-v21-v30-roadm
 | V30 | Production readiness & Linux ABI compatibility |
 
 ## Iron Rules
-1. Runtime: RustSBI (M-mode) + machina (RISC-V JIT emulator). Non-negotiable.
+1. Runtime: RustSBI (M-mode) + QEMU (RISC-V `-machine virt`).
 2. Architecture: RISC-V 64-bit (rv64gc), Sv39 virtual memory, MIT license.
 3. Language: Rust nightly (`no_std` kernel + user-space, no heap in services).
 
@@ -66,18 +66,21 @@ User-space services communicate via IPC. Well-known endpoints: EP 1 (init), EP 2
 ## Build & Run
 
 ```bash
-# Build all services
-cd TrainOS && make services
+# Build everything
+cd TrainOS && make all
 
-# Build kernel (includes embedded service binaries)
-cargo build --release -p kernel
+# Run on QEMU (interactive)
+make run
 
-# Run on machina (from testOS/)
-./machina/target/release/machina \
-  -M riscv64-ref -smp 2 \
-  -bios machina/pc-bios/rustsbi-riscv64-machina-fw_dynamic.bin \
-  -kernel TrainOS/target/riscv64gc-unknown-none-elf/release/kernel \
-  -nographic
+# Run test suite
+make test
+```
+
+Or manually:
+```bash
+qemu-system-riscv64 -machine virt -smp 2 -nographic \
+  -bios rustsbi-qemu-new.bin \
+  -kernel target/riscv64gc-unknown-none-elf/release/kernel
 ```
 
 ## Key Files

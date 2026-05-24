@@ -1,3 +1,5 @@
+use crate::cap::ops;
+use crate::cap::types;
 use crate::mem::{buddy, sv39};
 use crate::proc::process::ProcessState;
 
@@ -363,6 +365,23 @@ pub fn sys_proclist(buf_ptr: usize, buf_len: usize) -> Result<usize, &'static st
 pub fn sys_kill(pid: u32) -> Result<usize, &'static str> {
     let mut procs = crate::proc::PROCESSES.lock();
     if let Some(proc) = procs.iter_mut().find(|p| p.pid == pid) {
+        // V21: Cap leak detection — count remaining caps before destruction
+        {
+            let cnode_id = proc.cnode_id;
+            let leak_count = ops::get_resource(cnode_id).map_or(0, |res| {
+                if let types::ResourceData::CNode { ref slots } = &res.data {
+                    let s = slots.lock();
+                    s.iter().filter(|slot| slot.cap_type != types::CapType::Null).count()
+                } else {
+                    0
+                }
+            });
+            if leak_count > 0 {
+                crate::security::cap_audit_log(pid, 5, leak_count);
+                crate::println!("CAP: pid={} leaked {} capabilities on exit", pid, leak_count);
+            }
+        }
+
         proc.state = ProcessState::Dead;
         // Mark any blocked thread as Dead too
         if let Some(ref mut thread) = proc.thread {

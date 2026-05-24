@@ -15,6 +15,25 @@ fn caller_cnode() -> Result<usize, &'static str> {
 /// Derive a new capability from an existing one in the caller's CNode.
 pub fn sys_mint(src_idx: usize, desired_rights: u8) -> Result<usize, &'static str> {
     let cnode = caller_cnode()?;
+
+    // V21: Deep validation — child rights must be subset of parent rights
+    let parent_rights = {
+        let res = ops::get_resource(cnode).ok_or("cnode gone")?;
+        if let types::ResourceData::CNode { ref slots } = &res.data {
+            let s = slots.lock();
+            s.get(src_idx).map(|slot| slot.rights).unwrap_or(0)
+        } else {
+            0
+        }
+    };
+    if (desired_rights & !parent_rights) != 0 {
+        let pid = crate::sched::current_thread()
+            .map(|t| unsafe { (*t).owner })
+            .unwrap_or(0);
+        crate::security::cap_audit_log(pid, 4, src_idx);
+        return Err("rights escalation denied");
+    }
+
     let slot = ops::mint(cnode, src_idx, desired_rights).ok_or("mint failed")?;
 
     // Append the minted slot to the caller's CNode

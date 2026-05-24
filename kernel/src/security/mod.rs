@@ -123,13 +123,14 @@ pub fn seccomp_check(pid: u32, syscall_nr: usize) -> (bool, bool) {
 
 // ── Capability Audit ────────────────────────────────────────────────────────
 
-static mut CAP_AUDIT_LOG: [(u32, u32, usize); 64] = [(0, 0, 0); 64]; // (pid, operation, slot)
+static mut CAP_AUDIT_LOG: [(u32, u32, usize, u64); 256] = [(0, 0, 0, 0); 256]; // (pid, operation, slot, timestamp)
 static mut CAP_AUDIT_IDX: usize = 0;
 
 /// Log a capability operation for audit purposes.
 pub fn cap_audit_log(pid: u32, operation: u32, slot: usize) {
     unsafe {
-        CAP_AUDIT_LOG[CAP_AUDIT_IDX % 64] = (pid, operation, slot);
+        let ts = crate::trap::TICK_COUNT as u64;
+        CAP_AUDIT_LOG[CAP_AUDIT_IDX % 256] = (pid, operation, slot, ts);
         CAP_AUDIT_IDX += 1;
     }
 }
@@ -138,21 +139,93 @@ pub fn cap_audit_log(pid: u32, operation: u32, slot: usize) {
 /// Format: [pid:4][op:4][slot:8] per entry (16 bytes each)
 pub fn cap_audit_read(buf: &mut [u8]) -> usize {
     unsafe {
-        let count = CAP_AUDIT_IDX.min(64);
+        let count = CAP_AUDIT_IDX.min(256);
         let mut pos = 0;
         for i in 0..count {
-            if pos + 16 > buf.len() { break; }
-            let (pid, op, slot) = CAP_AUDIT_LOG[i];
+            if pos + 24 > buf.len() { break; }
+            let (pid, op, slot, ts) = CAP_AUDIT_LOG[i];
+            // pid (4 bytes, u32)
             buf[pos] = pid as u8; buf[pos+1] = (pid>>8) as u8;
             buf[pos+2] = (pid>>16) as u8; buf[pos+3] = (pid>>24) as u8;
+            // op (4 bytes, u32)
             buf[pos+4] = op as u8; buf[pos+5] = (op>>8) as u8;
             buf[pos+6] = (op>>16) as u8; buf[pos+7] = (op>>24) as u8;
+            // slot (8 bytes, usize)
             buf[pos+8] = slot as u8; buf[pos+9] = (slot>>8) as u8;
             buf[pos+10] = (slot>>16) as u8; buf[pos+11] = (slot>>24) as u8;
-            pos += 16;
+            buf[pos+12] = (slot>>32) as u8; buf[pos+13] = (slot>>40) as u8;
+            buf[pos+14] = (slot>>48) as u8; buf[pos+15] = (slot>>56) as u8;
+            // ts (8 bytes, u64)
+            buf[pos+16] = ts as u8; buf[pos+17] = (ts>>8) as u8;
+            buf[pos+18] = (ts>>16) as u8; buf[pos+19] = (ts>>24) as u8;
+            buf[pos+20] = (ts>>32) as u8; buf[pos+21] = (ts>>40) as u8;
+            buf[pos+22] = (ts>>48) as u8; buf[pos+23] = (ts>>56) as u8;
+            pos += 24;
         }
         pos
     }
+}
+
+/// Format the audit log as human-readable text into a buffer.
+/// Each line: "ts pid op slot\n"
+pub fn cap_audit_dump(buf: &mut [u8]) -> usize {
+    unsafe {
+        let count = CAP_AUDIT_IDX.min(256);
+        let mut pos = 0usize;
+        for i in 0..count {
+            let (pid, op, slot, ts) = CAP_AUDIT_LOG[i];
+            if pid == 0 && op == 0 { continue; }
+            // Format: "ts pid op slot\n"
+            pos += write_u64(buf, pos, ts);
+            if pos >= buf.len() { break; }
+            buf[pos] = b' '; pos += 1;
+            pos += write_u32(buf, pos, pid);
+            if pos >= buf.len() { break; }
+            buf[pos] = b' '; pos += 1;
+            pos += write_u32(buf, pos, op);
+            if pos >= buf.len() { break; }
+            buf[pos] = b' '; pos += 1;
+            pos += write_usize(buf, pos, slot);
+            if pos >= buf.len() { break; }
+            buf[pos] = b'\n'; pos += 1;
+            if pos + 50 > buf.len() { break; }
+        }
+        pos
+    }
+}
+
+// Simple digit-by-digit integer to ASCII for no_std kernel.
+fn write_u64(buf: &mut [u8], pos: usize, v: u64) -> usize {
+    if v == 0 {
+        if pos < buf.len() { buf[pos] = b'0'; return 1; }
+        return 0;
+    }
+    let mut temp = [0u8; 20];
+    let mut n = v;
+    let mut len = 0;
+    while n > 0 {
+        temp[len] = b'0' + (n % 10) as u8;
+        n /= 10;
+        len += 1;
+    }
+    let mut written = 0;
+    for i in (0..len).rev() {
+        if pos + written < buf.len() {
+            buf[pos + written] = temp[i];
+            written += 1;
+        } else {
+            break;
+        }
+    }
+    written
+}
+
+fn write_u32(buf: &mut [u8], pos: usize, v: u32) -> usize {
+    write_u64(buf, pos, v as u64)
+}
+
+fn write_usize(buf: &mut [u8], pos: usize, v: usize) -> usize {
+    write_u64(buf, pos, v as u64)
 }
 
 // ── Kernel Stack Canary ─────────────────────────────────────────────────────

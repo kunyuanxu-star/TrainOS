@@ -617,3 +617,87 @@ pub unsafe fn setup_kernel_mapping() {
     ecam_pte.set_dirty(true);
     l1_mmio[ecam_l1_idx] = ecam_pte;
 }
+
+/// Share a physical page from one process with another.
+///
+/// Looks up the physical page mapped at `src_va` in the source process's
+/// page table (identified by `src_pid`), then maps the same physical page
+/// into the destination process's page table at `dst_va`.
+///
+/// Returns Ok(()) on success, or an error string on failure.
+pub unsafe fn share_page(
+    src_pid: u32,
+    dst_pid: u32,
+    src_va: usize,
+    dst_va: usize,
+) -> Result<(), &'static str> {
+    // Look up page table roots for both processes
+    let (src_root, dst_root) = {
+        let procs = crate::proc::PROCESSES.lock();
+        let src = procs.iter().find(|p| p.pid == src_pid).ok_or("src process not found")?;
+        let dst = procs.iter().find(|p| p.pid == dst_pid).ok_or("dst process not found")?;
+        (src.page_table_root, dst.page_table_root)
+    };
+
+    // Walk the source page table to find the physical page at src_va
+    let (l0_phys, idx) = walk_process_pt(src_root, src_va, false)
+        .ok_or("src_va not mapped")?;
+    let l0 = &*(pa_to_kva(l0_phys) as *const [PTE; 512]);
+    let pte = l0[idx];
+    if !pte.is_valid() || !pte.is_leaf() {
+        return Err("src_va not a valid mapped page");
+    }
+    let phys = pte.phys_addr();
+
+    // Map the same physical page into the destination process
+    map_user_page(dst_root, dst_va, phys, true, true)?;
+
+    Ok(())
+}
+
+/// Splice (transfer) a range of pages from one process to another.
+///
+/// For each page in the range [src_va + offset, src_va + offset + len),
+/// looks up the physical page in the source process and maps it into the
+/// destination process at [dst_va + offset, dst_va + offset + len).
+///
+/// All addresses and lengths should be page-aligned for proper mapping.
+pub unsafe fn splice_pages(
+    src_pid: u32,
+    dst_pid: u32,
+    src_va: usize,
+    offset: usize,
+    dst_va: usize,
+    len: usize,
+) -> Result<(), &'static str> {
+    // Look up page table roots
+    let (src_root, dst_root) = {
+        let procs = crate::proc::PROCESSES.lock();
+        let src = procs.iter().find(|p| p.pid == src_pid).ok_or("src process not found")?;
+        let dst = procs.iter().find(|p| p.pid == dst_pid).ok_or("dst process not found")?;
+        (src.page_table_root, dst.page_table_root)
+    };
+
+    let mut off = offset;
+    while off < offset + len {
+        let src_page_va = page_align_down(src_va + off);
+        let dst_page_va = page_align_down(dst_va + off);
+
+        // Walk the source page table to get the physical page
+        let (l0_phys, idx) = walk_process_pt(src_root, src_page_va, false)
+            .ok_or("src page not mapped")?;
+        let l0 = &*(pa_to_kva(l0_phys) as *const [PTE; 512]);
+        let pte = l0[idx];
+        if !pte.is_valid() || !pte.is_leaf() {
+            return Err("src page not a valid leaf");
+        }
+        let phys = pte.phys_addr();
+
+        // Map into destination
+        map_user_page(dst_root, dst_page_va, phys, true, true)?;
+
+        off += PAGE_SIZE;
+    }
+
+    Ok(())
+}

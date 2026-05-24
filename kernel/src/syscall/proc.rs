@@ -1281,7 +1281,10 @@ pub fn sys_cap_audit(buf_ptr: usize, buf_len: usize) -> Result<usize, &'static s
 // ── V22 io_uring syscalls ────────────────────────────────────────────────────
 pub fn sys_io_uring_setup(entries: usize) -> Result<usize, &'static str> {
     let pid = crate::sched::current_thread().map(|t| unsafe { (*t).owner }).ok_or("no proc")?;
-    crate::iouring::setup(pid, entries).ok_or("setup failed")
+    let ring_id = crate::iouring::setup(pid, entries).ok_or("setup failed")?;
+    // Pack: low 16 bits = ring_id, bits 16+ = sq_va
+    let sq_va = crate::iouring::get_sq_va(ring_id);
+    Ok(ring_id | (sq_va << 16))
 }
 pub fn sys_io_uring_enter(ring_id: usize, _to_submit: usize, _min_complete: usize) -> Result<usize, &'static str> {
     Ok(crate::iouring::submit(ring_id))

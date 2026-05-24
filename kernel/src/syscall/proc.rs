@@ -1257,3 +1257,87 @@ pub fn sys_cap_audit(buf_ptr: usize, buf_len: usize) -> Result<usize, &'static s
     let mut buf = unsafe { core::slice::from_raw_parts_mut(buf_ptr as *mut u8, buf_len) };
     Ok(crate::security::cap_audit_read(&mut buf))
 }
+
+
+// ── V22 io_uring syscalls ────────────────────────────────────────────────────
+pub fn sys_io_uring_setup(entries: usize) -> Result<usize, &'static str> {
+    let pid = crate::sched::current_thread().map(|t| unsafe { (*t).owner }).ok_or("no proc")?;
+    crate::iouring::setup(pid, entries).ok_or("setup failed")
+}
+pub fn sys_io_uring_enter(ring_id: usize, _to_submit: usize, _min_complete: usize) -> Result<usize, &'static str> {
+    Ok(crate::iouring::submit(ring_id))
+}
+pub fn sys_io_uring_register(_ring_id: usize, _opcode: usize, _arg: usize) -> Result<usize, &'static str> { Ok(0) }
+
+// ── V23 Virtualization syscalls ──────────────────────────────────────────────
+pub fn sys_vm_create(memory_mb: usize) -> Result<usize, &'static str> {
+    crate::hypervisor::vm_create(memory_mb).map(|id| id as usize).ok_or("vm_create failed")
+}
+pub fn sys_vm_destroy(vm_id: u32) -> Result<usize, &'static str> {
+    if crate::hypervisor::vm_destroy(vm_id) { Ok(0) } else { Err("not found") }
+}
+pub fn sys_vm_start(vm_id: u32) -> Result<usize, &'static str> {
+    if crate::hypervisor::vm_start(vm_id) { Ok(0) } else { Err("start failed") }
+}
+pub fn sys_vm_list(buf_ptr: usize, buf_len: usize) -> Result<usize, &'static str> {
+    if buf_ptr == 0 { return Err("null buf"); }
+    let buf = unsafe { core::slice::from_raw_parts_mut(buf_ptr as *mut u8, buf_len) };
+    Ok(crate::hypervisor::vm_list(buf))
+}
+
+// ── V24 Kernel extension syscalls ────────────────────────────────────────────
+pub fn sys_ext_register(hook_type: usize, bytecode_ptr: usize) -> Result<usize, &'static str> {
+    let pid = crate::sched::current_thread().map(|t| unsafe { (*t).owner }).ok_or("no proc")?;
+    let bc = unsafe { core::slice::from_raw_parts(bytecode_ptr as *const u8, 256) };
+    crate::extension::register(pid, hook_type as u8, bc).map(|id| id).ok_or("register failed")
+}
+pub fn sys_ext_unregister(ext_id: usize) -> Result<usize, &'static str> {
+    if crate::extension::unregister(ext_id) { Ok(0) } else { Err("not found") }
+}
+pub fn sys_ext_list(buf_ptr: usize, buf_len: usize) -> Result<usize, &'static str> {
+    if buf_ptr == 0 { return Err("null buf"); }
+    let buf = unsafe { core::slice::from_raw_parts_mut(buf_ptr as *mut u8, buf_len) };
+    Ok(crate::extension::list(buf))
+}
+
+// ── V25 NUMA syscalls ────────────────────────────────────────────────────────
+pub fn sys_numa_nodes(buf_ptr: usize, buf_len: usize) -> Result<usize, &'static str> {
+    crate::numa::discover();
+    if buf_ptr == 0 { return Ok(crate::numa::node_count()); }
+    let cnt = crate::numa::node_count();
+    let buf = unsafe { core::slice::from_raw_parts_mut(buf_ptr as *mut u8, buf_len.min(cnt * 8)) };
+    for i in 0..cnt {
+        let mask = crate::numa::node_cpu_mask(i as u8);
+        let off = i * 8;
+        buf[off] = i as u8; buf[off+1] = mask as u8; buf[off+2] = (mask>>8) as u8;
+    }
+    Ok(cnt)
+}
+pub fn sys_numa_alloc(node: u8) -> Result<usize, &'static str> {
+    crate::numa::node_alloc_page(node).ok_or("OOM")
+}
+
+// ── V26 Distributed IPC syscalls ─────────────────────────────────────────────
+pub fn sys_remote_node_add(ip_ptr: usize, port: usize) -> Result<usize, &'static str> {
+    let ip = unsafe { core::slice::from_raw_parts(ip_ptr as *const u8, 16) };
+    crate::distributed::add_remote_node(ip, port as u16).map(|id| id as usize).ok_or("full")
+}
+pub fn sys_remote_ep_publish(local_ep: usize, remote_node: usize, remote_ep: usize) -> Result<usize, &'static str> {
+    if crate::distributed::publish_endpoint(local_ep, remote_node as u32, remote_ep) { Ok(0) } else { Err("full") }
+}
+pub fn sys_remote_ep_lookup(local_ep: usize, buf_ptr: usize) -> Result<usize, &'static str> {
+    let result = crate::distributed::lookup_remote_ep(local_ep);
+    if let Some((node, ep)) = result {
+        if buf_ptr != 0 {
+            let buf = unsafe { core::slice::from_raw_parts_mut(buf_ptr as *mut u8, 8) };
+            buf[0] = node as u8; buf[1] = (node>>8) as u8;
+            buf[4] = ep as u8; buf[5] = (ep>>8) as u8;
+        }
+        Ok(0)
+    } else { Err("not found") }
+}
+pub fn sys_remote_send(node_id: u32, ep: usize, data_ptr: usize, data_len: usize) -> Result<usize, &'static str> {
+    let data = unsafe { core::slice::from_raw_parts(data_ptr as *const u8, data_len) };
+    crate::distributed::remote_send(node_id, ep, data)?;
+    Ok(0)
+}

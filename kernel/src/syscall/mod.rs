@@ -139,6 +139,33 @@ pub const SYS_REBOOT: usize = 122;
 pub const SYS_SECCOMP_ADD: usize = 130;
 pub const SYS_CAP_AUDIT: usize = 131;
 
+
+// io_uring (V22): 140-143
+pub const SYS_IO_URING_SETUP: usize = 140;
+pub const SYS_IO_URING_ENTER: usize = 141;
+pub const SYS_IO_URING_REGISTER: usize = 142;
+
+// Virtualization (V23): 150-153
+pub const SYS_VM_CREATE: usize = 150;
+pub const SYS_VM_DESTROY: usize = 151;
+pub const SYS_VM_START: usize = 152;
+pub const SYS_VM_LIST: usize = 153;
+
+// Kernel extensions (V24): 160-162
+pub const SYS_EXT_REGISTER: usize = 160;
+pub const SYS_EXT_UNREGISTER: usize = 161;
+pub const SYS_EXT_LIST: usize = 162;
+
+// NUMA (V25): 170-171
+pub const SYS_NUMA_NODES: usize = 170;
+pub const SYS_NUMA_ALLOC: usize = 171;
+
+// Distributed (V26): 180-183
+pub const SYS_REMOTE_NODE_ADD: usize = 180;
+pub const SYS_REMOTE_EP_PUBLISH: usize = 181;
+pub const SYS_REMOTE_EP_LOOKUP: usize = 182;
+pub const SYS_REMOTE_SEND: usize = 183;
+
 // ── Dispatch ─────────────────────────────────────────────────────────────────
 
 pub fn syscall_dispatch(tf: &mut TrapFrame) {
@@ -292,6 +319,33 @@ pub fn syscall_dispatch(tf: &mut TrapFrame) {
         // V15.0 — System
         SYS_SYNC => proc::sys_sync(),
         SYS_REBOOT => proc::sys_reboot(arg0, arg1),
+
+
+        // V22 — io_uring
+        SYS_IO_URING_SETUP => proc::sys_io_uring_setup(arg0),
+        SYS_IO_URING_ENTER => proc::sys_io_uring_enter(arg0, arg1, arg2),
+        SYS_IO_URING_REGISTER => proc::sys_io_uring_register(arg0, arg1, arg2),
+
+        // V23 — Virtualization
+        SYS_VM_CREATE => proc::sys_vm_create(arg0),
+        SYS_VM_DESTROY => proc::sys_vm_destroy(arg0 as u32),
+        SYS_VM_START => proc::sys_vm_start(arg0 as u32),
+        SYS_VM_LIST => proc::sys_vm_list(arg0, arg1),
+
+        // V24 — Kernel extensions
+        SYS_EXT_REGISTER => proc::sys_ext_register(arg0, arg1),
+        SYS_EXT_UNREGISTER => proc::sys_ext_unregister(arg0),
+        SYS_EXT_LIST => proc::sys_ext_list(arg0, arg1),
+
+        // V25 — NUMA
+        SYS_NUMA_NODES => proc::sys_numa_nodes(arg0, arg1),
+        SYS_NUMA_ALLOC => proc::sys_numa_alloc(arg0 as u8),
+
+        // V26 — Distributed
+        SYS_REMOTE_NODE_ADD => proc::sys_remote_node_add(arg0, arg1),
+        SYS_REMOTE_EP_PUBLISH => proc::sys_remote_ep_publish(arg0, arg1, arg2),
+        SYS_REMOTE_EP_LOOKUP => proc::sys_remote_ep_lookup(arg0, arg1),
+        SYS_REMOTE_SEND => proc::sys_remote_send(arg0 as u32, arg1, arg2, arg3),
 
         // V21 — Security
         SYS_SECCOMP_ADD => proc::sys_seccomp_add(arg0 as u32, arg1),

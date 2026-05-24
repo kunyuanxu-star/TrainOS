@@ -53,6 +53,21 @@ mod device;
 #[cfg(not(test))]
 mod security;
 
+#[cfg(not(test))]
+mod iouring;
+
+#[cfg(not(test))]
+mod hypervisor;
+
+#[cfg(not(test))]
+mod extension;
+
+#[cfg(not(test))]
+mod numa;
+
+#[cfg(not(test))]
+mod distributed;
+
 #[cfg(test)]
 mod mem;
 

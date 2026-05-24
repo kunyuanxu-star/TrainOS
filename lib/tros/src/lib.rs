@@ -1006,3 +1006,39 @@ pub fn cap_audit(buf: &mut [u8]) -> usize {
     unsafe { core::arch::asm!("ecall", in("a7") 131usize, in("a0") buf.as_ptr() as usize, in("a1") buf.len(), lateout("a0") r); }
     r
 }
+
+// ── V22-V26 syscall wrappers ─────────────────────────────────────────────────
+
+pub fn io_uring_setup(entries: usize) -> usize {
+    let r: usize;
+    unsafe { core::arch::asm!("ecall", in("a7") 140usize, in("a0") entries, lateout("a0") r); }
+    r
+}
+pub fn io_uring_enter(ring_id: usize, to_submit: usize, min_complete: usize) -> usize {
+    let r: usize;
+    unsafe { core::arch::asm!("ecall", in("a7") 141usize, in("a0") ring_id, in("a1") to_submit, in("a2") min_complete, lateout("a0") r); }
+    r
+}
+pub fn vm_create(memory_mb: usize) -> usize {
+    let r: usize; unsafe { core::arch::asm!("ecall", in("a7") 150usize, in("a0") memory_mb, lateout("a0") r); }
+    r
+}
+pub fn vm_destroy(vm_id: u32) -> usize {
+    let r: usize; unsafe { core::arch::asm!("ecall", in("a7") 151usize, in("a0") vm_id as usize, lateout("a0") r); }
+    r
+}
+pub fn ext_register(hook_type: usize, bytecode: &[u8]) -> usize {
+    let r: usize;
+    unsafe { core::arch::asm!("ecall", in("a7") 160usize, in("a0") hook_type, in("a1") bytecode.as_ptr() as usize, lateout("a0") r); }
+    r
+}
+pub fn numa_nodes(buf: &mut [u8]) -> usize {
+    let r: usize;
+    unsafe { core::arch::asm!("ecall", in("a7") 170usize, in("a0") buf.as_ptr() as usize, in("a1") buf.len(), lateout("a0") r); }
+    r
+}
+pub fn remote_node_add(ip: &[u8], port: u16) -> usize {
+    let r: usize;
+    unsafe { core::arch::asm!("ecall", in("a7") 180usize, in("a0") ip.as_ptr() as usize, in("a1") port as usize, lateout("a0") r); }
+    r
+}

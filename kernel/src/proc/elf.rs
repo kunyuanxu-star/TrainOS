@@ -268,6 +268,12 @@ pub fn load_elf(elf_data: &[u8], page_table_root: usize) -> Option<(usize, usize
         );
     }
 
+    // V21.10: Enforce W^X — clear X on any page with both W and X set
+    let fixed = crate::mem::sv39::force_wxorx(page_table_root);
+    if fixed > 0 {
+        crate::println!("W^X: fixed {} pages during ELF load", fixed);
+    }
+
     Some((entry, stack_bottom + PAGE_SIZE - 16))
 }
 

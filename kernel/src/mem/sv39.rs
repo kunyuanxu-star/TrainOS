@@ -441,6 +441,93 @@ pub fn count_user_pages(root_phys: usize) -> usize {
     count
 }
 
+/// Check whether a single user-page at `va` is valid (mapped and user-accessible)
+/// in the page table rooted at `root_phys`.
+fn is_user_addr_valid(root_phys: usize, va: usize) -> bool {
+    unsafe {
+        if let Some((l0_phys, idx)) = walk_process_pt(root_phys, va, false) {
+            let l0 = &*(pa_to_kva(l0_phys) as *const [PTE; 512]);
+            l0[idx].is_valid() && l0[idx].is_user()
+        } else {
+            false
+        }
+    }
+}
+
+/// V21.9: Validate that a user-space buffer [va, va+len) resides entirely within
+/// mapped, user-accessible pages.  Returns `true` if every page touched by the
+/// range is valid, `false` otherwise.
+pub fn is_user_range_valid(root_phys: usize, va: usize, len: usize) -> bool {
+    if len == 0 {
+        return true;
+    }
+    let start_page = page_align_down(va);
+    let end = va.saturating_add(len);
+    let end_page = page_align_down(end.saturating_sub(1));
+    let mut page = start_page;
+    while page <= end_page {
+        if !is_user_addr_valid(root_phys, page) {
+            return false;
+        }
+        page = page.saturating_add(PAGE_SIZE);
+    }
+    true
+}
+
+/// V21.10: Walk all user PTEs in the page table rooted at `root_phys` and clear
+/// the X (execute) bit on any page that has both W and X set (W^X violation).
+/// Returns the number of pages fixed.  Each fix is logged.
+pub fn force_wxorx(root_phys: usize) -> usize {
+    let mut fixed = 0usize;
+    unsafe {
+        let l2 = &mut *(pa_to_kva(root_phys) as *mut [PTE; 512]);
+        for vpn2 in 0..256 {
+            let l2e = &l2[vpn2];
+            if !l2e.is_valid() || l2e.is_leaf() {
+                continue;
+            }
+            let l1 = &mut *(pa_to_kva(l2e.phys_addr()) as *mut [PTE; 512]);
+            for vpn1 in 0..512 {
+                let l1e = &mut l1[vpn1];
+                if !l1e.is_valid() {
+                    continue;
+                }
+                if l1e.is_leaf() {
+                    // 2 MB superpage
+                    if l1e.is_user() && l1e.is_writable() && l1e.is_executable() {
+                        let r = l1e.is_readable();
+                        let w = l1e.is_writable();
+                        let u = l1e.is_user();
+                        l1e.set_flags(r, w, false, u);
+                        let va = (vpn2 << 30) | (vpn1 << 21);
+                        crate::println!("W^X: cleared X at va=0x{:x}", va);
+                        fixed += 1;
+                    }
+                    continue;
+                }
+                // L0 level — 4 KiB pages
+                let l0 = &mut *(pa_to_kva(l1e.phys_addr()) as *mut [PTE; 512]);
+                for vpn0 in 0..512 {
+                    let l0e = &mut l0[vpn0];
+                    if !l0e.is_valid() {
+                        continue;
+                    }
+                    if l0e.is_user() && l0e.is_writable() && l0e.is_executable() {
+                        let r = l0e.is_readable();
+                        let w = l0e.is_writable();
+                        let u = l0e.is_user();
+                        l0e.set_flags(r, w, false, u);
+                        let va = (vpn2 << 30) | (vpn1 << 21) | (vpn0 << 12);
+                        crate::println!("W^X: cleared X at va=0x{:x}", va);
+                        fixed += 1;
+                    }
+                }
+            }
+        }
+    }
+    fixed
+}
+
 pub unsafe fn setup_kernel_mapping() {
     let dram_base = super::layout::DRAM_BASE;
     let root = root_pt_phys();

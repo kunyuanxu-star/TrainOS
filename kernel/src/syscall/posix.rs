@@ -159,6 +159,19 @@ fn vfs_delete(path: &[u8]) -> Result<Message, &'static str> {
     vfs_send_recv(5, path, &[])
 }
 
+// ── Helper: get current process page table root ──────────────────────────────
+
+fn current_root_pt() -> Option<usize> {
+    let pid = current_pid();
+    let procs = crate::proc::PROCESSES.lock();
+    for proc in procs.iter() {
+        if proc.pid == pid {
+            return Some(proc.page_table_root);
+        }
+    }
+    None
+}
+
 // ── POSIX syscalls ───────────────────────────────────────────────────────────
 
 /// sys_open(path_ptr, flags, mode) — open a file by path.
@@ -186,6 +199,15 @@ pub fn sys_open(path_ptr: usize, flags: usize, _mode: usize) -> Result<usize, &'
 /// sys_read(fd, buf_ptr, count) — read from a file descriptor.
 pub fn sys_read(fd: usize, buf_ptr: usize, count: usize) -> Result<usize, &'static str> {
     let pid = current_pid();
+
+    // V21.9: Validate user buffer bounds
+    if buf_ptr != 0 && count > 0 {
+        if let Some(root_pt) = current_root_pt() {
+            if !crate::mem::sv39::is_user_range_valid(root_pt, buf_ptr, count) {
+                return Err("buffer out of bounds");
+            }
+        }
+    }
 
     if fd <= 2 {
         // stdin (0) — read a char from SBI console
@@ -252,6 +274,15 @@ pub fn sys_read(fd: usize, buf_ptr: usize, count: usize) -> Result<usize, &'stat
 /// sys_write(fd, buf_ptr, count) — write to a file descriptor.
 pub fn sys_write(fd: usize, buf_ptr: usize, count: usize) -> Result<usize, &'static str> {
     let pid = current_pid();
+
+    // V21.9: Validate user buffer bounds
+    if buf_ptr != 0 && count > 0 {
+        if let Some(root_pt) = current_root_pt() {
+            if !crate::mem::sv39::is_user_range_valid(root_pt, buf_ptr, count) {
+                return Err("buffer out of bounds");
+            }
+        }
+    }
 
     if fd <= 2 {
         // stdout (1) / stderr (2) — write to SBI console

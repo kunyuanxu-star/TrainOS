@@ -28,7 +28,7 @@ The V21–V30 roadmap is defined in [docs/specs/2026-05-18-trainos-v21-v30-roadm
 2. Architecture: RISC-V 64-bit (rv64gc), Sv39 virtual memory, MIT license.
 3. Language: Rust nightly (`no_std` kernel + user-space, no heap in services).
 
-## Current Status (2026-05-18) — V17.0
+## Current Status (2026-05-24) — V23.0 (Wave 1 Complete)
 
 ### Completed
 - **Dynamic process spawning**: `sys_spawn` (syscall 3) creates new processes from user-provided ELF data
@@ -53,6 +53,28 @@ The V21–V30 roadmap is defined in [docs/specs/2026-05-18-trainos-v21-v30-roadm
 - VirtIO block I/O, PCI enumeration, TFS journaling FS
 - Capability system, 39+ syscalls, COW fork, POSIX compatibility
 - Network stack with port-based datagram routing + TCP reliable streams
+
+### Wave 1 (V21-V23) — 2026-05-24
+
+#### V21 — Formal Verification & Security Hardening
+- **Kernel invariant checks**: Scheduler (bitmap/queue cross-validation), memory (allocated+free==total), IPC (wait queue cycle detection), W^X, stack canary
+- **Periodic trigger**: Every 100 timer ticks, all invariants verified
+- **Capability security**: `sys_mint` parent-rights enforcement, 256-entry audit log with timestamps, cap leak detection on process exit
+- **Memory safety**: Heap canary (0xDEAD_BEEF_CAFE_BABE) on alloc/free, user buffer bounds checking in read/write, W^X auto-enforcement (clears X on W+X pages), kernel stack guard page overflow detection
+- **Syscall audit**: Per-process seccomp filter (16 rules), global syscall frequency counters (`SYS_SYSCALL_STATS` nr=132), sensitive operation audit (kill/mmap/munmap/mprotect)
+
+#### V22 — High-Performance Async I/O (io_uring)
+- **io_uring core**: Real VFS IPC dispatch for READ/WRITE/OPEN/CLOSE/STAT in `execute_sqe`, per-process SQ/CQ ring buffers
+- **Shared memory rings**: SQ/CQ physical pages mapped into user address space, zero-copy data path via `share_page` and `splice_pages`
+- **Block device layer**: Request merging (adjacent sector coalescing), per-CPU blk-mq submission queues, pluggable I/O scheduler framework (`NoopScheduler` + `DeadlineScheduler` with read/write deadlines)
+
+#### V23 — Virtualization & Hypervisor
+- **H-extension CSRs**: `hgatp`, `hstatus`, `hedeleg`, `hideleg`, `vsstatus`, `vstvec` read/write wrappers
+- **Two-stage address translation**: G-stage page table creation/destruction, guest physical → host physical mapping
+- **VM lifecycle**: `vm_create/destroy/start/pause/resume` with full GPR and CSR context save/restore
+- **VirtIO backend**: Guest MMIO decode and forwarding to host driver services
+- **Paravirtual timer + PLIC**: Offset-based time CSR, timer compare with interrupt injection, 64-IRQ virtual PLIC
+- **Snapshot/restore**: Full VM state serialization (GPRs, CSRs, G-stage metadata) with magic-number validation
 
 ### Architecture
 **Microkernel** — kernel provides:
@@ -116,6 +138,25 @@ qemu-system-riscv64 -machine virt -smp 2 -nographic \
 | `syscall/proc.rs` | spawn, exit, yield, mmio_map, fork, proclist, kill, blk_read/write, shm_map, signal, waitpid |
 | `syscall/cap.rs` | mint, copy, move, delete, cap_stats with caller CNode |
 | `syscall/posix.rs` | open, read, write, close, stat, lseek, dup, getcwd |
+| `invariant.rs` | Kernel invariant checks (scheduler, memory, IPC, W^X, canary) |
+| `security/mod.rs` | W^X enforcement, seccomp filter, cap audit log, stack canary |
+| `iouring/mod.rs` | io_uring async I/O (SQ/CQ rings, real VFS dispatch) |
+| `hypervisor/mod.rs` | VM lifecycle (create/destroy/start/pause/resume), VmContext |
+| `hypervisor/csr.rs` | H-extension CSR wrappers (hgatp, hstatus, hedeleg, hideleg) |
+| `hypervisor/mmu.rs` | G-stage two-stage address translation |
+| `hypervisor/virtio.rs` | VirtIO MMIO backend for guest VMs |
+| `hypervisor/timer.rs` | Paravirtual timer with offset-based time CSR |
+| `hypervisor/plic.rs` | Virtual PLIC (64 IRQ sources, inject/claim/complete) |
+| `hypervisor/snapshot.rs` | VM state serialization/deserialization |
+| `device/sched.rs` | Pluggable I/O scheduler (Noop + Deadline) |
+| `device/merge.rs` | Block request merging (adjacent sector coalescing) |
+| `distributed/mod.rs` | Distributed IPC (remote node registry, endpoint publish/lookup) |
+| `extension/mod.rs` | eBPF-like kernel extension framework |
+| `numa/mod.rs` | NUMA-aware scheduling and memory allocation |
+| `aslr/mod.rs` | ASLR (PCG randomization for stack, mmap, PIE) |
+| `wasm/mod.rs` | WASM module loader and management |
+| `ai/mod.rs` | GPU registry and AI workload scheduling |
+| `compat/mod.rs` | Linux ABI syscall translation table |
 
 ### User-space Services
 

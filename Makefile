@@ -21,7 +21,7 @@ services:
 	  -p uart -p test_tfs -p rustdemo -p pkg -p test_pkg -p test_net2 \
 	  -p mkfs -p test_mount -p test_sig -p test_exec \
 	  -p test_smp -p test_user -p test_shm -p bench -p http -p test_http \
-	  -p tcp
+	  -p tcp -p selftest
 
 # Copy service ELF binaries into kernel/src/ for embedding
 copy-elfs:

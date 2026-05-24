@@ -673,9 +673,9 @@ pub fn gettid() -> usize {
 }
 
 /// Nanosleep (syscall 67).
-pub fn nanosleep(_seconds: u64, _nanoseconds: u64) -> usize {
+pub fn nanosleep(seconds: u64, nanoseconds: u64) -> usize {
     let r: usize;
-    unsafe { core::arch::asm!("ecall", in("a7") 67usize, in("a0") 0usize, in("a1") 0usize, lateout("a0") r); }
+    unsafe { core::arch::asm!("ecall", in("a7") 67usize, in("a0") seconds as usize, in("a1") nanoseconds as usize, lateout("a0") r); }
     r
 }
 

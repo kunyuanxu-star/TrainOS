@@ -1277,6 +1277,13 @@ pub fn sys_cap_audit(buf_ptr: usize, buf_len: usize) -> Result<usize, &'static s
     Ok(crate::security::cap_audit_read(&mut buf))
 }
 
+/// sys_syscall_stats(buf_ptr, buf_len) — read syscall statistics counters.
+pub fn sys_syscall_stats(buf_ptr: usize, buf_len: usize) -> Result<usize, &'static str> {
+    if buf_ptr == 0 { return Err("null buf"); }
+    let buf = unsafe { core::slice::from_raw_parts_mut(buf_ptr as *mut u8, buf_len) };
+    Ok(crate::syscall::syscall_stats_read(buf))
+}
+
 
 // ── V22 io_uring syscalls ────────────────────────────────────────────────────
 pub fn sys_io_uring_setup(entries: usize) -> Result<usize, &'static str> {
@@ -1293,13 +1300,20 @@ pub fn sys_io_uring_register(_ring_id: usize, _opcode: usize, _arg: usize) -> Re
 
 // ── V23 Virtualization syscalls ──────────────────────────────────────────────
 pub fn sys_vm_create(memory_mb: usize) -> Result<usize, &'static str> {
-    crate::hypervisor::vm_create(memory_mb).map(|id| id as usize).ok_or("vm_create failed")
+    let default_name = b"guest\0";
+    crate::hypervisor::vm_create(default_name, memory_mb).map(|id| id as usize).ok_or("vm_create failed")
 }
 pub fn sys_vm_destroy(vm_id: u32) -> Result<usize, &'static str> {
     if crate::hypervisor::vm_destroy(vm_id) { Ok(0) } else { Err("not found") }
 }
-pub fn sys_vm_start(vm_id: u32) -> Result<usize, &'static str> {
-    if crate::hypervisor::vm_start(vm_id) { Ok(0) } else { Err("start failed") }
+pub fn sys_vm_start(vm_id: u32, entry_pc: usize) -> Result<usize, &'static str> {
+    if crate::hypervisor::vm_start(vm_id, entry_pc) { Ok(0) } else { Err("start failed") }
+}
+pub fn sys_vm_pause(vm_id: u32) -> Result<usize, &'static str> {
+    if crate::hypervisor::vm_pause(vm_id) { Ok(0) } else { Err("pause failed") }
+}
+pub fn sys_vm_resume(vm_id: u32) -> Result<usize, &'static str> {
+    if crate::hypervisor::vm_resume(vm_id) { Ok(0) } else { Err("resume failed") }
 }
 pub fn sys_vm_list(buf_ptr: usize, buf_len: usize) -> Result<usize, &'static str> {
     if buf_ptr == 0 { return Err("null buf"); }

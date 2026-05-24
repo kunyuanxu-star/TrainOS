@@ -10,6 +10,9 @@ pub mod fs;
 
 use crate::trap::TrapFrame;
 
+// V21.12: Syscall statistics counters
+pub static mut SYSCALL_COUNTERS: [u64; 256] = [0u64; 256];
+
 // ── Syscall Number Assignments ───────────────────────────────────────────────
 
 // Core: 0-7
@@ -135,9 +138,10 @@ pub const SYS_LIST_DRVS: usize = 120;
 pub const SYS_SYNC: usize = 121;
 pub const SYS_REBOOT: usize = 122;
 
-// Security (V21): 130-131
+// Security (V21): 130-132
 pub const SYS_SECCOMP_ADD: usize = 130;
 pub const SYS_CAP_AUDIT: usize = 131;
+pub const SYS_SYSCALL_STATS: usize = 132;
 
 
 // io_uring (V22): 140-143
@@ -145,11 +149,13 @@ pub const SYS_IO_URING_SETUP: usize = 140;
 pub const SYS_IO_URING_ENTER: usize = 141;
 pub const SYS_IO_URING_REGISTER: usize = 142;
 
-// Virtualization (V23): 150-153
+// Virtualization (V23): 150-155
 pub const SYS_VM_CREATE: usize = 150;
 pub const SYS_VM_DESTROY: usize = 151;
 pub const SYS_VM_START: usize = 152;
 pub const SYS_VM_LIST: usize = 153;
+pub const SYS_VM_PAUSE: usize = 154;
+pub const SYS_VM_RESUME: usize = 155;
 
 // Kernel extensions (V24): 160-162
 pub const SYS_EXT_REGISTER: usize = 160;
@@ -213,6 +219,9 @@ pub fn syscall_dispatch(tf: &mut TrapFrame) {
     let arg2 = tf.a2;
     let arg3 = tf.a3;
 
+    // V21.12: Increment syscall stats counter
+    unsafe { SYSCALL_COUNTERS[nr] += 1; }
+
     let result = match nr {
         // Core
         SYS_PUTCHAR => {
@@ -263,7 +272,13 @@ pub fn syscall_dispatch(tf: &mut TrapFrame) {
         SYS_BLK_READ => proc::sys_blk_read(arg0, arg1, arg2),
         SYS_BLK_WRITE => proc::sys_blk_write(arg0, arg1, arg2),
         SYS_PROCLIST => proc::sys_proclist(arg0, arg1),
-        SYS_KILL => proc::sys_kill(arg0 as u32),
+        SYS_KILL => {
+            let pid = crate::sched::current_thread()
+                .map(|t| unsafe { (*t).owner })
+                .unwrap_or(0);
+            crate::security::cap_audit_log(pid, 10, arg0 as u32 as usize);
+            proc::sys_kill(arg0 as u32)
+        }
         SYS_MEMINFO => Ok(crate::mem::buddy::allocated_pages()),
         SYS_PERF_STATS => {
             let sends = crate::ipc::endpoint::SEND_COUNT.load(core::sync::atomic::Ordering::Relaxed);
@@ -302,9 +317,29 @@ pub fn syscall_dispatch(tf: &mut TrapFrame) {
         SYS_TRUNCATE => fs::sys_truncate(arg0, arg1),
 
         // V14.0 — Memory
-        SYS_MMAP => memory::sys_mmap(arg0, arg1, arg2, arg3, tf.a4 as isize, tf.a5 as isize),
-        SYS_MUNMAP => memory::sys_munmap(arg0, arg1),
-        SYS_MPROTECT => memory::sys_mprotect(arg0, arg1, arg2),
+        SYS_MMAP => {
+            let pid = crate::sched::current_thread()
+                .map(|t| unsafe { (*t).owner })
+                .unwrap_or(0);
+            let a4 = tf.a4 as isize;
+            let a5 = tf.a5 as isize;
+            crate::security::cap_audit_log(pid, 11, arg1);
+            memory::sys_mmap(arg0, arg1, arg2, arg3, a4, a5)
+        }
+        SYS_MUNMAP => {
+            let pid = crate::sched::current_thread()
+                .map(|t| unsafe { (*t).owner })
+                .unwrap_or(0);
+            crate::security::cap_audit_log(pid, 12, arg0);
+            memory::sys_munmap(arg0, arg1)
+        }
+        SYS_MPROTECT => {
+            let pid = crate::sched::current_thread()
+                .map(|t| unsafe { (*t).owner })
+                .unwrap_or(0);
+            crate::security::cap_audit_log(pid, 13, arg0);
+            memory::sys_mprotect(arg0, arg1, arg2)
+        }
         SYS_BRK => memory::sys_brk(arg0),
 
         // V14.0 — Socket
@@ -353,8 +388,10 @@ pub fn syscall_dispatch(tf: &mut TrapFrame) {
         // V23 — Virtualization
         SYS_VM_CREATE => proc::sys_vm_create(arg0),
         SYS_VM_DESTROY => proc::sys_vm_destroy(arg0 as u32),
-        SYS_VM_START => proc::sys_vm_start(arg0 as u32),
+        SYS_VM_START => proc::sys_vm_start(arg0 as u32, arg1),
         SYS_VM_LIST => proc::sys_vm_list(arg0, arg1),
+        SYS_VM_PAUSE => proc::sys_vm_pause(arg0 as u32),
+        SYS_VM_RESUME => proc::sys_vm_resume(arg0 as u32),
 
         // V24 — Kernel extensions
         SYS_EXT_REGISTER => proc::sys_ext_register(arg0, arg1),
@@ -398,6 +435,7 @@ pub fn syscall_dispatch(tf: &mut TrapFrame) {
         // V21 — Security
         SYS_SECCOMP_ADD => proc::sys_seccomp_add(arg0 as u32, arg1),
         SYS_CAP_AUDIT => proc::sys_cap_audit(arg0, arg1),
+        SYS_SYSCALL_STATS => proc::sys_syscall_stats(arg0, arg1),
 
         _ => Err("unknown syscall"),
     };
@@ -416,6 +454,27 @@ pub fn syscall_dispatch(tf: &mut TrapFrame) {
     }
 
     tf.sepc += 4;
+}
+
+// ── V21.12: Syscall Stats Read ─────────────────────────────────────────────────
+/// Serialize syscall counters into a binary buffer.
+/// Format per entry: [nr:2][count:8] = 10 bytes each (only non-zero entries).
+pub fn syscall_stats_read(buf: &mut [u8]) -> usize {
+    let mut pos = 0usize;
+    unsafe {
+        for nr in 0..256 {
+            let count = SYSCALL_COUNTERS[nr];
+            if count == 0 { continue; }
+            if pos + 10 > buf.len() { break; }
+            buf[pos] = nr as u8;
+            buf[pos+1] = (nr >> 8) as u8;
+            for b in 0..8 {
+                buf[pos+2+b] = (count >> (b*8)) as u8;
+            }
+            pos += 10;
+        }
+    }
+    pos
 }
 
 // ── MMIO helpers ─────────────────────────────────────────────────────────────

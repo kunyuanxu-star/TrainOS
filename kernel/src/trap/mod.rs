@@ -163,6 +163,22 @@ fn page_fault(tf: &mut TrapFrame) {
     }
     let va = stval;
 
+    // V21: Stack guard page detection — kernel stack overflow
+    let sp: usize;
+    unsafe { core::arch::asm!("mv {}, sp", out(reg) sp); }
+    let stack_bottom = sp & !0xFFFF; // 64KB aligned kernel stack
+    let guard_start = stack_bottom;
+    let guard_end = stack_bottom + 0x1000; // 4KB guard page
+    if va >= guard_start && va < guard_end {
+        let pid = crate::sched::current_thread()
+            .map(|t| unsafe { (*t).owner })
+            .unwrap_or(0);
+        crate::println!("STACK OVERFLOW: pid={} sp=0x{:x} fault=0x{:x}", pid, sp, va);
+        kill_process(pid);
+        crate::sched::schedule();
+        return;
+    }
+
     if va == 0 {
         // Null pointer dereference — kill process
         let pid = crate::sched::current_thread()

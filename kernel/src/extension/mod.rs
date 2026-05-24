@@ -12,7 +12,7 @@ pub mod examples;
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
-const MAX_EXTENSIONS: usize = 8;
+pub(crate) const MAX_EXTENSIONS: usize = 8;
 pub const MAX_BYTECODE: usize = 512;
 pub const SCRATCH_SIZE: usize = 256;
 const CYCLE_BUDGET: u32 = 1000;
@@ -61,7 +61,7 @@ pub const HOOK_IPC_SEND: u8 = 4;
 
 // ── Execution Result ───────────────────────────────────────────────────────────
 
-enum ExecResult {
+pub(crate) enum ExecResult {
     Ok,
     Timeout,
     Error(&'static str),
@@ -581,6 +581,65 @@ pub fn run_hook(hook_type: u8, context0: u64, context1: u64) {
                     EXTENSIONS[i].active = false;
                 }
             }
+        }
+    }
+}
+
+// ── V32: Hybrid eBPF+WASM helpers ────────────────────────────────────────
+
+/// Execute a single extension (by ID) without iterating all hooks.
+/// Returns true if the extension executed successfully and remains active.
+pub fn execute_single(ext_id: usize, hook_type: u8, context0: u64, context1: u64) -> bool {
+    unsafe {
+        if ext_id >= EXT_COUNT || !EXTENSIONS[ext_id].active {
+            return false;
+        }
+        let result = execute_extension(&mut EXTENSIONS[ext_id], hook_type, context0, context1);
+        match result {
+            ExecResult::Ok => true,
+            ExecResult::Timeout => {
+                let name_end = EXTENSIONS[ext_id].name.iter().position(|&c| c == 0).unwrap_or(16);
+                let name_str = core::str::from_utf8(&EXTENSIONS[ext_id].name[..name_end])
+                    .unwrap_or("ext");
+                crate::println!("  [EXT:{}] TIMEOUT (1000 cycles) — disabled by hybrid", name_str);
+                EXTENSIONS[ext_id].active = false;
+                false
+            }
+            ExecResult::Error(e) => {
+                let name_end = EXTENSIONS[ext_id].name.iter().position(|&c| c == 0).unwrap_or(16);
+                let name_str = core::str::from_utf8(&EXTENSIONS[ext_id].name[..name_end])
+                    .unwrap_or("ext");
+                crate::println!("  [EXT:{}] runtime error: {} — disabled by hybrid", name_str, e);
+                EXTENSIONS[ext_id].active = false;
+                false
+            }
+        }
+    }
+}
+
+/// Read a single byte from an extension's scratch buffer.
+pub fn read_scratch(ext_id: usize, offset: usize) -> u8 {
+    unsafe {
+        if ext_id < EXT_COUNT && offset < SCRATCH_SIZE {
+            EXTENSIONS[ext_id].scratch[offset]
+        } else {
+            0
+        }
+    }
+}
+
+/// Read a little-endian u32 from an extension's scratch buffer.
+pub fn read_scratch_u32(ext_id: usize, offset: usize) -> u32 {
+    unsafe {
+        if ext_id < EXT_COUNT && offset + 4 <= SCRATCH_SIZE {
+            u32::from_le_bytes([
+                EXTENSIONS[ext_id].scratch[offset],
+                EXTENSIONS[ext_id].scratch[offset + 1],
+                EXTENSIONS[ext_id].scratch[offset + 2],
+                EXTENSIONS[ext_id].scratch[offset + 3],
+            ])
+        } else {
+            0
         }
     }
 }

@@ -10,8 +10,8 @@ pub mod fs;
 
 use crate::trap::TrapFrame;
 
-// V21.12: Syscall statistics counters
-pub static mut SYSCALL_COUNTERS: [u64; 256] = [0u64; 256];
+// V21.12: Syscall statistics counters (512 entries for up to syscall 511)
+pub static mut SYSCALL_COUNTERS: [u64; 512] = [0u64; 512];
 
 // ── Syscall Number Assignments ───────────────────────────────────────────────
 
@@ -288,6 +288,22 @@ pub const SYS_SHUTDOWN: usize = 278;
 pub const SYS_POLL: usize = 279;
 pub const SYS_PPOLL: usize = 280;
 pub const SYS_PSELECT6: usize = 281;
+
+// V34 — AI-Native Scheduling: 282-295
+pub const SYS_PD_SUBMIT: usize = 282;       // Submit P/D workload pair
+pub const SYS_PD_NEXT_DECODE: usize = 283;  // Get next decode step
+pub const SYS_PD_NEXT_PREFILL: usize = 284; // Get next prefill batch
+pub const SYS_PD_PREEMPT: usize = 285;      // Preempt a decode workload
+pub const SYS_PD_RESUME: usize = 286;       // Resume a decode workload
+pub const SYS_KV_ALLOC: usize = 287;        // Allocate KV-cache pages
+pub const SYS_KV_FREE: usize = 288;         // Free KV-cache pages
+pub const SYS_KV_SHARE: usize = 289;        // Share KV-cache pages
+pub const SYS_KV_STATS: usize = 290;        // Get KV-cache statistics
+pub const SYS_GPU_HETERO_SCHED: usize = 291; // GPU-CPU heterogeneous scheduling
+pub const SYS_GPU_MIGRATE: usize = 292;     // Migrate workload to different GPU
+pub const SYS_GPU_BALANCE: usize = 293;     // Balance GPU load
+pub const SYS_AI_SCHED_STATS: usize = 294;  // Get AI scheduling stats
+pub const SYS_AI_SCHED_RESET: usize = 295;  // Reset AI scheduling stats
 
 // ── Dispatch ─────────────────────────────────────────────────────────────────
 
@@ -621,6 +637,22 @@ pub fn syscall_dispatch(tf: &mut TrapFrame) {
         SYS_REMOTE_MIGRATE_PAGE => proc::sys_remote_migrate_page(arg0, arg1 as u8, arg2 as u8),
         SYS_NODE_ID => proc::sys_node_id(),
 
+        // V34 — AI Scheduling
+        SYS_PD_SUBMIT => proc::sys_pd_submit(arg0, arg1, arg2 as u32, arg3 as u32),
+        SYS_PD_NEXT_DECODE => proc::sys_pd_next_decode(),
+        SYS_PD_NEXT_PREFILL => proc::sys_pd_next_prefill(arg0, arg1),
+        SYS_PD_PREEMPT => proc::sys_pd_preempt(arg0),
+        SYS_PD_RESUME => proc::sys_pd_resume(arg0),
+        SYS_KV_ALLOC => proc::sys_kv_alloc(arg0),
+        SYS_KV_FREE => proc::sys_kv_free(arg0, arg1),
+        SYS_KV_SHARE => proc::sys_kv_share(arg0, arg1),
+        SYS_KV_STATS => proc::sys_kv_stats(arg0),
+        SYS_GPU_HETERO_SCHED => proc::sys_gpu_hetero_sched(arg0 as u32, arg1),
+        SYS_GPU_MIGRATE => proc::sys_gpu_migrate(arg0, arg1 as u32),
+        SYS_GPU_BALANCE => proc::sys_gpu_balance(),
+        SYS_AI_SCHED_STATS => proc::sys_ai_sched_stats(arg0),
+        SYS_AI_SCHED_RESET => proc::sys_ai_sched_reset(),
+
         // V21 — Security
         SYS_SECCOMP_ADD => proc::sys_seccomp_add(arg0 as u32, arg1),
         SYS_CAP_AUDIT => proc::sys_cap_audit(arg0, arg1),
@@ -647,6 +679,27 @@ pub fn syscall_dispatch(tf: &mut TrapFrame) {
 
     tf.sepc += 4;
 }
+
+// ── V32: Syscall dispatch for WASM host calls ────────────────────────────
+/// Dispatch a syscall from WASM module context.
+/// Creates a minimal TrapFrame and delegates to the main dispatch.
+pub fn syscall_dispatch_wasm(nr: usize, args: &[usize; 6], _pid: u32) -> isize {
+    use crate::trap::TrapFrame;
+    let mut tf = TrapFrame {
+        a0: args[0],
+        a1: args[1],
+        a2: args[2],
+        a3: args[3],
+        a4: args[4],
+        a5: args[5],
+        a6: 0,
+        a7: nr,
+        ..unsafe { core::mem::zeroed() }
+    };
+    syscall_dispatch(&mut tf);
+    tf.a0 as isize
+}
+
 
 // ── V21.12: Syscall Stats Read ─────────────────────────────────────────────────
 /// Serialize syscall counters into a binary buffer.

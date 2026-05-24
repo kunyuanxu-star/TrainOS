@@ -20,6 +20,8 @@ use alloc::alloc::{alloc, alloc_zeroed, dealloc, Layout};
 
 pub mod wasi;
 pub mod libos;
+pub mod hostcall;
+pub mod hybrid;
 
 // ── Constants ─────────────────────────────────────────────────────────────
 
@@ -36,6 +38,51 @@ const MAX_TYPES: usize = 16;
 const MAX_EXPORTS: usize = 32;
 const MAX_HOST_FUNCS: usize = 16;
 const MAX_IMPORTS: usize = 16;
+
+// ── V32: Performance Statistics ──────────────────────────────────────────
+
+#[derive(Clone, Copy)]
+pub struct WasmPerfStats {
+    pub invocations: u64,
+    pub total_cycles: u64,
+    pub avg_cycles: u64,
+    pub max_cycles: u64,
+    pub syscall_forward_count: u64,
+}
+
+impl WasmPerfStats {
+    pub const fn new() -> Self {
+        WasmPerfStats {
+            invocations: 0,
+            total_cycles: 0,
+            avg_cycles: 0,
+            max_cycles: 0,
+            syscall_forward_count: 0,
+        }
+    }
+
+    pub fn record_invocation(&mut self, cycles: u64) {
+        self.invocations += 1;
+        self.total_cycles = self.total_cycles.wrapping_add(cycles);
+        if cycles > self.max_cycles {
+            self.max_cycles = cycles;
+        }
+        self.avg_cycles = if self.invocations > 0 {
+            self.total_cycles / self.invocations
+        } else {
+            0
+        };
+    }
+
+    pub fn reset(&mut self) {
+        self.invocations = 0;
+        self.total_cycles = 0;
+        self.avg_cycles = 0;
+        self.max_cycles = 0;
+        self.syscall_forward_count = 0;
+    }
+}
+
 
 // ── Control frame kinds ───────────────────────────────────────────────────
 
@@ -152,6 +199,12 @@ static mut HOST_FUNCS: [HostFuncEntry; MAX_HOST_FUNCS] = [
     HostFuncEntry::empty(); MAX_HOST_FUNCS
 ];
 static mut HOST_FUNC_COUNT: usize = 0;
+
+// V32: Per-module performance statistics (indexed by module ID)
+static mut WASM_PERF_STATS: [WasmPerfStats; MAX_WASM_MODULES] = [
+    WasmPerfStats::new(); MAX_WASM_MODULES
+];
+
 
 // ══════════════════════════════════════════════════════════════════════════
 //  LEB128 Helpers
@@ -988,6 +1041,20 @@ pub fn wasm_execute(module_id: usize, function_name: &str, args: &[i64]) -> Resu
                             }
                         }
 
+                        if !found {
+                            // V32: Check syscall table for automatic dispatch
+                            let func_slice = crate::wasm::hostcall::name_to_slice(import_name);
+                            if let Some(nr) = crate::wasm::hostcall::lookup_syscall_by_func(func_slice) {
+                                result = crate::wasm::hostcall::dispatch_syscall(
+                                    nr, &host_args[..nparams.min(MAX_LOCALS)], module_ref.pid,
+                                );
+                                found = true;
+                                // Track syscall forward for perf stats
+                                WASM_PERF_STATS[module_id].syscall_forward_count =
+                                    WASM_PERF_STATS[module_id].syscall_forward_count.wrapping_add(1);
+                            }
+                        }
+
                         if !found { return Err("host function not found"); }
 
                         if nresults > 0 {
@@ -1778,6 +1845,9 @@ pub fn wasm_execute(module_id: usize, function_name: &str, args: &[i64]) -> Resu
             call_stack[fp].pc = new_pc;
         }
 
+        // V32: Record performance statistics
+        WASM_PERF_STATS[module_id].record_invocation(cycle_count as u64);
+
         // Return the top of the value stack (or 0 if empty)
         let result = if sp > 0 { value_stack[sp - 1] as i32 } else { 0 };
         Ok(result)
@@ -1808,4 +1878,98 @@ pub fn wasm_debug_info() -> core::fmt::Result {
         }
     }
     Ok(())
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+//  V32: Module Status & Hot Reload
+// ══════════════════════════════════════════════════════════════════════════
+
+/// Check whether a WASM module is currently loaded.
+pub fn is_module_loaded(module_id: usize) -> bool {
+    unsafe {
+        module_id < MAX_WASM_MODULES && WASM_MODULES[module_id].loaded
+    }
+}
+
+/// Hot-reload a WASM module: replace bytecode without restarting services.
+///
+/// 1. Validates the new bytecode's magic/version header.
+/// 2. Resets parse state (types, imports, functions, exports).
+/// 3. Copies in new bytecode and re-parses all sections.
+/// 4. Preserves existing linear memory allocation.
+/// 5. Resets performance statistics.
+///
+/// Returns Ok(()) on success, or an error string on failure.
+pub fn wasm_hot_reload(module_id: usize, new_bytecode: &[u8]) -> Result<(), &'static str> {
+    unsafe {
+        if module_id >= MAX_WASM_MODULES || !WASM_MODULES[module_id].loaded {
+            return Err("invalid module id");
+        }
+        if !wasm_validate(new_bytecode) {
+            return Err("invalid magic/version in new bytecode");
+        }
+        if new_bytecode.len() > MAX_WASM_SIZE {
+            return Err("new bytecode exceeds maximum size");
+        }
+
+        // Save old counters for debug output
+        let old_funcs = WASM_MODULES[module_id].num_functions;
+        let old_exports = WASM_MODULES[module_id].num_exports;
+
+        // Reset parse state (preserve memory allocation, name, pid)
+        WASM_MODULES[module_id].num_types = 0;
+        WASM_MODULES[module_id].type_params = [0; MAX_TYPES];
+        WASM_MODULES[module_id].type_results = [0; MAX_TYPES];
+        WASM_MODULES[module_id].num_imports = 0;
+        WASM_MODULES[module_id].import_names = [[0; 32]; MAX_IMPORTS];
+        WASM_MODULES[module_id].import_types = [0; MAX_IMPORTS];
+        WASM_MODULES[module_id].num_functions = 0;
+        WASM_MODULES[module_id].func_types = [0; MAX_FUNCTIONS];
+        WASM_MODULES[module_id].code_offsets = [0; MAX_FUNCTIONS];
+        WASM_MODULES[module_id].code_sizes = [0; MAX_FUNCTIONS];
+        WASM_MODULES[module_id].num_locals = [0; MAX_FUNCTIONS];
+        WASM_MODULES[module_id].num_exports = 0;
+        WASM_MODULES[module_id].export_names = [[0; 32]; MAX_EXPORTS];
+        WASM_MODULES[module_id].export_funcs = [0; MAX_EXPORTS];
+
+        // Copy new bytecode
+        let len = new_bytecode.len().min(MAX_WASM_SIZE);
+        for i in 0..len {
+            WASM_MODULES[module_id].bytecode[i] = new_bytecode[i];
+        }
+        WASM_MODULES[module_id].bc_len = len;
+
+        // Re-parse sections
+        parse_module(module_id);
+
+        crate::println!("  WASM: hot-reloaded module {} (funcs: {} -> {}, exports: {} -> {})",
+            module_id, old_funcs, WASM_MODULES[module_id].num_functions,
+            old_exports, WASM_MODULES[module_id].num_exports);
+
+        // Reset performance counters
+        WASM_PERF_STATS[module_id].reset();
+
+        Ok(())
+    }
+}
+
+/// Get performance statistics for a loaded WASM module.
+pub fn wasm_perf_stats(module_id: usize) -> Option<WasmPerfStats> {
+    unsafe {
+        if module_id >= MAX_WASM_MODULES || !WASM_MODULES[module_id].loaded {
+            return None;
+        }
+        Some(WASM_PERF_STATS[module_id])
+    }
+}
+
+/// Reset performance counters for a WASM module.
+pub fn wasm_reset_perf_stats(module_id: usize) -> bool {
+    unsafe {
+        if module_id >= MAX_WASM_MODULES || !WASM_MODULES[module_id].loaded {
+            return false;
+        }
+        WASM_PERF_STATS[module_id].reset();
+        true
+    }
 }

@@ -2377,3 +2377,179 @@ pub fn sys_compat_translate(linux_nr: usize) -> Result<usize, &'static str> {
 pub fn sys_compat_setup_auxv(stack_top: usize, entry: usize, phdr: usize, phent: usize, phnum: usize) -> Result<usize, &'static str> {
     Ok(crate::compat::setup_auxv(stack_top, entry, phdr, phent, phnum))
 }
+
+// ── V34 AI-Native Scheduling syscalls ──────────────────────────────────────
+
+/// Submit a P/D workload pair.
+pub fn sys_pd_submit(ctx_ptr: usize, ctx_len: usize, model_id: u32, gpu_id: u32) -> Result<usize, &'static str> {
+    let ctx = if ctx_ptr != 0 && ctx_len > 0 {
+        let copy_len = ctx_len.min(64);
+        unsafe { core::slice::from_raw_parts(ctx_ptr as *const u8, copy_len) }
+    } else {
+        &[]
+    };
+    match crate::ai::pd_sched::pd_submit(ctx, model_id, gpu_id) {
+        Some((prefill_id, decode_id)) => Ok(prefill_id | (decode_id << 16)),
+        None => Err("pd submit failed"),
+    }
+}
+
+/// Get the next decode step to execute.
+pub fn sys_pd_next_decode() -> Result<usize, &'static str> {
+    crate::ai::pd_sched::pd_next_decode_step().ok_or("no decode ready")
+}
+
+/// Get the next prefill batch.
+pub fn sys_pd_next_prefill(buf_ptr: usize, buf_len: usize) -> Result<usize, &'static str> {
+    let batch = crate::ai::pd_sched::pd_next_prefill_batch();
+    if buf_ptr == 0 || buf_len < 4 {
+        return Ok(batch.len());
+    }
+    let write_count = batch.len().min(buf_len / 4);
+    unsafe {
+        for i in 0..write_count {
+            (buf_ptr as *mut u32).add(i).write_volatile(batch[i] as u32);
+        }
+    }
+    Ok(write_count)
+}
+
+/// Preempt a decode workload.
+pub fn sys_pd_preempt(workload_id: usize) -> Result<usize, &'static str> {
+    crate::ai::pd_sched::pd_preempt_decode(workload_id);
+    Ok(0)
+}
+
+/// Resume a preempted decode workload.
+pub fn sys_pd_resume(workload_id: usize) -> Result<usize, &'static str> {
+    crate::ai::pd_sched::pd_resume_decode(workload_id);
+    Ok(0)
+}
+
+/// Allocate KV-cache pages for a token sequence.
+pub fn sys_kv_alloc(token_count: usize) -> Result<usize, &'static str> {
+    match crate::ai::kvcache::kv_alloc_pages(token_count) {
+        Some(pages) => {
+            if pages.is_empty() {
+                Ok(0)
+            } else {
+                let first = pages[0];
+                let count = pages.len();
+                if first < 0x10000 && count < 0x10000 {
+                    Ok(first | (count << 16))
+                } else {
+                    Ok(first)
+                }
+            }
+        }
+        None => Err("kv alloc failed"),
+    }
+}
+
+/// Free KV-cache pages.
+pub fn sys_kv_free(pages_ptr: usize, count: usize) -> Result<usize, &'static str> {
+    if pages_ptr == 0 {
+        return Err("null ptr");
+    }
+    let count = count.min(64);
+    let mut pages = [0usize; 64];
+    unsafe {
+        for i in 0..count {
+            pages[i] = (pages_ptr as *const u32).add(i).read_volatile() as usize;
+        }
+    }
+    crate::ai::kvcache::kv_free_pages(&pages[..count]);
+    Ok(0)
+}
+
+/// Share KV-cache pages between workloads.
+pub fn sys_kv_share(pages_ptr: usize, count: usize) -> Result<usize, &'static str> {
+    if pages_ptr == 0 {
+        return Err("null ptr");
+    }
+    let count = count.min(64);
+    let mut pages = [0usize; 64];
+    unsafe {
+        for i in 0..count {
+            pages[i] = (pages_ptr as *const u32).add(i).read_volatile() as usize;
+        }
+    }
+    crate::ai::kvcache::kv_share_pages(&pages[..count])?;
+    Ok(0)
+}
+
+/// Get KV-cache statistics.
+pub fn sys_kv_stats(buf_ptr: usize) -> Result<usize, &'static str> {
+    if buf_ptr == 0 {
+        return Err("null buf");
+    }
+    let util = crate::ai::kvcache::kv_utilization();
+    let util_int = (util * 1000.0) as u32;
+    unsafe {
+        (buf_ptr as *mut u32).write_volatile(crate::ai::kvcache::kv_allocated_page_count() as u32);
+        (buf_ptr as *mut u32).add(1).write_volatile(crate::ai::kvcache::kv_dirty_page_count() as u32);
+        (buf_ptr as *mut u32).add(2).write_volatile(util_int);
+    }
+    Ok(12)
+}
+
+/// GPU-CPU heterogeneous scheduling.
+pub fn sys_gpu_hetero_sched(gpu_id: u32, workload_id: usize) -> Result<usize, &'static str> {
+    let wl = unsafe {
+        crate::ai::pd_sched::PD_SCHEDULER.get_workload(workload_id)
+            .ok_or("workload not found")?
+    };
+    let sched = unsafe { &crate::ai::HETERO_SCHEDULER };
+    match sched.schedule(wl) {
+        Some((best_gpu, best_node)) => Ok(best_gpu as usize | ((best_node as usize) << 16)),
+        None => Err("no suitable gpu found"),
+    }
+}
+
+/// Migrate a workload to a different GPU.
+pub fn sys_gpu_migrate(workload_id: usize, to_gpu: u32) -> Result<usize, &'static str> {
+    unsafe {
+        crate::ai::HETERO_SCHEDULER.migrate_workload(workload_id, to_gpu)?;
+    }
+    unsafe {
+        crate::ai::AI_SCHED_STATS.page_migrations =
+            crate::ai::AI_SCHED_STATS.page_migrations.wrapping_add(1);
+    }
+    Ok(0)
+}
+
+/// Balance GPU load across available devices.
+pub fn sys_gpu_balance() -> Result<usize, &'static str> {
+    unsafe {
+        crate::ai::HETERO_SCHEDULER.balance_gpu_load();
+    }
+    Ok(0)
+}
+
+/// Get AI scheduling statistics.
+pub fn sys_ai_sched_stats(buf_ptr: usize) -> Result<usize, &'static str> {
+    if buf_ptr == 0 {
+        return Err("null buf");
+    }
+    let stats = crate::ai::ai_sched_stats();
+    unsafe {
+        let ptr = buf_ptr as *mut u64;
+        ptr.add(0).write_volatile(stats.prefill_workloads);
+        ptr.add(1).write_volatile(stats.decode_steps);
+        ptr.add(2).write_volatile(stats.kv_cache_hits);
+        ptr.add(3).write_volatile(stats.kv_cache_misses);
+        ptr.add(4).write_volatile(stats.kv_cache_evictions);
+        ptr.add(5).write_volatile(stats.page_migrations);
+        ptr.add(6).write_volatile(stats.gpu_balance_operations);
+        ptr.add(7).write_volatile(stats.avg_prefill_latency_us);
+        ptr.add(8).write_volatile(stats.avg_decode_latency_us);
+        ptr.add(9).write_volatile(stats.p99_decode_latency_us);
+    }
+    Ok(80)
+}
+
+/// Reset AI scheduling statistics.
+pub fn sys_ai_sched_reset() -> Result<usize, &'static str> {
+    crate::ai::ai_sched_reset_stats();
+    Ok(0)
+}

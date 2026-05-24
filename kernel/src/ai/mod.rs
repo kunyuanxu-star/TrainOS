@@ -12,9 +12,12 @@
 
 pub(crate) mod gpu_mem;
 pub(crate) mod tensor;
+pub(crate) mod pd_sched;
+pub(crate) mod kvcache;
 
 use gpu_mem::{alloc_region_pages, register_region, gpu_free as gpu_free_region};
 use tensor::{TensorOp, TENSOR_MATMUL};
+use pd_sched::{PdWorkload, PdRole, PdWorkloadState};
 
 // ── Constants ─────────────────────────────────────────────────────────────
 
@@ -551,6 +554,166 @@ pub fn ai_advance_ops(workload_id: usize, ops: usize) {
             AI_QUEUES[workload_id].ops_done += ops;
         }
     }
+}
+
+// ── V34.3 GPU-CPU Heterogeneous Scheduling ─────────────────────────────────
+
+/// GPU-CPU heterogeneous scheduler.
+/// Extends V25 NUMA-aware scheduling for GPU devices.
+pub(crate) struct HeteroScheduler {
+    gpu_numa_map: [(u32, u8); 4],
+    gpu_usage: [u32; 4],
+    cpu_usage: [u32; 8],
+}
+
+impl HeteroScheduler {
+    pub const fn new() -> Self {
+        HeteroScheduler {
+            gpu_numa_map: [(u32::MAX, 0); 4],
+            gpu_usage: [0; 4],
+            cpu_usage: [0; 8],
+        }
+    }
+
+    pub fn set_gpu_numa(&mut self, gpu_id: u32, numa_node: u8) {
+        for entry in self.gpu_numa_map.iter_mut() {
+            if entry.0 == u32::MAX || entry.0 == gpu_id {
+                *entry = (gpu_id, numa_node);
+                return;
+            }
+        }
+    }
+
+    pub fn schedule(&self, workload: &PdWorkload) -> Option<(u32, u8)> {
+        let mut best: Option<(u32, u8, u32)> = None;
+        for entry in self.gpu_numa_map.iter() {
+            let (gpu_id, numa_node) = *entry;
+            if gpu_id == u32::MAX { continue; }
+            let gpu_idx = gpu_id as usize;
+            if gpu_idx >= 4 { continue; }
+            let usage = self.gpu_usage[gpu_idx];
+            match best {
+                None => best = Some((gpu_id, numa_node, usage)),
+                Some((_, _, best_usage)) => {
+                    if usage < best_usage {
+                        best = Some((gpu_id, numa_node, usage));
+                    }
+                }
+            }
+        }
+        best.map(|(gpu, node, _)| (gpu, node))
+    }
+
+    pub fn migrate_workload(&mut self, workload_id: usize, to_gpu: u32) -> Result<(), &'static str> {
+        if (to_gpu as usize) >= 4 { return Err("invalid gpu"); }
+        if let Some(wl) = unsafe { pd_sched::PD_SCHEDULER.get_workload_mut(workload_id) } {
+            crate::println!("HETERO: migrating workload {} from GPU {} to GPU {}",
+                workload_id, wl.gpu_id, to_gpu);
+            wl.gpu_id = to_gpu;
+            Ok(())
+        } else {
+            Err("workload not found")
+        }
+    }
+
+    pub fn balance_gpu_load(&mut self) {
+        let mut hottest = 0usize;
+        let mut coldest = 0usize;
+        let mut max_usage = u32::MIN;
+        let mut min_usage = u32::MAX;
+        for (i, &usage) in self.gpu_usage.iter().enumerate() {
+            if usage > max_usage { max_usage = usage; hottest = i; }
+            if usage < min_usage { min_usage = usage; coldest = i; }
+        }
+        if max_usage <= min_usage + 300 { return; }
+        unsafe {
+            for i in 0..pd_sched::MAX_PD_WORKLOADS {
+                if let Some(ref wl) = pd_sched::PD_SCHEDULER.workloads[i] {
+                    if wl.gpu_id as usize == hottest
+                        && matches!(wl.role, PdRole::Decode)
+                        && matches!(wl.state, PdWorkloadState::Decoding)
+                    {
+                        let wid = wl.workload_id;
+                        let _ = self.migrate_workload(wid, coldest as u32);
+                        crate::println!("HETERO: balanced workload {}: GPU {} -> GPU {}",
+                            wid, hottest, coldest);
+                        break;
+                    }
+                }
+            }
+        }
+        unsafe {
+            crate::ai::AI_SCHED_STATS.gpu_balance_operations =
+                crate::ai::AI_SCHED_STATS.gpu_balance_operations.wrapping_add(1);
+        }
+    }
+
+    pub fn optimal_memory_placement(&self, gpu_id: u32) -> u8 {
+        for entry in self.gpu_numa_map.iter() {
+            if entry.0 == gpu_id { return entry.1; }
+        }
+        0
+    }
+
+    pub fn update_gpu_usage(&mut self, gpu_id: u32, usage: u32) {
+        let idx = gpu_id as usize;
+        if idx < 4 { self.gpu_usage[idx] = core::cmp::min(usage, 1000); }
+    }
+
+    pub fn update_cpu_usage(&mut self, node: u8, usage: u32) {
+        let idx = node as usize;
+        if idx < 8 { self.cpu_usage[idx] = core::cmp::min(usage, 1000); }
+    }
+}
+
+pub(crate) static mut HETERO_SCHEDULER: HeteroScheduler = HeteroScheduler::new();
+
+// ── V34.4 AI Scheduling Statistics ──────────────────────────────────────────
+
+#[derive(Clone, Copy)]
+pub struct AiSchedStats {
+    pub prefill_workloads: u64,
+    pub decode_steps: u64,
+    pub kv_cache_hits: u64,
+    pub kv_cache_misses: u64,
+    pub kv_cache_evictions: u64,
+    pub page_migrations: u64,
+    pub gpu_balance_operations: u64,
+    pub avg_prefill_latency_us: u64,
+    pub avg_decode_latency_us: u64,
+    pub p99_decode_latency_us: u64,
+}
+
+impl AiSchedStats {
+    pub const fn new() -> Self {
+        AiSchedStats {
+            prefill_workloads: 0,
+            decode_steps: 0,
+            kv_cache_hits: 0,
+            kv_cache_misses: 0,
+            kv_cache_evictions: 0,
+            page_migrations: 0,
+            gpu_balance_operations: 0,
+            avg_prefill_latency_us: 0,
+            avg_decode_latency_us: 0,
+            p99_decode_latency_us: 0,
+        }
+    }
+}
+
+pub(crate) static mut AI_SCHED_STATS: AiSchedStats = AiSchedStats::new();
+
+pub fn ai_sched_stats() -> AiSchedStats {
+    unsafe {
+        let mut stats = AI_SCHED_STATS;
+        stats.prefill_workloads = pd_sched::PD_SCHEDULER.prefill_count;
+        stats.decode_steps = pd_sched::PD_SCHEDULER.decode_count;
+        stats
+    }
+}
+
+pub fn ai_sched_reset_stats() {
+    unsafe { AI_SCHED_STATS = AiSchedStats::new(); }
 }
 
 // ── Utility Functions ─────────────────────────────────────────────────────

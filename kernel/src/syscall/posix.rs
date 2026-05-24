@@ -182,6 +182,12 @@ pub fn sys_open(path_ptr: usize, flags: usize, _mode: usize) -> Result<usize, &'
     let plen = read_user_string(path_ptr, MAX_PATH, &mut path_buf)?;
     let path = &path_buf[..plen];
 
+    // V27.3: Sandbox check — open requires read permission (or write if O_CREAT)
+    let wants_write = (flags & 0o100) != 0 || (flags & 0o2) != 0;
+    if !crate::aslr::sandbox_check(pid, path, wants_write) {
+        return Err("sandbox: open denied");
+    }
+
     // If flags has O_CREAT, ensure the file exists by writing empty if it doesn't
     if flags & 0o100 != 0 {
         let _ = vfs_write(path, &[]); // touch the file
@@ -247,6 +253,11 @@ pub fn sys_read(fd: usize, buf_ptr: usize, count: usize) -> Result<usize, &'stat
         }
         core::slice::from_raw_parts(e.path.as_ptr(), e.path_len)
     };
+
+    // V27.3: Sandbox check for file reads
+    if !crate::aslr::sandbox_check(pid, path, false) {
+        return Err("sandbox: read denied");
+    }
 
     // File read via VFS
     let resp = vfs_read(path)?;
@@ -321,6 +332,11 @@ pub fn sys_write(fd: usize, buf_ptr: usize, count: usize) -> Result<usize, &'sta
         let e = &*entry;
         core::slice::from_raw_parts(e.path.as_ptr(), e.path_len)
     };
+
+    // V27.3: Sandbox check for file writes
+    if !crate::aslr::sandbox_check(pid, path, true) {
+        return Err("sandbox: write denied");
+    }
 
     let write_len = core::cmp::min(count, 60); // leave room for IPC headers
     let data = unsafe { core::slice::from_raw_parts(buf_ptr as *const u8, write_len) };

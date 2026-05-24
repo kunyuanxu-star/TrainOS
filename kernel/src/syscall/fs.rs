@@ -94,6 +94,12 @@ pub fn sys_rmdir(path_ptr: usize) -> Result<usize, &'static str> {
 pub fn sys_unlink(path_ptr: usize) -> Result<usize, &'static str> {
     let mut path = [0u8; 32];
     let plen = read_user_path(path_ptr, &mut path)?;
+
+    // V27.3: Sandbox check — unlink requires write permission
+    if !crate::aslr::sandbox_check(current_pid(), &path[..plen], true) {
+        return Err("sandbox: unlink denied");
+    }
+
     vfs_request(5, &path[..plen], &[])?;
     Ok(0)
 }
@@ -104,6 +110,14 @@ pub fn sys_rename(old_ptr: usize, new_ptr: usize) -> Result<usize, &'static str>
     let mut new_path = [0u8; 32];
     let olen = read_user_path(old_ptr, &mut old_path)?;
     let nlen = read_user_path(new_ptr, &mut new_path)?;
+
+    // V27.3: Sandbox check for both old and new paths
+    if !crate::aslr::sandbox_check(current_pid(), &old_path[..olen], true) {
+        return Err("sandbox: rename denied (old path)");
+    }
+    if !crate::aslr::sandbox_check(current_pid(), &new_path[..nlen], true) {
+        return Err("sandbox: rename denied (new path)");
+    }
 
     // Read old content, write to new path, delete old
     let old_data = vfs_request(2, &old_path[..olen], &[])?;

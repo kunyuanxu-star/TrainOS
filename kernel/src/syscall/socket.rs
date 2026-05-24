@@ -21,8 +21,19 @@ pub fn sys_socket(_domain: usize, _typ: usize, _proto: usize) -> Result<usize, &
 
 /// sys_bind(fd, addr_ptr, addr_len) — bind socket to address.
 /// For TCP: registers with TCP service.
-pub fn sys_bind(fd: usize, _addr_ptr: usize, _addr_len: usize) -> Result<usize, &'static str> {
+pub fn sys_bind(fd: usize, addr_ptr: usize, _addr_len: usize) -> Result<usize, &'static str> {
     let sender_pid = current_pid();
+
+    // V27.3: Network sandbox check — extract port from sockaddr
+    let port = if addr_ptr != 0 {
+        unsafe { (addr_ptr as *const u16).read_volatile() }
+    } else {
+        0
+    };
+    if !crate::aslr::sandbox_net_check(sender_pid, port, true) {
+        return Err("sandbox: bind denied");
+    }
+
     let mut msg = Message::new(sender_pid, 1); // LISTEN
     msg.payload_len = 2;
     msg.payload[0] = (fd >> 8) as u8;
@@ -71,8 +82,19 @@ pub fn sys_accept(fd: usize) -> Result<usize, &'static str> {
 }
 
 /// sys_connect(fd, addr_ptr, addr_len) — connect to remote socket.
-pub fn sys_connect(fd: usize, _addr_ptr: usize, _addr_len: usize) -> Result<usize, &'static str> {
+pub fn sys_connect(fd: usize, addr_ptr: usize, _addr_len: usize) -> Result<usize, &'static str> {
     let sender_pid = current_pid();
+
+    // V27.3: Network sandbox check — extract port from sockaddr
+    let port = if addr_ptr != 0 {
+        unsafe { (addr_ptr as *const u16).read_volatile() }
+    } else {
+        0
+    };
+    if !crate::aslr::sandbox_net_check(sender_pid, port, false) {
+        return Err("sandbox: connect denied");
+    }
+
     let mut msg = Message::new(sender_pid, 2); // CONNECT opcode to TCP
     msg.payload_len = 2;
     msg.payload[0] = (fd >> 8) as u8;

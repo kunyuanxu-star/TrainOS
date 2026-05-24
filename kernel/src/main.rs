@@ -177,6 +177,11 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
     mem::sv39::enable_mmu();
     println!("  MMU enabled (Sv39)");
 
+    // V27: Initialize ASLR and KASLR
+    crate::aslr::aslr_init();
+    crate::aslr::kaslr_init();
+    println!("  ASLR/KASLR initialized");
+
     // V28: Initialize WASM/WASI subsystem
     wasm::wasi::wasi_init();
     println!("  WASI subsystem initialized");

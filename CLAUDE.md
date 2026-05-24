@@ -28,7 +28,7 @@ The V21–V30 roadmap is defined in [docs/specs/2026-05-18-trainos-v21-v30-roadm
 2. Architecture: RISC-V 64-bit (rv64gc), Sv39 virtual memory, MIT license.
 3. Language: Rust nightly (`no_std` kernel + user-space, no heap in services).
 
-## Current Status (2026-05-24) — V23.0 (Wave 1 Complete)
+## Current Status (2026-05-24) — V28.0 (Wave 1 + Wave 2 Complete)
 
 ### Completed
 - **Dynamic process spawning**: `sys_spawn` (syscall 3) creates new processes from user-provided ELF data
@@ -75,6 +75,30 @@ The V21–V30 roadmap is defined in [docs/specs/2026-05-18-trainos-v21-v30-roadm
 - **VirtIO backend**: Guest MMIO decode and forwarding to host driver services
 - **Paravirtual timer + PLIC**: Offset-based time CSR, timer compare with interrupt injection, 64-IRQ virtual PLIC
 - **Snapshot/restore**: Full VM state serialization (GPRs, CSRs, G-stage metadata) with magic-number validation
+
+### Wave 2 (V24/V25/V28) — 2026-05-24
+
+#### V24 — Programmable Kernel Extensions (eBPF-like)
+- **Bytecode verifier**: DFS-based reachability analysis, back-edge detection, register bounds checking, scratch memory OOB detection, 512-byte max
+- **Sandboxed interpreter**: 12 opcodes (MOV/ADD/SUB/CMP/JMP/JE/JNE/LOAD/STORE/PUSH/POP/RET), 32 virtual u64 regs, 256B scratch buffer, 1000-cycle budget with timeout
+- **Hook points**: SYSCALL_ENTER/EXIT (dispatch), TIMER (tick handler), IPC_SEND (endpoint send path)
+- **Example extensions**: syscall tracer, packet counter, performance monitor (as const bytecode arrays)
+- **Security**: isolated register set, bounds-checked scratch memory, per-invocation cycle budget, auto-disable on violation
+
+#### V25 — NUMA Scalability
+- **Per-node ready queues**: 64-priority ThreadQueue per node with independent bitmaps
+- **EEVDF scheduler**: Deadline-based ordering, vruntime tracking, weight-weighted time slices, `push_sorted_by_deadline()`
+- **Load balancing**: Every 1000 ticks, migrate from busiest to idlest node if imbalance > 25%
+- **Synchronization**: Per-CPU counters (AtomicU64 per hart), MCS lock (cache-friendly queued spinning), RCU grace-period tracking
+- **Memory sharding**: Per-node allocation stats, local-first `node_alloc_page()` with remote fallback, `migrate_page()` with data copy
+- **Topology discovery**: `register_node()` for multi-node config, QEMU virt default single-node
+
+#### V28 — WASM/WASI Runtime
+- **WASM interpreter**: 36 opcodes (i32/i64 const, arithmetic, bitwise, shifts, comparisons, load/store, memory ops, control flow), 256-slot value stack, 32-frame call stack, 10k-cycle budget
+- **Module management**: Section parsers (Type/Import/Function/Export/Code), 16-module registry, 64KB linear memory (expandable to 256KB)
+- **WASI preview2**: 21 host functions (`fd_read/write/close/seek`, `clock_time_get`, `random_get`, `proc_exit`, environ/args stubs)
+- **libOS mode**: Runtime RISC-V ELF generation for spawning WASM as standalone process, direct kernel-context execution
+- **Host function table**: 16 slots for native Rust ↔ WASM interop
 
 ### Architecture
 **Microkernel** — kernel provides:

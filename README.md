@@ -1,55 +1,84 @@
 # TrainOS
 
-A microkernel operating system written in Rust for RISC-V 64-bit (rv64gc). Runs on RustSBI firmware with the machina emulator.
+A microkernel operating system written in Rust for RISC-V 64-bit (rv64gc). Runs on RustSBI firmware on QEMU.
 
-**Goal**: Surpass Linux in kernel architecture, security, and performance.
+**Goal**: Surpass Linux in kernel architecture, security, and performance — fully designed and implemented with AI.
+
+**Current Version**: V34.0 | **Syscalls**: 295+ | **Kernel**: ~15,000 LOC | **License**: MIT
+
+---
 
 ## Architecture
 
-TrainOS is a **microkernel** — the kernel provides four mechanisms:
+TrainOS is a **microkernel** — kernel mechanisms are minimal, everything else runs in user space:
 
-| Mechanism | Responsibility |
+| Subsystem | Capability |
+|-----------|-----------|
+| **Capability System** | CNode with Mint/Copy/Move/Revoke/Delete, parent-rights enforcement, audit logging |
+| **IPC** | Synchronous message passing, priority inheritance, distributed IPC across nodes |
+| **Scheduler** | NUMA-aware, EEVDF deadline-based, 64-priority per-node queues, SMP |
+| **Memory Manager** | Buddy allocator, Sv39 page tables, transactional MMU, COW fork, W^X enforcement |
+| **Security** | seccomp filter, CHERI software capabilities, ASLR/KASLR, PMP-based TEE enclaves |
+| **Hypervisor** | RISC-V H-extension, two-stage address translation, VM lifecycle, VirtIO backend |
+
+---
+
+## Feature Matrix
+
+### Kernel Services
+
+| Category | Features |
+|----------|----------|
+| **Process** | spawn, fork(COW), exec, exit, kill, waitpid, signal, prctl, priority |
+| **Memory** | mmap, munmap, mprotect, brk, shm_map, madvise, mincore, mlock, page sharing |
+| **Filesystem** | open, read, write, close, stat, lseek, dup, getcwd, symlink, readlink, fsync, flock, fallocate, sendfile, ioctl(termios) |
+| **Socket** | socket, bind, listen, accept, connect, sendto, recvfrom, getsockopt, setsockopt, shutdown |
+| **IPC** | ep_create, send, recv, call, reply + System V semaphores (semget/semop/semctl), message queues (msgget/msgsnd/msgrcv) |
+| **Time** | nanosleep, clock_gettime, gettimeofday, settimeofday, POSIX timers (timer_create/delete/settime/gettime) |
+| **Poll** | poll, ppoll, pselect6, epoll_create/ctl/wait |
+| **Namespace** | UTS (hostname), PID, user namespace with uid mapping |
+| **Capability** | mint, copy, move, delete, cap_stats, cap_audit |
+| **Device** | driver register/unregister/list, MMIO map/read/write, blk-mq, I/O scheduler |
+
+### Advanced Subsystems
+
+| Subsystem | Description |
+|-----------|-------------|
+| **io_uring** | Async I/O with per-process SQ/CQ rings, shared memory mapping, zero-copy splice |
+| **eBPF Extensions** | Sandboxed bytecode verifier (DFS back-edge detection), 12-opcode interpreter, 4 hook types, 3 example extensions |
+| **WASM Runtime** | 36-opcode stack interpreter, WASI preview2 (21 host functions), libOS mode, syscall-as-host-function (55 mappings), eBPF+WASM hybrid |
+| **NUMA** | Per-node ready queues, EEVDF scheduling, load balancing, per-CPU counters, MCS lock, RCU, page migration |
+| **Distributed IPC** | Node discovery (ping/pong heartbeat), remote messaging, distributed capability passing, remote memory pooling, cluster PID namespace |
+| **GPU/AI** | GPU driver (command ring, fence, MSI-X), GART memory, AI workload scheduler (4-level priority + MPS), tensor ops (MATMUL/CONV/RELU/SOFTMAX), model registry, inference pipeline, P/D separation scheduler, KV-cache paged management |
+| **Virtualization** | RISC-V H-extension CSRs, G-stage MMU, VM lifecycle (create/destroy/start/pause/resume), VirtIO backend, PV timer, virtual PLIC, snapshot/restore |
+| **TEE** | PMP-based enclaves (16 entries), SHA-256 attestation, enclave secure IPC (32 channels), CPU+GPU heterogeneous TEE, TCB measurement |
+
+### Security Hardening
+
+| Mechanism | Implementation |
 |-----------|---------------|
-| Capability System | Access control tokens (CNode, Mint/Copy/Move/Revoke/Delete) |
-| IPC Router | Synchronous message passing with priority inheritance |
-| Scheduler | 64 priority levels, bitmap O(1), SMP-aware spinlock |
-| Memory Manager | Buddy allocator, Sv39 page tables, COW fork |
+| **W^X** | Page table enforcement, auto-fix on violation |
+| **ASLR** | PCG-based stack/mmap/PIE randomization, KASLR kernel slide (>30 bits entropy) |
+| **Stack Canary** | 0xDEADBEEF_CAFEBABE guard, overflow detection in trap handler |
+| **Heap Canary** | Pre/post allocation canary verification on free |
+| **seccomp** | Per-process syscall filter (16 rules, allow/kill/log) |
+| **CHERI** | Software 128-bit fat pointer, 16-cap per-process table, pointer validation |
+| **Sandbox** | Path-based (32 rules), network port (8 rules/process), UID namespace |
+| **Cap Audit** | 256-entry circular log with timestamps, leak detection on exit |
 
-All device drivers, filesystems, network stacks, and POSIX compatibility run as **user-space services**.
+### Production Readiness
 
-## Iron Rules
+| Area | Features |
+|------|----------|
+| **Linux ABI** | 120+ syscall mappings, flag/errno translation, ELF auxv, dynamic linker (R_RISCV_RELATIVE/GLOB_DAT/JUMP_SLOT) |
+| **/proc** | cpuinfo, meminfo, mounts, stat, loadavg, uptime, per-process maps/status/cmdline/fd |
+| **/sys** | devices, class/block, class/net |
+| **Service Manager** | Dependency-based boot, auto-restart (3 retries), start/stop/restart/list |
+| **Network** | DHCP client, static IP, DNS resolver, /etc/hosts |
+| **Package Manager** | install/remove/list, dependency tracking, /var/lib/pkgs database |
+| **Hardware** | QEMU virt, SiFive HiFive Unmatched, StarFive VisionFive 2, Canaan K230 configs |
 
-1. **Runtime**: RustSBI (M-mode firmware) + QEMU (RISC-V `-machine virt`).
-2. **Language**: Rust nightly (`no_std` kernel, `no_std` user-space).
-3. **Architecture**: RISC-V 64-bit (rv64gc), Sv39 virtual memory.
-4. **License**: MIT.
-
-## Development Roadmap
-
-See [V21-V30 Roadmap](docs/specs/2026-05-18-trainos-v21-v30-roadmap.md) — a 10-version plan to surpass Linux based on top conference research and open-source evolution.
-
-## Current Status (2026-05-18)
-
-### V20.0 — Applications & Foundation: BusyBox, Persistent VFS, Shell Pipelines
-
-- **40+ system calls**: Process, IPC, capability, MMIO, block I/O, POSIX (stat/lseek/dup/getcwd), signal, waitpid, shm_map
-- **36+ user-space services**: init, ping, fs(VFS), test_fs, sh, test_fork, uart, test_posix, drv, net, tcp(NEW), echo, test_net, test_c, proc, test_proc, demo, stress, bb, pci, veth, tfs, tfs_jrnl, edit, cat, bench, rustdemo, mkfs, http, test_smp, test_posix2, test_mount, test_http, reg, test_sdp, pkg
-- **TCP reliable stream protocol**: 3-way handshake, sequence numbers, ACKs, connection teardown
-- **VFS with procfs**: Directory tree, 16-file slots, virtual /proc files (uptime, meminfo, perf, version, proc)
-- **Process crash isolation**: Kernel kills offending process instead of hanging on unhandled traps
-- **Kernel print macros**: `println!()` / `print!()` using `core::fmt::Write` engine
-- **Refactored main.rs**: ~260 lines (down from 1482), `spawn_service!` macro
-- **SMP verified**: 2 HARTs with concurrent IPC, fork under SMP
-- **Capability system**: Full CNode with Mint/Copy/Move/Revoke/Delete
-- **POSIX compatibility**: open/read/write/close/stat/lseek/dup/getcwd
-- **COW fork + page fault handler**: Full deep-copy with COW breaking
-- **IPC priority inheritance**: Receiver inherits sender priority
-- **Network stack**: Port-based datagram routing (UDP) + TCP reliable streams
-- **VirtIO block I/O**: Full sector read/write via kernel proxy
-- **File system**: TFS journaling file system, persistent storage
-- **PCI/MMIO device support**: PCI enumeration, VirtIO transport, network driver
-- **System utilities**: Shell, process manager, demo, edit, cat, block I/O stress/bench
-- **Multi-user support**: UID/GID, chmod, setuid/getuid
+---
 
 ## Build & Run
 
@@ -57,161 +86,109 @@ See [V21-V30 Roadmap](docs/specs/2026-05-18-trainos-v21-v30-roadmap.md) — a 10
 # Prerequisites
 rustup toolchain install nightly
 rustup target add riscv64gc-unknown-none-elf
-rustup component add rust-src llvm-tools-preview rustfmt clippy
+rustup component add rust-src
 
-# Build all services and kernel
-cd TrainOS
-cargo build --release -p init -p ping -p fs -p test_fs -p sh \
-  -p test_fork -p uart -p test_posix -p drv -p net -p echo -p test_net
-cp target/riscv64gc-unknown-none-elf/release/* kernel/src/
-cargo build --release -p kernel
+# Build everything
+cd TrainOS && make all
 
 # Run on QEMU (2 CPUs)
-cd .. && ./machina/target/release/machina \
-  -M riscv64-ref -smp 2 \
-  -bios machina/pc-bios/rustsbi-riscv64-machina-fw_dynamic.bin \
-  -kernel TrainOS/target/riscv64gc-unknown-none-elf/release/kernel \
-  -nographic
+make run
 ```
+
+Or manually:
+```bash
+qemu-system-riscv64 -machine virt -smp 2 -nographic \
+  -bios rustsbi-qemu-new.bin \
+  -kernel target/riscv64gc-unknown-none-elf/release/kernel
+```
+
+---
+
+## Evolution Timeline
+
+```
+V1-V12    V13-V20     V21-V30          V31-V34
+████████  ██████████  ██████████████   █████████
+ 基础      功能完善    路线图驱动         调研驱动
+  内核     81+ syscall  10版本            4版本
+  IPC      35+ 服务     15,050 行         5,700 行
+```
+
+| Phase | Versions | Approach | Key Outcome |
+|-------|----------|----------|-------------|
+| **Foundation** | V1-V12 | Incremental | Boot, MMU, scheduler, IPC, FS, network, VirtIO |
+| **Feature** | V13-V20 | Feature-driven | TCP, VFS, namespaces, 35+ services, POSIX |
+| **Roadmap** | V21-V30 | Plan-driven (10 versions in 4 waves) | Formal verification, io_uring, virtualization, eBPF, NUMA, distributed IPC, CHERI/ASLR, WASM, GPU/AI, Linux ABI |
+| **Research** | V31-V34 | CCF-A paper research-driven | Transactional MMU (CortenMM SOSP'25), WASM hybrid (WABI EuroSys'25), TEE (TEEM³ ASPLOS'26), P/D scheduler (OSDI'24) |
+
+### Research Foundation (V31-V34)
+
+V31-V34 are based on a systematic survey of 27 CCF-A conference papers (SOSP/OSDI/EuroSys/ASPLOS/USENIX ATC 2024-2026). See [research report](os-ccfa-research-2024-2026/report.md) for full analysis.
+
+---
 
 ## Project Structure
 
 ```
 TrainOS/
-├── kernel/src/               # ~30 files, ~3500 lines
-│   ├── cap/                  # Capability system (types, ops)
-│   ├── ipc/                  # IPC endpoints, messages
-│   ├── syscall/              # Syscall dispatch + POSIX module
-│   ├── mem/                  # Buddy, Sv39, heap
-│   ├── trap/                 # Trap asm, dispatch, page fault
-│   ├── proc/                 # Process, thread, switch, ELF
-│   ├── sched/                # 64-prio SMP scheduler
-│   ├── sync.rs               # SpinLock primitive
-│   ├── per_cpu.rs            # Per-CPU data structures
-│   └── main.rs               # Boot sequence
-├── services/                 # 24 user-space services
-│   ├── init/ (pid=1)         # IPC receiver
-│   ├── ping/ (pid=2)         # IPC sender demo
-│   ├── fs/   (pid=3)         # File system service
-│   ├── test_fs/              # FS RPC test
-│   ├── sh/                   # Interactive shell
-│   ├── test_fork/            # COW fork test
-│   ├── uart/                 # UART MMIO demo
-│   ├── test_posix/           # POSIX API test
-│   ├── drv/                  # VirtIO MMIO driver
-│   ├── net/                  # Network stack (port routing)
-│   ├── echo/                 # Echo service (port 7)
-│   ├── demo/                 # System demo (V8.0 banner, IPC/FS/MEM/CAP/PERF)
-│   ├── stress/               # Block I/O stress test
-│   ├── bb/                   # Block I/O benchmark
-│   ├── pci/                  # PCI device enumeration
-│   ├── veth/                 # Virtual Ethernet driver
-│   ├── tfs/                  # TFS file system service
-│   ├── tfs_jrnl/             # TFS journaling layer
-│   ├── edit/                 # Text editor
-│   ├── cat/                  # File viewer
-│   └── test_net/             # Network stack test
-├── lib/tros/                 # User-space syscall library
+├── kernel/src/                  # Kernel (~15,000 LOC)
+│   ├── cap/                     # Capability system
+│   ├── ipc/                     # IPC endpoints, messages
+│   ├── syscall/                 # Syscall dispatch (295+), POSIX, memory, socket, fs
+│   ├── mem/                     # Buddy allocator, Sv39 page tables, heap, TxMMU
+│   ├── trap/                    # Trap asm, dispatch, page fault with COW
+│   ├── proc/                    # Process, thread, switch, ELF loader
+│   ├── sched/                   # EEVDF scheduler, NUMA-aware
+│   ├── security/                # W^X, seccomp, cap audit, canary, TEE
+│   ├── aslr/                    # ASLR, CHERI, sandbox
+│   ├── iouring/                 # io_uring async I/O
+│   ├── extension/               # eBPF-like kernel extensions
+│   ├── hypervisor/              # RISC-V H-extension, VM lifecycle, VirtIO, PV timer
+│   ├── numa/                    # NUMA scheduler, per-CPU counters, MCS lock, RCU
+│   ├── distributed/             # Distributed IPC, remote memory
+│   ├── wasm/                    # WASM interpreter, WASI, libOS, hostcall, hybrid
+│   ├── ai/                      # GPU driver, AI scheduler, tensor ops, KV-cache
+│   ├── compat/                  # Linux ABI, /proc, /sys, dynamic linker, deploy
+│   ├── device/                  # Driver framework, blk-mq, I/O scheduler
+│   ├── invariant.rs             # Kernel invariant checks
+│   └── main.rs                  # Boot sequence, service spawning
+├── services/                    # User-space services
+├── lib/tros/                    # User-space syscall library
 ├── docs/
-│   ├── specs/                # Design specifications
-│   └── plans/                # Implementation plans
-└── Cargo.toml                # Workspace root
+│   ├── specs/                   # Design specifications + roadmap
+│   └── plans/                   # Implementation plans
+├── os-ccfa-research-2024-2026/  # OS conference paper research
+│   ├── outline.yaml             # 27-item research framework
+│   ├── fields.yaml              # 26-field definition
+│   ├── results/                 # 12 deep-researched JSON files
+│   └── report.md                # 510-line research report
+├── Makefile
+└── Cargo.toml
 ```
 
-## System Calls (35+)
+---
 
-| Number | Name | Description |
-|--------|------|-------------|
-| 0 | exit | Terminate process |
-| 1 | putchar | SBI console output (forwarded) |
-| 2 | getchar | SBI console input (forwarded) |
-| 3 | spawn | Spawn new process from ELF |
-| 4 | fork | COW fork current process |
-| 5 | getpid | Get current process ID |
-| 6 | yield | Yield CPU (stays ready) |
-| 10 | ep_create | Create IPC endpoint |
-| 11 | send | Send message to endpoint |
-| 12 | recv | Receive message from endpoint (blocking) |
-| 20 | mmio_map | Map physical MMIO into process address space |
-| 21 | mmio_read32 | Read 32-bit MMIO (kernel proxy) |
-| 22 | mmio_write32 | Write 32-bit MMIO (kernel proxy) |
-| 30 | mint | Derive capability with reduced rights |
-| 31 | copy | Copy capability to another CNode |
-| 32 | move | Move capability between CNodes |
-| 33 | delete | Delete capability from slot |
-| 34 | cap_stats | Query capability counts |
-| 40 | proclist | List processes |
-| 41 | kill | Kill process by PID |
-| 42 | meminfo | Query allocated page count |
-| 43 | perf_stats | IPC/context-switch counters |
-| 44 | uptime | System uptime in ticks |
-| 45 | blk_write | Write block via VirtIO |
-| 46 | blk_read | Read block via VirtIO |
-| 50 | open | POSIX open (IPC→FS) |
-| 51 | read | POSIX read (IPC→FS) |
-| 52 | write | POSIX write (IPC→FS) |
-| 53 | close | POSIX close (IPC→FS) |
+## Key Design Decisions
 
-Full reference: [docs/syscalls.md](docs/syscalls.md)
+| Decision | Rationale |
+|----------|-----------|
+| Pure Rust (`no_std`) | Memory safety at compile time, no UB from C |
+| Microkernel | Minimal TCB, fault isolation, formal verification feasible |
+| Capability-based security | Fine-grained access control, no ambient authority |
+| RISC-V only | Clean ISA, open standard, growing ecosystem |
+| Sv39 virtual memory | Standard RISC-V paging, 512GB user address space |
+| AI-designed | All code and architecture co-designed with AI |
+
+---
 
 ## Documentation
-- [Architecture Guide](docs/architecture.md)
-- [Service Development Tutorial](docs/service-dev.md)  
-- [System Call Reference](docs/syscalls.md)
-- [Design Specifications](docs/specs/)
 
-## Demo Output
+- [V21-V30 Roadmap](docs/specs/2026-05-18-trainos-v21-v30-roadmap.md)
+- [Wave 1 Design Spec](docs/specs/2026-05-24-wave1-v21-v22-v23-design.md)
+- [OS Research Report](os-ccfa-research-2024-2026/report.md)
+- [CLAUDE.md](CLAUDE.md) — AI agent context
 
-```
-========================================
-  TrainOS V8.0 System Demo
-========================================
-
-[1/5] IPC: ping -> init ... OK
-[2/5] FS: write -> read ... OK
-[3/5] MEM: allocated pages = 1234 OK
-[4/5] CAP: capability system ... OK
-[5/5] PERF: IPC counters ... OK
-
-========================================
-  All systems operational
-  TrainOS V8.0 — READY
-========================================
-```
-
-## IPC Protocol
-
-**Well-Known Endpoints**:
-| EP | Service | Purpose |
-|----|---------|---------|
-| 1 | init | System init, IPC receiver |
-| 2 | fs | File system service |
-| 3 | net | Network stack (port routing) |
-
-**FS Operations** (via EP 2):
-| Opcode | Name | Format |
-|--------|------|--------|
-| 2 | READ | [reply_ep] → response payload |
-| 3 | WRITE | [len, data..., reply_ep] → "OK" |
-
-**NET Operations** (via EP 3):
-| Opcode | Name | Format |
-|--------|------|--------|
-| 1 | REGISTER | [port(2), listener_ep(2)] |
-| 2 | SEND | [port(2), len(1), data...] → routed to listener |
-
-## Roadmap
-
-- [x] V1.0-V1.1: Boot, MMU, buddy, scheduler, init, cap + IPC + syscalls
-- [x] V1.2-V1.4: IPC demo, FS service, Shell
-- [x] V1.5-V2.0: MMIO, COW fork, priority inheritance
-- [x] V2.1-V2.5: SMP, Cap enforcement, POSIX, VirtIO, Network
-- [x] V3.0-V3.2: Active IPI, C program support, VirtIO block, Proc service
-- [x] V4.0-V6.0: PCI, VETH networking, TFS journaling file system
-- [x] V7.0-V8.0: Demo suite, block stress, text utilities, full doc
-- [x] V9.0-V12.0: Package manager, HTTP server, multi-user, shared memory, signals
-- [x] V13.0: TCP protocol, VFS+procfs, process crash isolation, kernel print macros
-- [ ] V14.0: Epoll/kqueue async I/O, socket API, container namespaces
+---
 
 ## License
 

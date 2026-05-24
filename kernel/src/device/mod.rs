@@ -13,6 +13,9 @@
 //   DRV_PCI     = 4  — PCI device driver
 //   DRV_DISPLAY = 5  — display driver
 
+pub mod merge;
+pub mod sched;
+
 pub const DRV_BLOCK: u32 = 1;
 pub const DRV_NET: u32 = 2;
 pub const DRV_CHAR: u32 = 3;
@@ -121,4 +124,103 @@ pub fn probe_pci(vendor: u16, device: u16) -> Option<(usize, u32)> {
         }
     }
     None
+}
+
+// ── V22.5 Multi-Queue Block Layer (blk-mq) ──────────────────────────────────
+
+/// Maximum entries per per-CPU block queue.
+pub const BLK_MQ_ENTRIES: usize = 32;
+
+/// Maximum number of per-CPU queues (one per hardware thread).
+pub const BLK_MQ_MAX_QUEUES: usize = 8;
+
+/// A single entry in a per-CPU block queue.
+#[derive(Copy, Clone)]
+pub struct BlkMqEntry {
+    pub sector: u64,
+    pub count: u32,
+    pub buf: u64,
+    pub write: bool,
+    pub used: bool,
+}
+
+impl BlkMqEntry {
+    pub const fn empty() -> Self {
+        BlkMqEntry { sector: 0, count: 0, buf: 0, write: false, used: false }
+    }
+}
+
+/// A per-CPU queue of pending block I/O requests.
+pub struct BlkMqQueue {
+    pub entries: [BlkMqEntry; BLK_MQ_ENTRIES],
+    pub head: usize,
+    pub tail: usize,
+}
+
+impl BlkMqQueue {
+    pub const fn empty() -> Self {
+        BlkMqQueue {
+            entries: [BlkMqEntry::empty(); BLK_MQ_ENTRIES],
+            head: 0,
+            tail: 0,
+        }
+    }
+}
+
+/// Global array of per-CPU block queues.
+pub static mut BLK_QUEUES: [BlkMqQueue; BLK_MQ_MAX_QUEUES] = [
+    BlkMqQueue::empty(),
+    BlkMqQueue::empty(),
+    BlkMqQueue::empty(),
+    BlkMqQueue::empty(),
+    BlkMqQueue::empty(),
+    BlkMqQueue::empty(),
+    BlkMqQueue::empty(),
+    BlkMqQueue::empty(),
+];
+
+/// Submit a block I/O request to the specified per-CPU queue.
+///
+/// Returns the queue index on success, or `None` if the queue is full
+/// or `cpu` is out of range.
+pub fn blk_submit(cpu: usize, sector: u64, count: u32, buf: u64, write: bool) -> Option<usize> {
+    unsafe {
+        if cpu >= BLK_MQ_MAX_QUEUES {
+            return None;
+        }
+        let queue = &mut BLK_QUEUES[cpu];
+        if queue.tail - queue.head >= BLK_MQ_ENTRIES {
+            return None; // queue is full
+        }
+        let idx = queue.tail % BLK_MQ_ENTRIES;
+        queue.entries[idx] = BlkMqEntry { sector, count, buf, write, used: true };
+        queue.tail += 1;
+        Some(cpu)
+    }
+}
+
+/// Drain (dequeue) all pending requests from the specified per-CPU queue.
+///
+/// Calls the provided closure for each drained entry.
+/// Returns the number of requests processed.
+pub fn blk_drain<F: FnMut(&BlkMqEntry)>(cpu: usize, mut callback: F) -> usize {
+    unsafe {
+        if cpu >= BLK_MQ_MAX_QUEUES {
+            return 0;
+        }
+        let queue = &mut BLK_QUEUES[cpu];
+        let mut drained = 0;
+        while queue.head < queue.tail {
+            let idx = queue.head % BLK_MQ_ENTRIES;
+            if queue.entries[idx].used {
+                callback(&queue.entries[idx]);
+                queue.entries[idx].used = false;
+                drained += 1;
+            }
+            queue.head += 1;
+        }
+        queue.head = 0;
+        queue.tail = 0;
+        drained
+    }
 }

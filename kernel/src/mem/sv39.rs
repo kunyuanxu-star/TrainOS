@@ -414,6 +414,33 @@ pub fn make_satp(root_phys: usize) -> usize {
 /// Set up kernel identity mapping for all physical memory.
 /// KERNEL_VBASE is aligned so that VPN2=0 for the first 1GB.
 /// We use 2MB superpages (L1 entries with R/W/X set, no L0 page).
+/// Count user pages (V=1, U=1) in a page table. For invariant checks.
+pub fn count_user_pages(root_phys: usize) -> usize {
+    let mut count = 0usize;
+    unsafe {
+        let l2 = &*(pa_to_kva(root_phys) as *const [PTE; 512]);
+        for vpn2 in 0..256 {
+            let l2e = l2[vpn2];
+            if !l2e.is_valid() || l2e.is_leaf() { continue; }
+            let l1 = &*(pa_to_kva(l2e.phys_addr()) as *const [PTE; 512]);
+            for vpn1 in 0..512 {
+                let l1e = l1[vpn1];
+                if !l1e.is_valid() { continue; }
+                if l1e.is_leaf() {
+                    if l1e.is_user() { count += 1; }
+                    continue;
+                }
+                let l0 = &*(pa_to_kva(l1e.phys_addr()) as *const [PTE; 512]);
+                for vpn0 in 0..512 {
+                    let l0e = l0[vpn0];
+                    if l0e.is_valid() && l0e.is_user() { count += 1; }
+                }
+            }
+        }
+    }
+    count
+}
+
 pub unsafe fn setup_kernel_mapping() {
     let dram_base = super::layout::DRAM_BASE;
     let root = root_pt_phys();

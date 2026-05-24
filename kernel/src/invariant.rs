@@ -15,9 +15,28 @@ pub fn run_checks() {
 
 fn check_memory_invariants() {
     let allocated = crate::mem::buddy::allocated_pages();
+    let free = crate::mem::buddy::count_free_pages();
     let total = crate::mem::buddy::total_pages();
-    if allocated > total {
-        crate::println!("INVARIANT: allocated pages ({}) > total pages ({})", allocated, total);
+    if allocated + free != total {
+        crate::println!(
+            "INVARIANT: allocated({}) + free({}) != total({})",
+            allocated, free, total
+        );
+    }
+
+    let procs = crate::proc::PROCESSES.lock();
+    let mut user_pages = 0usize;
+    for p in procs.iter() {
+        if p.state != crate::proc::process::ProcessState::Dead {
+            user_pages += crate::mem::sv39::count_user_pages(p.page_table_root);
+        }
+    }
+    drop(procs);
+    if user_pages > allocated {
+        crate::println!(
+            "INVARIANT: user pages ({}) > allocated pages ({})",
+            user_pages, allocated
+        );
     }
 }
 
@@ -70,8 +89,35 @@ fn check_cap_invariants() {
 }
 
 fn check_ipc_invariants() {
-    // Verify endpoint table integrity (no dangling pointers)
-    // Lightweight check: count of sends/recvs should be monotonically increasing
+    // Validate endpoint table integrity
+    let eps = crate::ipc::ENDPOINTS.lock();
+    for (i, ep_opt) in eps.iter().enumerate() {
+        if i == 0 { continue; } // slot 0 unused
+        let Some(ep) = ep_opt else { continue; };
+
+        // Validate waiting_receiver integrity
+        if let Some(recv) = ep.waiting_receiver {
+            unsafe {
+                if (*recv).state != crate::proc::thread::ThreadState::Waiting {
+                    crate::println!(
+                        "INVARIANT: endpoint {} waiting_receiver not in Waiting state",
+                        i
+                    );
+                }
+                let valid_target = matches!((*recv).wait_target,
+                    Some(crate::proc::thread::WaitTarget::Endpoint(id)) if id == i);
+                if !valid_target {
+                    crate::println!(
+                        "INVARIANT: endpoint {} waiting_receiver has mismatched wait_target",
+                        i
+                    );
+                }
+            }
+        }
+    }
+    drop(eps);
+
+    // Count-based lightweight check
     let sends = crate::ipc::endpoint::SEND_COUNT.load(core::sync::atomic::Ordering::Relaxed);
     let recvs = crate::ipc::endpoint::RECV_COUNT.load(core::sync::atomic::Ordering::Relaxed);
     if recvs > sends + 1000 {

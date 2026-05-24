@@ -218,6 +218,20 @@ pub fn total_pages() -> usize {
     ALLOCATOR.inner.lock().total_pages()
 }
 
+/// Count all free pages across all orders for invariant checking.
+pub fn count_free_pages() -> usize {
+    let inner = ALLOCATOR.inner.lock();
+    let mut total = 0usize;
+    for order in 0..=MAX_ORDER {
+        let mut cur = inner.free_lists[order];
+        while let Some(page) = cur {
+            total += 1 << order;
+            unsafe { cur = node_next(page, inner.base); }
+        }
+    }
+    total
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

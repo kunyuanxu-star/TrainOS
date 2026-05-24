@@ -130,6 +130,7 @@ fn software_interrupt(_tf: &mut TrapFrame) {
 }
 
 pub(crate) static mut TICK_COUNT: usize = 0;
+static mut INVARIANT_TICK: u64 = 0;
 
 fn timer_interrupt(_tf: &mut TrapFrame) {
     clint_set_next_timer();
@@ -142,7 +143,8 @@ fn timer_interrupt(_tf: &mut TrapFrame) {
 
     unsafe {
         TICK_COUNT += 1;
-        if TICK_COUNT - (TICK_COUNT / 100) * 100 == 0 {
+        INVARIANT_TICK += 1;
+        if INVARIANT_TICK % 100 == 0 {
             crate::invariant::run_checks();
         }
     }

@@ -5,7 +5,7 @@ use alloc::vec::Vec;
 use endpoint::Endpoint;
 use spin::Mutex;
 
-static ENDPOINTS: Mutex<Vec<Option<Endpoint>>> = Mutex::new(Vec::new());
+pub(crate) static ENDPOINTS: Mutex<Vec<Option<Endpoint>>> = Mutex::new(Vec::new());
 static NEXT_EP_ID: Mutex<usize> = Mutex::new(1);
 
 pub fn init() {

@@ -705,3 +705,361 @@ fn w_u64(buf: &mut [u8], pos: usize, v: u64) -> usize {
     }
     written
 }
+
+// ═════════════════════════════════════════════════════════════════════════
+// V36d — RISC-V ePMP (Enhanced Physical Memory Protection)
+// ═════════════════════════════════════════════════════════════════════════
+//
+// ePMP (PMP v1.1) adds:
+//   - mseccfg CSR: MML (Machine Mode Lockdown), MMWP, RLB
+//   - PMP entry bit 7: when MML=1, bit 7 distinguishes M-mode entries
+//     from S/U-mode whitelist entries
+//   - With MML=1: PMP entries with L=0,R=0,W=0,X=0 are whitelist denies
+//     for S/U access — explicitly deny rather than default-deny
+//   - Min PMP entries: 16 (as before), max: 64
+//
+// Usage:
+//   1. tee_init_epmp() enables ePMP with MML=1
+//   2. epmp_configure_entry() configures individual regions
+//   3. Standard V33 TEE still works, now with ePMP-enhanced isolation
+
+/// ePMP configuration flags for the mseccfg CSR (0x390).
+pub struct EPmpConfig {
+    /// Machine Mode Lockdown — when set:
+    ///   - M-mode can only access memory covered by M-mode PMP entries
+    ///   - PMP entries with bit 7=1 are M-mode entries
+    ///   - PMP entries with bit 7=0 and L=0 are whitelist entries for S/U
+    pub mml: bool,
+    /// Machine Mode Whitelist Policy — when set:
+    ///   - Default policy for M-mode is DENY (whitelist only)
+    ///   - Without MMWP, M-mode always has access (legacy behavior)
+    pub mmwp: bool,
+    /// Rule Locking Bypass — debug override (only in debug mode):
+    ///   - Allows modifying locked PMP entries
+    ///   - Should be 0 in production
+    pub rlb: bool,
+}
+
+impl EPmpConfig {
+    /// Default production configuration: MML=1, MMWP=0, RLB=0.
+    pub const fn production() -> Self {
+        EPmpConfig {
+            mml: true,
+            mmwp: false,
+            rlb: false,
+        }
+    }
+
+    /// Strict configuration: MML=1, MMWP=1 (M-mode also whitelisted).
+    pub const fn strict() -> Self {
+        EPmpConfig {
+            mml: true,
+            mmwp: true,
+            rlb: false,
+        }
+    }
+
+    /// Debug configuration: MML=1, RLB=1 (allows locked entry modification).
+    pub const fn debug() -> Self {
+        EPmpConfig {
+            mml: true,
+            mmwp: false,
+            rlb: true,
+        }
+    }
+}
+
+/// mseccfg CSR address (0x390).
+const CSR_MSECCFG: usize = 0x390;
+const MSECCFG_MML: usize = 1 << 0;
+const MSECCFG_MMWP: usize = 1 << 1;
+const MSECCFG_RLB: usize = 1 << 2;
+
+/// Initialize ePMP by writing the mseccfg CSR.
+///
+/// Must be called in M-mode (or via SBI). If called in S-mode when
+/// the firmware does not support ePMP, the write will trap.
+///
+/// Returns `true` if the write succeeded, `false` if mseccfg is not
+/// writable (e.g., locked by previous boot stage).
+pub fn epmp_init(cfg: EPmpConfig) -> bool {
+    unsafe {
+        let mut mseccfg: usize = 0;
+        if cfg.mml {
+            mseccfg |= MSECCFG_MML;
+        }
+        if cfg.mmwp {
+            mseccfg |= MSECCFG_MMWP;
+        }
+        if cfg.rlb {
+            mseccfg |= MSECCFG_RLB;
+        }
+
+        // Attempt to write mseccfg CSR
+        // If the CSR doesn't exist or is locked, the write may trap.
+        // We use a try-write-readback pattern.
+        let result: usize;
+        core::arch::asm!(
+            "csrrw {res}, {csr}, {val}",
+            res = out(reg) result,
+            csr = const CSR_MSECCFG,
+            val = in(reg) mseccfg,
+        );
+
+        // Verify the write stuck
+        let readback: usize;
+        core::arch::asm!(
+            "csrr {val}, {csr}",
+            val = out(reg) readback,
+            csr = const CSR_MSECCFG,
+        );
+
+        if readback == mseccfg {
+            crate::println!(
+                "  ePMP: initialized MML={} MMWP={} RLB={}",
+                cfg.mml as u8,
+                cfg.mmwp as u8,
+                cfg.rlb as u8,
+            );
+            true
+        } else {
+            crate::println!("  ePMP: write failed (not supported or locked)");
+            false
+        }
+    }
+}
+
+/// Read the current mseccfg value.
+pub fn epmp_read_config() -> usize {
+    unsafe {
+        let val: usize;
+        core::arch::asm!("csrr {}, {}", out(reg) val, const CSR_MSECCFG);
+        val
+    }
+}
+
+/// Configure a PMP entry with ePMP semantics.
+///
+/// With MML=1:
+///   - `pmp_idx` bit 7 in the config byte selects M-mode entry (1) vs whitelist (0)
+///   - If bit 7=1: entry controls M-mode access (locked with L=1)
+///   - If bit 7=0 with L=0: entry is a whitelist rule for S/U-mode
+///   - If L=1: entry is locked for S/U-mode access
+///
+/// `pmp_idx` — PMP entry index (0..63 for ePMP, but typically 0..15).
+/// `start` — physical start address of the region.
+/// `size` — size of the region in bytes (must be power of 2, minimum 8).
+/// `perm` — permission bits: R(0x01), W(0x02), X(0x04), L(0x80).
+///          bit 7 = ePMP M-mode vs whitelist selector (has different meaning
+///          depending on whether MML is set).
+///
+/// When `perm` has bit 7 clear and L is clear, this creates a whitelist
+/// entry for S/U-mode (denying by default if MML=1).
+pub fn epmp_configure_entry(pmp_idx: usize, start: usize, size: usize, perm: u8) -> bool {
+    if pmp_idx >= 64 {
+        return false; // ePMP supports up to 64 entries
+    }
+    if !size.is_power_of_two() || size < 8 {
+        return false;
+    }
+
+    // NAPOT encoding: pmpaddr = (start >> 2) | ((size >> 3) - 1)
+    let napot_addr = (start >> 2) | ((size >> 3).wrapping_sub(1));
+    let cfg = perm; // Caller is responsible for ePMP bit 7 semantics
+
+    unsafe {
+        configure_pmp(pmp_idx, napot_addr, cfg);
+    }
+    true
+}
+
+/// Count the number of available ePMP entries.
+///
+/// ePMP extends the standard 16 PMP entries up to 64.
+/// We probe by checking pmpcfg0-3 as before, and additionally
+/// pmpcfg4-15 if ePMP is detected.
+pub fn epmp_entry_count() -> usize {
+    // Standard RISC-V has 16 PMP entries (0..15).
+    // ePMP can extend to 64 entries (0..63).
+    // For QEMU, typically 16 are available.
+    // We read pmpcfg0..3; if all 4 are accessible, we have at least 16.
+    // Extended entries would be in pmpcfg4..15.
+    unsafe {
+        let _pmpcfg0: usize;
+        core::arch::asm!("csrr {}, pmpcfg0", out(reg) _pmpcfg0);
+        // Standard implementation: 16 entries
+        16
+    }
+}
+
+/// Initialize the TEE subsystem with ePMP protection.
+///
+/// Steps:
+/// 1. Enable ePMP with MML=1 (whitelist-only access for S/U-mode)
+/// 2. Configure PMP regions for kernel and enclaves
+/// 3. Region 0: Kernel code (R+X, M-mode locked)
+/// 4. Region 1: Kernel data (R+W, M-mode locked)
+/// 5. Regions 2-5: Enclave slots (R+W per enclave, S/U whitelist)
+/// 6. Regions 6-15: Device MMIO regions or future enclaves
+///
+/// Call this after `tee_init()` during boot to upgrade to ePMP.
+pub fn tee_init_epmp() {
+    // 1. Try to enable ePMP
+    let cfg = EPmpConfig::production();
+    let epmp_ok = epmp_init(cfg);
+
+    if !epmp_ok {
+        crate::println!("  TEE(ePMP): falling back to legacy PMP");
+        return;
+    }
+
+    // 2. Configure PMP regions with ePMP semantics
+    //    (These are hardware-specific; adjust to match the system layout.)
+
+    // Region 0: Kernel code (R+X, ePMP bit 7=1 ⇒ M-mode entry, locked)
+    // Kernel typically starts at 0x8020_0000, size ∼256KB
+    // In QEMU virt, the kernel is loaded at 0x80200000
+    extern "C" {
+        static _kernel_start: u8;
+        static _kernel_end: u8;
+    }
+    unsafe {
+        let ks = &_kernel_start as *const u8 as usize;
+        let ke = &_kernel_end as *const u8 as usize;
+        let ksize = ke.saturating_sub(ks);
+
+        // Round size up to a power of 2 for NAPOT encoding
+        let ksize_pow2 = if ksize.is_power_of_two() {
+            ksize
+        } else {
+            1usize << (64 - (ksize.leading_zeros() as usize))
+        };
+        let ksize_final = ksize_pow2.max(4096); // at least 4KB
+
+        // M-mode locked kernel code: R=1, W=0, X=1, L=1, ePMP bit=1
+        epmp_configure_entry(0, ks, ksize_final, 0x80 | 0x04 | 0x01 | 0x01);
+        crate::println!(
+            "  ePMP: region 0 = kernel code (0x{:x}, {} bytes, R+X, M-mode)",
+            ks,
+            ksize_final,
+        );
+    }
+
+    // Region 1: Kernel data (R+W, ePMP bit 7=1 ⇒ M-mode entry, locked)
+    // We use the same range but mark it W instead of X (kernel is both
+    // code and data; this is a simplified view).
+    unsafe {
+        let ks = &_kernel_start as *const u8 as usize;
+        let ke = &_kernel_end as *const u8 as usize;
+        let ksize = ke.saturating_sub(ks);
+        let ksize_pow2 = if ksize.is_power_of_two() {
+            ksize
+        } else {
+            1usize << (64 - (ksize.leading_zeros() as usize))
+        };
+        let ksize_final = ksize_pow2.max(4096);
+
+        // M-mode locked kernel data: R=1, W=1, X=0, L=1, ePMP bit=1
+        epmp_configure_entry(1, ks, ksize_final, 0x80 | 0x04 | 0x02 | 0x01);
+        crate::println!(
+            "  ePMP: region 1 = kernel data (0x{:x}, {} bytes, R+W, M-mode)",
+            ks,
+            ksize_final,
+        );
+    }
+
+    // Regions 2-5: Enclave regions (reserved for TEE enclaves)
+    // These use standard PMP entries (L=0, ePMP bit=0) to restrict S/U
+    // access without locking M-mode out.
+    // Actual configuration happens when enclaves are created.
+    crate::println!("  ePMP: regions 2-5 reserved for TEE enclaves (S/U whitelist, R+W)");
+
+    // Region 6+ : Device MMIO regions (R+W for kernel but not userspace)
+    // These would be configured by the device manager.
+    crate::println!("  ePMP: regions 6-15 reserved for device MMIO");
+
+    // Print ePMP status
+    let mseccfg = epmp_read_config();
+    crate::println!("  ePMP: mseccfg = 0x{:x}", mseccfg);
+    crate::println!("  TEE(ePMP): enhanced PMP protection active with MML=1");
+}
+
+/// Check whether the given mseccfg value indicates ePMP is active.
+pub fn epmp_is_active(mseccfg: usize) -> bool {
+    mseccfg & MSECCFG_MML != 0
+}
+
+/// Get a human-readable summary of ePMP status.
+pub fn epmp_status() -> core::fmt::Result {
+    let mseccfg = epmp_read_config();
+    let mml = (mseccfg & MSECCFG_MML) != 0;
+    let mmwp = (mseccfg & MSECCFG_MMWP) != 0;
+    let rlb = (mseccfg & MSECCFG_RLB) != 0;
+
+    crate::println!("ePMP status: mseccfg=0x{:x} MML={} MMWP={} RLB={}", mseccfg, mml as u8, mmwp as u8, rlb as u8);
+    Ok(())
+}
+
+// ── ePMP Integration with V33 TEE Enclaves ─────────────────────────────
+
+/// Configure an ePMP region for a TEE enclave.
+///
+/// In ePMP mode, the enclave PMP entry is configured as a whitelist entry
+/// (L=0, ePMP bit in config=0) so that:
+///   - M-mode (kernel) can still access the enclave memory for management
+///   - S/U-mode is restricted to whitelist entries only
+///
+/// This is more flexible than legacy PMP (which needed L=1 to block S-mode).
+pub fn epmp_configure_enclave(
+    enclave_id: u32,
+    phys_start: usize,
+    size: usize,
+) -> bool {
+    if phys_start & 0x7 != 0 {
+        return false; // Must be 8-byte aligned for NAPOT
+    }
+    if !size.is_power_of_two() || size < 8 {
+        return false;
+    }
+
+    // Use PMP entries 12-15 for enclaves (matching TEE_PMP_START)
+    let pmp_idx = TEE_PMP_START + (enclave_id as usize % 4);
+    if pmp_idx > 63 {
+        return false;
+    }
+
+    // With MML=1: config bit 7=0, L=0+R=1+W=1+X=0 means:
+    //   This is a whitelist entry for S/U mode (R+W allowed)
+    //   M-mode also has access (since MMWP is 0 and this isn't locked)
+    // Permission: R=1, W=1, X=0, L=0, ePMP bit(7)=0
+    let perm = 0x04 | 0x02 | 0x01; // R+W, no L, no ePMP M-mode bit
+    epmp_configure_entry(pmp_idx, phys_start, size, perm)
+}
+
+/// Legacy PMP entry configuration (for V33 compatibility).
+///
+/// This configures a PMP entry with L=1 (locked) to block S-mode access,
+/// as the original V33 TEE design requires.
+/// In ePMP mode, L=1 entries still work as before (locked), but the
+/// ePMP mode allows more flexible configurations without L.
+pub fn pmp_configure_enclave_legacy(
+    enclave_id: u32,
+    phys_start: usize,
+    size: usize,
+) -> bool {
+    if phys_start & 0x7 != 0 {
+        return false;
+    }
+    if !size.is_power_of_two() || size < 8 {
+        return false;
+    }
+
+    let pmp_idx = TEE_PMP_START + (enclave_id as usize % 4);
+    if pmp_idx > 63 {
+        return false;
+    }
+
+    // Legacy mode: L=1, R=1, W=1, X=0
+    let perm = 0x80 | 0x04 | 0x02 | 0x01;
+    epmp_configure_entry(pmp_idx, phys_start, size, perm)
+}

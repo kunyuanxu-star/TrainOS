@@ -133,6 +133,8 @@ pub fn schedule() {
     unsafe {
         match (current_ptr, next) {
             (Some(old), Some(new)) => {
+                // V36a: Save/restore vector context before register context switch
+                crate::trap::switch_vector_context(old, new);
                 context_switch(&mut (*old).task_ctx, &(*new).task_ctx);
                 CTX_SWITCH_COUNT.fetch_add(1, Ordering::Relaxed);
             }

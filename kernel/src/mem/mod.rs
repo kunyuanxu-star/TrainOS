@@ -1,9 +1,17 @@
+pub mod bitmanip;
 pub mod buddy;
+pub mod cache_ops;
 pub mod heap;
 pub mod layout;
 pub mod mseal;
+pub mod ptr_mask;
 pub mod sv39;
+pub mod sv48;
+pub mod svinval;
+pub mod svnapot;
+pub mod svpbmt;
 pub mod txmmu;
+pub mod vector;
 
 use layout::allocatable_range;
 

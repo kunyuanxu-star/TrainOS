@@ -15,11 +15,47 @@
 
 pub mod merge;
 pub mod sched;
+pub mod iommu;
 
 pub const DRV_BLOCK: u32 = 1;
 pub const DRV_NET: u32 = 2;
 pub const DRV_CHAR: u32 = 3;
 pub const DRV_PCI: u32 = 4;
+pub const DRV_IOMMU: u32 = 6;
+
+use crate::mem::cache_ops;
+
+// ── V36c: DMA buffer cache management ─────────────────────────────────────
+//
+// Before initiating a DMA transfer, the kernel must ensure cache coherency
+// between the CPU and the device:
+//
+//   - DMA READ  (device reads from memory): CPU data in cache must be
+//     written back via `cache_clean_range` before the device reads.
+//
+//   - DMA WRITE (device writes to memory): CPU cache lines for the buffer
+//     must be invalidated via `cache_flush_range` (write-back + invalidate)
+//     before the device writes, so the CPU does not read stale data after
+//     the transfer completes.
+
+/// Prepare a memory buffer for a DMA **read** (device → memory).
+///
+/// Invalidates cache lines covering `[buf, buf+len)` so that the CPU
+/// sees fresh data written by the device.  The caller must guarantee
+/// no dirty data is present in the range.
+pub fn dma_prepare_read(buf: usize, len: usize) {
+    cache_ops::cache_flush_range(buf, len);
+}
+
+/// Prepare a memory buffer for a DMA **write** (memory → device).
+///
+/// Writes back (cleans) cache lines covering `[buf, buf+len)` so that
+/// the device sees the latest data written by the CPU.
+pub fn dma_prepare_write(buf: usize, len: usize) {
+    cache_ops::cache_clean_range(buf, len);
+}
+
+// ── Driver framework ──────────────────────────────────────────────────────
 
 const MAX_DRIVERS: usize = 16;
 

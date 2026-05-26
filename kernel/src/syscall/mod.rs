@@ -320,6 +320,10 @@ pub const SYS_IORING_REMOVE_BUFFERS: usize = 309;   // Remove buffer pool
 // V35 — Memory & Security (V35a): 301
 pub const SYS_MSEAL: usize = 301;                    // Memory sealing (mseal)
 
+// V36a — RVV 1.0 Vector Extension: 310-311
+pub const SYS_CAP_VECTOR_ENABLE: usize = 310;        // Grant vector capability
+pub const SYS_VECTOR_STATS: usize = 311;             // Read vector statistics
+
 // ── Dispatch ─────────────────────────────────────────────────────────────────
 
 pub fn syscall_dispatch(tf: &mut TrapFrame) {
@@ -728,6 +732,10 @@ pub fn syscall_dispatch(tf: &mut TrapFrame) {
         SYS_SECCOMP_ADD => proc::sys_seccomp_add(arg0 as u32, arg1),
         SYS_CAP_AUDIT => proc::sys_cap_audit(arg0, arg1),
         SYS_SYSCALL_STATS => proc::sys_syscall_stats(arg0, arg1),
+
+        // V36a — RVV 1.0 Vector Extension
+        SYS_CAP_VECTOR_ENABLE => proc::sys_cap_vector_enable(arg0 as u32),
+        SYS_VECTOR_STATS => proc::sys_vector_stats(arg0, arg1),
 
         _ => Err("unknown syscall"),
     };

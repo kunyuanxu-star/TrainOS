@@ -114,6 +114,7 @@ fn duplicate_resource_data_inner(resource_id: usize) -> Option<ResourceData> {
                 slots: Mutex::new(new_slots),
             })
         }
+        ResourceData::Vector { pid } => Some(ResourceData::Vector { pid: *pid }),
     }
 }
 

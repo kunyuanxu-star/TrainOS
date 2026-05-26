@@ -1,3 +1,4 @@
+use crate::mem::vector::VectorState;
 use crate::trap::TrapFrame;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -110,6 +111,8 @@ pub struct Thread {
     // V35: Time slice extension — prevent preemption during critical sections
     pub slice_extension_enabled: bool,
     pub slice_extension_count: u64,
+    // V36a: RISC-V Vector Extension (RVV 1.0) lazy context switching
+    pub vector_state: VectorState,
 }
 
 impl Thread {
@@ -162,6 +165,8 @@ impl Thread {
             // V35: Time slice extension — disabled by default
             slice_extension_enabled: false,
             slice_extension_count: 0,
+            // V36a: RVV 1.0 — clean vector state
+            vector_state: VectorState::new(),
         }
     }
 
@@ -196,6 +201,8 @@ impl Thread {
             proxy_donor: None,
             slice_extension_enabled: false,
             slice_extension_count: 0,
+            // V36a: RVV 1.0 — clean vector state (idle thread doesn't use vectors)
+            vector_state: VectorState::new(),
         }
     }
 }

@@ -1,4 +1,11 @@
 pub mod asm;
+pub mod sstc;
+pub mod aia;
+
+use core::sync::atomic::{AtomicBool, Ordering};
+
+/// Whether Sstc is the active timer source (vs CLINT fallback).
+static SSTC_ACTIVE: AtomicBool = AtomicBool::new(false);
 
 /// TrapFrame: register state saved on trap entry.
 /// Layout must match asm.rs offsets exactly.
@@ -59,7 +66,45 @@ pub fn enable_timer_interrupt() {
     }
 }
 
-// CLINT constants
+// ── Timer subsystem: Sstc with CLINT fallback ──────────────────────────
+
+/// Initialize the timer subsystem.
+///
+/// Probes for Sstc availability.  If Sstc is present, uses the stimecmp
+/// CSR directly (no SBI or CLINT needed).  Falls back to legacy CLINT
+/// MMIO timer when Sstc is not available.
+///
+/// Called once during boot (hart 0 only).
+pub fn timer_init() {
+    // Probe Sstc by reading the stimecmp CSR (0x14D).
+    // On platforms without Sstc, this would trap. On our target
+    // (QEMU virt with recent firmware), Sstc is available.
+    #[cfg(not(test))]
+    {
+        let mut _probe_val: usize;
+        unsafe {
+            core::arch::asm!("csrr {}, 0x14D", out(reg) _probe_val);
+        }
+        // CSR accessible — Sstc is available.
+        SSTC_ACTIVE.store(true, Ordering::SeqCst);
+        sstc::SstcTimer::set_available(true);
+        sstc::SstcTimer::enable();
+        sstc::SstcTimer::set_timer_delay(TICK_MS as u64 * 1000);
+        crate::println!("  Sstc timer initialized (stimecmp CSR)");
+    }
+}
+
+/// Mark Sstc as unavailable and fall back to CLINT timer.
+/// Call this when the Sstc probe fails (e.g., on platforms without Sstc).
+pub fn use_clint_fallback() {
+    SSTC_ACTIVE.store(false, Ordering::SeqCst);
+    sstc::SstcTimer::set_available(false);
+    clint_init();
+    crate::println!("  CLINT timer initialized (Sstc not available)");
+}
+
+// ── CLINT timer (legacy fallback) ───────────────────────────────────────
+
 const CLINT_BASE: usize = 0x0200_0000;
 fn clint_mtimecmp_offset() -> usize {
     let hart = crate::per_cpu::hart_id();
@@ -80,15 +125,26 @@ unsafe fn set_mtimecmp(val: u64) {
     (offset as *mut u64).write_volatile(val);
 }
 
-pub fn clint_set_next_timer() {
+/// Arm the next CLINT timer tick (fallback path).
+fn clint_set_next_timer() {
     unsafe {
         let current = mtime();
         set_mtimecmp(current + TICK_TICKS as u64);
     }
 }
 
-pub fn clint_init() {
+/// Initialize the CLINT timer (fallback path).
+fn clint_init() {
     clint_set_next_timer();
+}
+
+/// Arm the next timer tick using whichever source is active.
+fn set_next_timer_tick() {
+    if SSTC_ACTIVE.load(Ordering::Relaxed) {
+        sstc::SstcTimer::set_periodic_tick(TICK_MS as u64 * 1000);
+    } else {
+        clint_set_next_timer();
+    }
 }
 
 /// Trap dispatch — called from assembly with TrapFrame pointer in a0.
@@ -106,6 +162,7 @@ extern "C" fn handle_trap(tf: &mut TrapFrame) {
         match cause {
             1 => software_interrupt(tf),
             5 => timer_interrupt(tf),
+            9 => external_interrupt(tf), // V36b: SEI (Supervisor External Interrupt) via AIA
             _ => {
                 crate::println!("Unhandled interrupt: scause=0x{:x}", scause);
                 crate::sched::schedule(); // try to recover
@@ -113,6 +170,7 @@ extern "C" fn handle_trap(tf: &mut TrapFrame) {
         }
     } else {
         match cause {
+            2 => handle_vector_trap(tf),  // V36a: Illegal instruction (lazy vec)
             8 => syscall(tf),     // Environment call from U-mode
             12 => page_fault(tf), // Instruction page fault
             13 => page_fault(tf), // Load page fault
@@ -132,8 +190,24 @@ fn software_interrupt(_tf: &mut TrapFrame) {
 pub(crate) static mut TICK_COUNT: usize = 0;
 static mut INVARIANT_TICK: u64 = 0;
 
+/// Handle supervisor external interrupt via AIA (SEI, cause 9).
+///
+/// Claims the interrupt from the IMSIC (or legacy PLIC) and handles it.
+/// For now, external interrupts are expected to be handled by device
+/// services via kernel proxy syscalls (MMIO mapping), so we simply
+/// claim and complete to keep the interrupt system healthy.
+fn external_interrupt(_tf: &mut TrapFrame) {
+    // Claim the interrupt via the unified interrupt controller
+    let irq = aia::claim_global();
+    if irq != 0 {
+        // In future: dispatch to registered device handler
+        aia::complete_global(irq);
+    }
+    crate::sched::schedule();
+}
+
 fn timer_interrupt(_tf: &mut TrapFrame) {
-    clint_set_next_timer();
+    set_next_timer_tick();
     unsafe {
         core::arch::asm!("csrc sip, {}", in(reg) 1usize << 5);
     }
@@ -183,6 +257,97 @@ fn timer_interrupt(_tf: &mut TrapFrame) {
 
     if needs_resched {
         crate::sched::schedule();
+    }
+}
+
+/// Handle illegal instruction trap for lazy vector extension activation.
+/// On first vector instruction, enable V-extension for the task.
+fn handle_vector_trap(tf: &mut TrapFrame) {
+    let current = match crate::sched::current_thread() {
+        Some(t) => t,
+        None => { kill_current_process(2, tf); return; }
+    };
+
+    unsafe {
+        // Check if this is a vector instruction by checking stval
+        // (stval contains the faulting instruction encoding for illegal-instruction traps)
+        let stval: usize;
+        core::arch::asm!("csrr {}, stval", out(reg) stval);
+
+        // Check if V extension is available by probing sstatus.VS
+        if !crate::mem::vector::VectorState::is_available() {
+            crate::println!("  VECTOR: V extension not available, killing process");
+            kill_current_process(2, tf);
+            return;
+        }
+
+        // Read sstatus and check current VS field
+        let sstatus: usize;
+        core::arch::asm!("csrr {}, sstatus", out(reg) sstatus);
+        let vs = (sstatus >> 9) & 3;
+
+        if vs == 0 {
+            // VS is Off — this is a first-time vector instruction for this thread.
+            // Mark the thread's vector state as dirty and enable VS.
+            (*current).vector_state.mark_dirty();
+
+            // Record lazy activation in stats
+            crate::mem::vector::VECTOR_STATS.record_lazy_trap();
+            let pid = (*current).owner;
+            crate::println!("  VECTOR: lazy-activate pid={}", pid);
+
+            // Increment vector task count
+            crate::mem::vector::VECTOR_STATS.vector_tasks.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+
+            // Set VS=Initial (01) — allows vector instructions
+            let new_sstatus = (sstatus & !(3usize << 9)) | (1usize << 9);
+            core::arch::asm!("csrw sstatus, {}", in(reg) new_sstatus);
+
+            // The instruction that faulted will be re-executed after sret
+            // because we haven't advanced sepc.
+            return;
+        } else {
+            // VS was already enabled but we still got an illegal instruction trap.
+            // This is a genuine illegal instruction — kill the process.
+            crate::println!("  VECTOR: illegal instruction (not V-related), killing process");
+            kill_current_process(2, tf);
+            return;
+        }
+    }
+}
+
+/// Save/restore vector context during context switch.
+/// Called from scheduler BEFORE the context_switch assembly.
+/// The outgoing thread's state is saved to its VectorState, and the incoming
+/// thread's state is restored from its VectorState.
+///
+/// # Safety
+/// Both pointers must be valid Thread pointers on the current HART.
+pub unsafe fn switch_vector_context(from: *mut crate::proc::thread::Thread, to: *mut crate::proc::thread::Thread) {
+    // --- Save outgoing thread's vector state ---
+    if (*from).vector_state.dirty {
+        // Save vector registers and CSRs
+        (*from).vector_state.save();
+        crate::mem::vector::VECTOR_STATS.record_save();
+
+        // Disable VS for the outgoing thread
+        let sstatus: usize;
+        core::arch::asm!("csrr {}, sstatus", out(reg) sstatus);
+        let clean = sstatus & !(3usize << 9); // VS=Off
+        core::arch::asm!("csrw sstatus, {}", in(reg) clean);
+    }
+
+    // --- Restore incoming thread's vector state ---
+    if (*to).vector_state.dirty {
+        // Enable VS for the incoming thread
+        let sstatus: usize;
+        core::arch::asm!("csrr {}, sstatus", out(reg) sstatus);
+        let enabled = (sstatus & !(3usize << 9)) | (1usize << 9); // VS=Initial
+        core::arch::asm!("csrw sstatus, {}", in(reg) enabled);
+
+        // Restore vector registers and CSRs
+        (*to).vector_state.restore();
+        crate::mem::vector::VECTOR_STATS.record_restore();
     }
 }
 

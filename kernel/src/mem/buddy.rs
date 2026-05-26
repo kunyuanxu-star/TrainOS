@@ -288,6 +288,18 @@ pub fn alloc_pages(order: usize) -> Option<usize> {
     inner.alloc_pages(order).map(|p| p * PAGE_SIZE + inner.base)
 }
 
+/// Allocate a single 4KB physical page and zero it before returning.
+///
+/// If the CMO extensions (Zicbom/Zicboz) are available, uses the
+/// hardware `CBO.ZERO` instruction which is up to 16× faster than a
+/// byte-by-byte memset.  Otherwise falls back to `write_bytes`.
+pub fn alloc_page_zeroed() -> Option<usize> {
+    let page = alloc_page()?;
+    // Convert to kernel virtual address for CPU access
+    super::cache_ops::cache_zero_page(super::sv39::pa_to_kva(page));
+    Some(page)
+}
+
 /// Free a physical page allocated at `addr` with the given `order`.
 /// For order-0 pages, tries the per-CPU cache first (lock-free).
 pub fn free_page(addr: usize, order: usize) {

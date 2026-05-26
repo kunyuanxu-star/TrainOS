@@ -126,8 +126,106 @@ pub fn aslr_entropy() -> u32 {
         let heap_e = 20u32;
         let mmap_e = 8u32;
         let pie_e = 8u32;
-        seed_entropy + kaslr_e + stack_e + stack_pid_e + heap_e + mmap_e + pie_e
+        let zkr_e = if zkr_probed() { 16 } else { 0 };
+        seed_entropy + kaslr_e + stack_e + stack_pid_e + heap_e + mmap_e + pie_e + zkr_e
     }
+}
+
+// ── V36c: Zkr — Hardware Entropy Source ────────────────────────────────────
+//
+// Zkr provides the `seed` CSR (0x015), delivering 16 bits of true
+// randomness per read.  The status bits (seed[31:30]) indicate:
+//   00 = OK (valid entropy)
+//   01 = WAIT (re-try)
+//   10 = DEAD (security fault; do not use)
+//   11 = reserved
+
+static mut ZKR_PROBED: bool = false;
+
+/// Whether Zkr was found to be available during probe.
+pub fn zkr_probed() -> bool {
+    unsafe { ZKR_PROBED }
+}
+
+/// Try to read one 16-bit entropy value from the Zkr `seed` CSR.
+///
+/// Returns `Some(bits)` on success, or `None` if Zkr is unavailable
+/// (reads return `usize::MAX` on platforms without the extension).
+#[cfg(not(test))]
+pub fn zkr_entropy_u16() -> Option<u16> {
+    let val: usize;
+    unsafe {
+        // seed CSR is at address 0x015.
+        // csrrs rd, seed, x0 reads the current seed value.
+        core::arch::asm!("csrrs {}, 0x015, x0", out(reg) val);
+    }
+    // When Zkr is not implemented, the read returns 0xFFFF_FFFF on
+    // most hardware (or raises an illegal-instruction trap, but we
+    // assume the trap handler kills the process and we never reach here).
+    if val == usize::MAX {
+        None
+    } else {
+        // Lower 16 bits contain the entropy; upper 2 bits are status.
+        let status = (val >> 30) & 0x3;
+        match status {
+            0 => Some(val as u16),         // OK
+            1 => zkr_entropy_u16(),         // WAIT — retry
+            _ => None,                      // DEAD or reserved
+        }
+    }
+}
+
+#[cfg(test)]
+pub fn zkr_entropy_u16() -> Option<u16> {
+    None // no Zkr on test host
+}
+
+/// Generate a 64-bit ASLR seed by gathering 32 × 16-bit Zkr entropy values.
+///
+/// Each round XORs the new entropy into the accumulator with a shift
+/// to spread the bits.  If any read fails, the function returns `None`.
+pub fn zkr_entropy_seed() -> Option<u64> {
+    let mut seed: u64 = 0;
+    for i in 0..32 {
+        let bits = zkr_entropy_u16()?;
+        // Shift by a varying amount (0, 2, 4, ...) to spread bits.
+        let shift = ((i as u64).wrapping_mul(2)) & 63;
+        if shift > 46 {
+            seed ^= (bits as u64) >> (64 - shift);
+        } else {
+            seed ^= (bits as u64) << shift;
+        }
+    }
+    Some(seed)
+}
+
+/// Seed the ASLR PRNG using Zkr hardware entropy.
+///
+/// Returns `true` if Zkr was available and seeding succeeded,
+/// `false` if Zkr is not available.
+pub fn seed_with_entropy(seed: u64) -> bool {
+    if seed == 0 || seed == u64::MAX {
+        return false; // not actual entropy
+    }
+    unsafe {
+        ASLR_SEED = seed;
+        ZKR_PROBED = true;
+    }
+    true
+}
+
+/// Initialize ASLR entropy: try Zkr hardware entropy first, fall back
+/// to the standard `rdtime`-based seed.
+pub fn init_aslr_entropy() {
+    if let Some(seed) = zkr_entropy_seed() {
+        if seed_with_entropy(seed) {
+            crate::println!("ASLR: seeded with Zkr hardware entropy");
+            return;
+        }
+    }
+    // Fallback to rdtime-based initialization
+    crate::println!("ASLR: Zkr not available, using rdtime fallback");
+    aslr_init();
 }
 
 // ── CHERI fat pointer emulation ────────────────────────────────────────────────

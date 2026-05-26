@@ -8,7 +8,10 @@ pub enum CapType {
     EP,
     Proc,
     CNode,
+    Vector,
 }
+
+pub const CAP_VECTOR: u8 = 5; // Capability type index for Vector
 
 pub type Rights = u8;
 pub const RIGHT_READ: Rights = 1 << 0;
@@ -34,6 +37,7 @@ pub enum ResourceData {
     EP { ep_id: usize },
     Proc { pid: u32 },
     CNode { slots: Mutex<Vec<Slot>> },
+    Vector { pid: u32 },
 }
 
 #[derive(Clone)]

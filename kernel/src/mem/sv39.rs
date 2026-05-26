@@ -447,6 +447,38 @@ pub fn make_satp(root_phys: usize) -> usize {
     (8usize << 60) | (root_phys >> 12)
 }
 
+/// Make a SATP value with the given addressing mode.
+///
+/// `mode` should be 8 (Sv39), 9 (Sv48), or 10 (Sv57).
+/// Returns the full SATP CSR value to be written.
+pub fn make_satp_mode(mode: usize, root_phys: usize) -> usize {
+    (mode << 60) | (root_phys >> 12)
+}
+
+/// Read the current SATP mode field from the live CSR.
+#[cfg(not(test))]
+pub fn current_satp_mode() -> usize {
+    unsafe {
+        let satp: usize;
+        core::arch::asm!("csrr {}, satp", out(reg) satp);
+        satp >> 60
+    }
+}
+
+#[cfg(test)]
+pub fn current_satp_mode() -> usize {
+    8 // Sv39 in test mode
+}
+
+/// Get the current address space mode as a human-readable string.
+pub fn mode_string() -> &'static str {
+    match current_satp_mode() {
+        9 => "Sv48",
+        10 => "Sv57",
+        _ => "Sv39",
+    }
+}
+
 /// Set up kernel identity mapping for all physical memory.
 /// KERNEL_VBASE is aligned so that VPN2=0 for the first 1GB.
 /// We use 2MB superpages (L1 entries with R/W/X set, no L0 page).

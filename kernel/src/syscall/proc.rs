@@ -2579,3 +2579,84 @@ pub fn sys_ai_sched_reset() -> Result<usize, &'static str> {
     crate::ai::ai_sched_reset_stats();
     Ok(0)
 }
+
+// ────────────────────────────────────────────────────────────────────────────
+// V36a — RVV 1.0 Vector Extension syscalls
+// ────────────────────────────────────────────────────────────────────────────
+
+/// Grant vector capability to a process.
+/// The calling process must have CAP_VECTOR capability itself (root).
+/// Returns 0 on success.
+pub fn sys_cap_vector_enable(pid: u32) -> Result<usize, &'static str> {
+    let caller_pid = crate::sched::current_thread()
+        .map(|t| unsafe { (*t).owner })
+        .ok_or("no proc")?;
+
+    // Only root (uid 0) processes can grant vector capability
+    let caller_uid = {
+        let procs = crate::proc::PROCESSES.lock();
+        let caller = procs.iter().find(|p| p.pid == caller_pid).ok_or("caller not found")?;
+        caller.uid
+    };
+    if caller_uid != 0 {
+        return Err("permission denied: need root");
+    }
+
+    // Find target process and allocate vector capability resource
+    let mut procs = crate::proc::PROCESSES.lock();
+    let target = procs.iter_mut().find(|p| p.pid == pid).ok_or("process not found")?;
+
+    // Allocate a vector capability resource
+    let cnode_id = target.cnode_id;
+    let resource_id = crate::cap::ops::alloc_resource(
+        crate::cap::types::CapType::Vector,
+        crate::cap::types::ResourceData::Vector { pid },
+    );
+
+    // Insert into target process's CNode
+    use crate::cap::types::{CapRef, Rights, RIGHT_EXEC};
+    let cap_ref = CapRef {
+        cap_type: crate::cap::types::CapType::Vector,
+        rights: RIGHT_EXEC,  // EXEC right = permission to use vector instructions
+        resource_id,
+    };
+    if let Some(res) = crate::cap::ops::get_resource(cnode_id) {
+        if let crate::cap::types::ResourceData::CNode { ref slots } = &res.data {
+            let mut slots = slots.lock();
+            // Find first empty slot
+            for i in 0..slots.len() {
+                if slots[i].cap_type == crate::cap::types::CapType::Null {
+                    slots[i] = crate::cap::types::Slot {
+                        cap_type: crate::cap::types::CapType::Vector,
+                        rights: RIGHT_EXEC,
+                        resource_id,
+                    };
+                    drop(slots);
+                    crate::println!("  VECTOR: cap granted to pid={} by pid={}", pid, caller_pid);
+                    return Ok(0);
+                }
+            }
+            return Err("cnode full");
+        }
+    }
+
+    Err("cnode not found")
+}
+
+/// Read vector extension statistics into a user buffer.
+/// Format: [vlen:8][tasks:8][saves:8][restores:8][lazy_traps:8] = 40 bytes
+pub fn sys_vector_stats(buf_ptr: usize, buf_len: usize) -> Result<usize, &'static str> {
+    if buf_ptr == 0 { return Err("null buf"); }
+    if buf_len < 40 { return Err("buffer too small"); }
+
+    let stats = &crate::mem::vector::VECTOR_STATS;
+    unsafe {
+        let ptr = buf_ptr as *mut u64;
+        ptr.add(0).write_volatile(stats.vlen.load(core::sync::atomic::Ordering::Relaxed));
+        ptr.add(1).write_volatile(stats.vector_tasks.load(core::sync::atomic::Ordering::Relaxed));
+        ptr.add(2).write_volatile(stats.vector_saves.load(core::sync::atomic::Ordering::Relaxed));
+        ptr.add(3).write_volatile(stats.vector_restores.load(core::sync::atomic::Ordering::Relaxed));
+        ptr.add(4).write_volatile(stats.vector_lazy_traps.load(core::sync::atomic::Ordering::Relaxed));
+    }
+    Ok(40)
+}

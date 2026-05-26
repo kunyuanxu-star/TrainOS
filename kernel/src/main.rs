@@ -157,8 +157,8 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
     mem::init();
     println!("  Memory subsystem initialized");
 
-    trap::clint_init();
-    println!("  CLINT timer initialized");
+    trap::timer_init();
+    println!("  V36b: Sstc timer (or CLINT fallback) initialized");
 
     trap::enable_timer_interrupt();
     trap::init();
@@ -175,7 +175,24 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
     println!("  Distributed IPC initialized");
 
     mem::sv39::enable_mmu();
-    println!("  MMU enabled (Sv39)");
+    println!("  MMU enabled ({} - V36b)", mem::sv39::mode_string());
+    // V36b: Sv48/Sv57 support is compiled in; detect runtime availability
+    {
+        let mode = crate::mem::sv48::AddressingMode::detect();
+        println!("  V36b: {} addressing ({} levels, {} user space)",
+            match mode {
+                crate::mem::sv48::AddressingMode::Sv57 => "Sv57",
+                crate::mem::sv48::AddressingMode::Sv48 => "Sv48",
+                crate::mem::sv48::AddressingMode::Sv39 => "Sv39",
+            },
+            mode.page_table_levels(),
+            match mode {
+                crate::mem::sv48::AddressingMode::Sv57 => "128 PiB",
+                crate::mem::sv48::AddressingMode::Sv48 => "256 TiB",
+                crate::mem::sv48::AddressingMode::Sv39 => "512 GiB",
+            },
+        );
+    }
 
     // V27: Initialize ASLR and KASLR
     crate::aslr::aslr_init();
@@ -185,6 +202,9 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
     // V35: Initialize CAS (Cache-Aware Scheduling) topology
     crate::numa::cas_init();
     println!("  CAS topology initialized");
+
+    // V36a: Initialize RISC-V Vector Extension (RVV 1.0) support
+    crate::mem::vector::init_vector_support();
 
     // V33: Initialize Confidential Computing TEE subsystem
     crate::security::tee::tee_init();

@@ -17,7 +17,7 @@
 /// between 4 KiB and 2 MiB.
 
 use core::sync::atomic::{AtomicBool, Ordering};
-use crate::mem::sv39::{PTE, page_align_down};
+use crate::mem::sv39::PTE;
 
 // ── Constants ─────────────────────────────────────────────────────────────
 
@@ -167,9 +167,11 @@ pub fn try_map_64k(root_phys: usize, va: usize, pa: usize, flags: u8) -> bool {
 
         let raw_pte = napot_pte_64k(pa, flags);
         l1[vpn1_idx] = PTE::empty(); // overwrite; set_raw() via raw_pte
-        // Write the full u64 PTE value through the PTE's underlying storage.
+        // Write the full u64 PTE value through a raw pointer derived from the
+        // base L1 page virtual address, avoiding reference-to-pointer UB.
+        let l1_base = crate::mem::sv39::pa_to_kva(l2[vpn2_idx].phys_addr()) as *mut PTE;
         core::ptr::write_volatile(
-            &l1[vpn1_idx] as *const PTE as *mut u64,
+            l1_base.add(vpn1_idx) as *mut u64,
             raw_pte,
         );
     }

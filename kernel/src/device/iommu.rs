@@ -502,13 +502,13 @@ unsafe fn iommu_walk_pt(root_phys: usize, va: usize, alloc: bool) -> Option<(usi
         let new_page = crate::mem::buddy::alloc_page()?;
         core::ptr::write_bytes(kva(new_page) as *mut u8, 0, 4096);
         // Non-leaf PTE: V=1, R=W=X=0
-        l2[vpn2] = (new_page >> 12) << 10 | 1; // V=1, PPN=new_page>>12
+        l2[vpn2] = ((new_page >> 12) << 10 | 1) as u64; // V=1, PPN=new_page>>12
         new_page
     } else if (l2[vpn2] & 0b1110) != 0 {
         // Leaf entry (shouldn't happen at L2 for Sv39, but guard)
         return None;
     } else {
-        (l2[vpn2] >> 10) << 12
+        ((l2[vpn2] >> 10) << 12) as usize
     };
 
     // L1 → L0
@@ -519,10 +519,10 @@ unsafe fn iommu_walk_pt(root_phys: usize, va: usize, alloc: bool) -> Option<(usi
         }
         let new_page = crate::mem::buddy::alloc_page()?;
         core::ptr::write_bytes(kva(new_page) as *mut u8, 0, 4096);
-        l1[vpn1] = (new_page >> 12) << 10 | 1;
+        l1[vpn1] = ((new_page >> 12) << 10 | 1) as u64;
         Some((new_page, vpn0))
     } else {
-        let l0_phys = (l1[vpn1] >> 10) << 12;
+        let l0_phys = ((l1[vpn1] >> 10) << 12) as usize;
         Some((l0_phys, vpn0))
     }
 }
@@ -539,7 +539,7 @@ unsafe fn iommu_map_pte(root_phys: usize, va: usize, pa: usize, r: bool, w: bool
         if w {
             pte |= 1 << 2; // W
         }
-        pte |= (pa >> 12) << 10; // PPN
+        pte |= ((pa >> 12) << 10) as u64; // PPN
         pte |= 1 << 6; // A (Accessed)
         pte |= 1 << 7; // D (Dirty)
         l0[idx] = pte;
@@ -694,7 +694,7 @@ pub fn iommu_tee_enclave_context(
     device_id: u32,
 ) -> Option<u32> {
     // Create a dedicated IOMMU page table that only maps the enclave memory
-    let pt = IommuPageTable::new_dedicated()?;
+    let mut pt = IommuPageTable::new_dedicated()?;
 
     // Map the entire enclave memory as R+W in the IOMMU page table
     pt.share_region(enclave_pmp_start, enclave_pmp_start, enclave_pmp_size, 0x3);

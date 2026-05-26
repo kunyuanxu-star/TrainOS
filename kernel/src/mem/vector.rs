@@ -9,6 +9,13 @@
 
 use core::sync::atomic::{AtomicU64, Ordering};
 
+// ─── Detection: Compile with V extension? ─────────────────────────────────
+
+/// True when the V-extension target feature is available at compile time.
+/// When false, all vector-asm routines compile as no-ops so the kernel
+/// can still boot on hardware without V.
+const HVX_AVAILABLE: bool = cfg!(any(target_feature = "v", target_feature = "zve32x"));
+
 // ─── Vector Statistics ──────────────────────────────────────────────────────
 
 /// Global vector extension usage statistics.
@@ -98,18 +105,13 @@ impl VectorState {
     /// attempting to set the VS field in sstatus and checking for an
     /// illegal-instruction trap.  If VS can be written, V is available.
     pub fn is_available() -> bool {
+        if !HVX_AVAILABLE {
+            return false;
+        }
         unsafe {
             let sstatus: usize;
             core::arch::asm!("csrr {}, sstatus", out(reg) sstatus);
-            // Try writing the current sstatus back — if the V-extension
-            // is not present the VS field is hard-wired to 0.
-            core::arch::asm!("csrw sstatus, {}", in(reg) sstatus);
-            // Read sstatus back and check if VS bits can be set
-            let sstatus2: usize;
-            core::arch::asm!("csrr {}, sstatus", out(reg) sstatus2);
-            // If VS field is writable, V extension is enabled
-            // The VS field is bits [10:9] of sstatus.
-            // A simple probe: try to set VS=1 (Initial)
+            // Probe: try to set VS=1 (Initial)
             let probe = (sstatus & !(3usize << 9)) | (1usize << 9);
             core::arch::asm!("csrw sstatus, {}", in(reg) probe);
             let sstatus3: usize;
@@ -141,7 +143,7 @@ impl VectorState {
     /// - Must be called on the current HART (saves the *hardware* state).
     /// - Vector state must be currently active (VS >= Initial).
     pub unsafe fn save(&mut self) {
-        if !self.dirty {
+        if !self.dirty || !HVX_AVAILABLE {
             return;
         }
         vector_state_save(self as *mut Self);
@@ -154,13 +156,16 @@ impl VectorState {
     /// - Must be called on the HART that will run the target thread.
     /// - VS should be Initial before calling (already enabled via sstatus).
     pub unsafe fn restore(&self) {
-        if !self.dirty {
+        if !self.dirty || !HVX_AVAILABLE {
             return;
         }
         vector_state_restore(self as *const Self);
     }
 }
 
+// Only declare and link the assembly routines when the V extension is
+// available at compile time.
+#[cfg(any(target_feature = "v", target_feature = "zve32x"))]
 extern "C" {
     /// Assembly routine: save vector state to the given VectorState.
     /// a0 = *mut VectorState
@@ -171,10 +176,29 @@ extern "C" {
     fn vector_state_restore(state: *const VectorState);
 }
 
+// Provide stub symbols when the V extension is not available at compile time.
+// These should never be reached (save/restore check HVX_AVAILABLE first).
+#[cfg(not(any(target_feature = "v", target_feature = "zve32x")))]
+#[no_mangle]
+pub unsafe extern "C" fn vector_state_save(_state: *mut VectorState) {
+    core::hint::unreachable_unchecked();
+}
+
+#[cfg(not(any(target_feature = "v", target_feature = "zve32x")))]
+#[no_mangle]
+pub unsafe extern "C" fn vector_state_restore(_state: *const VectorState) {
+    core::hint::unreachable_unchecked();
+}
+
 // ─── Vector Save/Restore Assembly ───────────────────────────────────────────
 
+#[cfg(any(target_feature = "v", target_feature = "zve32x"))]
 core::arch::global_asm!(
     ".section .text.vector, \"ax\", @progbits",
+    // Enable V-extension instructions for this section.
+    // The default target is rv64gc (no V), so we need this directive
+    // to tell the assembler to accept vector instructions.
+    ".option arch, +v",
 
     // ═════════════════════════════════════════════════════════════════════
     // void vector_state_save(VectorState *state)
@@ -318,6 +342,9 @@ core::arch::global_asm!(
 /// # Safety
 /// Should only be called after saving any previous vector state.
 pub unsafe fn enable_vs() {
+    if !HVX_AVAILABLE {
+        return;
+    }
     let sstatus: usize;
     core::arch::asm!("csrr {}, sstatus", out(reg) sstatus);
     let vs = (sstatus & !(3usize << 9)) | (1usize << 9); // VS=Initial
@@ -330,6 +357,9 @@ pub unsafe fn enable_vs() {
 /// # Safety
 /// Should only be called when no thread needs vector access.
 pub unsafe fn disable_vs() {
+    if !HVX_AVAILABLE {
+        return;
+    }
     let sstatus: usize;
     core::arch::asm!("csrr {}, sstatus", out(reg) sstatus);
     let vs = sstatus & !(3usize << 9); // VS=Off
@@ -351,41 +381,46 @@ pub unsafe fn vector_memcpy(dst: *mut u8, src: *const u8, count: usize) {
         return;
     }
 
-    let old_sstatus: usize;
-    core::arch::asm!("csrr {}, sstatus", out(reg) old_sstatus);
-    // Enable VS if not already enabled
-    let vs = (old_sstatus >> 9) & 3;
-    if vs == 0 {
-        enable_vs();
-    }
-
-    let mut offset = 0usize;
-    // Strip-mining loop: at most VLEN/8 = 32 bytes per iteration
-    while offset < count {
-        let remaining = count - offset;
-        // vsetvli rd, rs1, e8,m1,ta  →  sets vl = min(remaining, VLEN/8)
-        let vl: usize;
-        core::arch::asm!(
-            "vsetvli {rd}, {rs1}, e8,m1,ta",
-            rd = out(reg) vl,
-            rs1 = in(reg) remaining,
-        );
-
-        // vle8.v and vse8.v using v0 as scratch
-        if vl > 0 {
-            core::arch::asm!(
-                "vle8.v v0, ({src})",
-                "vse8.v v0, ({dst})",
-                src = in(reg) src.add(offset),
-                dst = in(reg) dst.add(offset),
-                options(nostack, preserves_flags),
-            );
+    #[cfg(any(target_feature = "v", target_feature = "zve32x"))]
+    {
+        let old_sstatus: usize;
+        core::arch::asm!("csrr {}, sstatus", out(reg) old_sstatus);
+        let vs = (old_sstatus >> 9) & 3;
+        if vs == 0 {
+            enable_vs();
         }
-        offset += vl;
+
+        let mut offset = 0usize;
+        while offset < count {
+            let remaining = count - offset;
+            let vl: usize;
+            core::arch::asm!(
+                ".option arch, +v",
+                "vsetvli {rd}, {rs1}, e8,m1,ta",
+                rd = out(reg) vl,
+                rs1 = in(reg) remaining,
+            );
+
+            if vl > 0 {
+                core::arch::asm!(
+                    ".option arch, +v",
+                    "vle8.v v0, ({src})",
+                    "vse8.v v0, ({dst})",
+                    src = in(reg) src.add(offset),
+                    dst = in(reg) dst.add(offset),
+                    options(nostack, preserves_flags),
+                );
+            }
+            offset += vl;
+        }
+
+        core::arch::asm!("csrw sstatus, {}", in(reg) old_sstatus);
     }
 
-    // Restore original sstatus (may disable VS if it was off)
-    core::arch::asm!("csrw sstatus, {}", in(reg) old_sstatus);
+    #[cfg(not(any(target_feature = "v", target_feature = "zve32x")))]
+    {
+        core::ptr::copy_nonoverlapping(src, dst, count);
+    }
 }
 
 /// Fast memset using vector stores.
@@ -397,38 +432,49 @@ pub unsafe fn vector_memset(dst: *mut u8, val: u8, count: usize) {
         return;
     }
 
-    let old_sstatus: usize;
-    core::arch::asm!("csrr {}, sstatus", out(reg) old_sstatus);
-    let vs = (old_sstatus >> 9) & 3;
-    if vs == 0 {
-        enable_vs();
-    }
-
-    // Broadcast val to all elements of v0
-    // vmvs.vx v0, val  — not a real instruction, use vmv.v.x
-    // Actually: vmv.v.x vd, rs1 — broadcast rs1 to all elements of vd
-    core::arch::asm!("vmv.v.x v0, {}", in(reg) val as usize);
-
-    let mut offset = 0usize;
-    while offset < count {
-        let remaining = count - offset;
-        let vl: usize;
-        core::arch::asm!(
-            "vsetvli {rd}, {rs1}, e8,m1,ta",
-            rd = out(reg) vl,
-            rs1 = in(reg) remaining,
-        );
-        if vl > 0 {
-            core::arch::asm!(
-                "vse8.v v0, ({dst})",
-                dst = in(reg) dst.add(offset),
-                options(nostack, preserves_flags),
-            );
+    #[cfg(any(target_feature = "v", target_feature = "zve32x"))]
+    {
+        let old_sstatus: usize;
+        core::arch::asm!("csrr {}, sstatus", out(reg) old_sstatus);
+        let vs = (old_sstatus >> 9) & 3;
+        if vs == 0 {
+            enable_vs();
         }
-        offset += vl;
+
+        core::arch::asm!(
+            ".option arch, +v",
+            "vmv.v.x v0, {}",
+            in(reg) val as usize
+        );
+
+        let mut offset = 0usize;
+        while offset < count {
+            let remaining = count - offset;
+            let vl: usize;
+            core::arch::asm!(
+                ".option arch, +v",
+                "vsetvli {rd}, {rs1}, e8,m1,ta",
+                rd = out(reg) vl,
+                rs1 = in(reg) remaining,
+            );
+            if vl > 0 {
+                core::arch::asm!(
+                    ".option arch, +v",
+                    "vse8.v v0, ({dst})",
+                    dst = in(reg) dst.add(offset),
+                    options(nostack, preserves_flags),
+                );
+            }
+            offset += vl;
+        }
+
+        core::arch::asm!("csrw sstatus, {}", in(reg) old_sstatus);
     }
 
-    core::arch::asm!("csrw sstatus, {}", in(reg) old_sstatus);
+    #[cfg(not(any(target_feature = "v", target_feature = "zve32x")))]
+    {
+        core::ptr::write_bytes(dst, val, count);
+    }
 }
 
 /// Internet checksum (16-bit one's complement sum).
@@ -462,37 +508,49 @@ pub unsafe fn vector_xor(dst: &mut [u8], src: &[u8]) {
         return;
     }
 
-    let old_sstatus: usize;
-    core::arch::asm!("csrr {}, sstatus", out(reg) old_sstatus);
-    let vs = (old_sstatus >> 9) & 3;
-    if vs == 0 {
-        enable_vs();
-    }
-
-    let mut offset = 0usize;
-    while offset < len {
-        let remaining = len - offset;
-        let vl: usize;
-        core::arch::asm!(
-            "vsetvli {rd}, {rs1}, e8,m1,ta",
-            rd = out(reg) vl,
-            rs1 = in(reg) remaining,
-        );
-        if vl > 0 {
-            core::arch::asm!(
-                "vle8.v v0, ({src})",
-                "vle8.v v1, ({dst})",
-                "vxor.vv v0, v0, v1",
-                "vse8.v v0, ({dst})",
-                src = in(reg) src.as_ptr().add(offset),
-                dst = in(reg) dst.as_mut_ptr().add(offset),
-                options(nostack, preserves_flags),
-            );
+    #[cfg(any(target_feature = "v", target_feature = "zve32x"))]
+    {
+        let old_sstatus: usize;
+        core::arch::asm!("csrr {}, sstatus", out(reg) old_sstatus);
+        let vs = (old_sstatus >> 9) & 3;
+        if vs == 0 {
+            enable_vs();
         }
-        offset += vl;
+
+        let mut offset = 0usize;
+        while offset < len {
+            let remaining = len - offset;
+            let vl: usize;
+            core::arch::asm!(
+                ".option arch, +v",
+                "vsetvli {rd}, {rs1}, e8,m1,ta",
+                rd = out(reg) vl,
+                rs1 = in(reg) remaining,
+            );
+            if vl > 0 {
+                core::arch::asm!(
+                    ".option arch, +v",
+                    "vle8.v v0, ({src})",
+                    "vle8.v v1, ({dst})",
+                    "vxor.vv v0, v0, v1",
+                    "vse8.v v0, ({dst})",
+                    src = in(reg) src.as_ptr().add(offset),
+                    dst = in(reg) dst.as_mut_ptr().add(offset),
+                    options(nostack, preserves_flags),
+                );
+            }
+            offset += vl;
+        }
+
+        core::arch::asm!("csrw sstatus, {}", in(reg) old_sstatus);
     }
 
-    core::arch::asm!("csrw sstatus, {}", in(reg) old_sstatus);
+    #[cfg(not(any(target_feature = "v", target_feature = "zve32x")))]
+    {
+        for i in 0..len {
+            dst[i] ^= src[i];
+        }
+    }
 }
 
 // ─── Vector Initialization ──────────────────────────────────────────────────

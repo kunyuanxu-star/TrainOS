@@ -28,7 +28,7 @@ The V21–V30 roadmap is defined in [docs/specs/2026-05-18-trainos-v21-v30-roadm
 2. Architecture: RISC-V 64-bit (rv64gc), Sv39 virtual memory, MIT license.
 3. Language: Rust nightly (`no_std` kernel + user-space, no heap in services).
 
-## Current Status (2026-05-24) — V34.0 (Research-Driven Next Phase)
+## Current Status (2026-05-24) — V35.0 (Linux Feature Parity)
 
 ### Completed
 - **Dynamic process spawning**: `sys_spawn` (syscall 3) creates new processes from user-provided ELF data
@@ -163,6 +163,28 @@ Based on OS CCF-A conference paper research (SOSP/OSDI/EuroSys/ASPLOS 2024-2026)
 - **KV-cache paged management**: `KvPageTable` (1024 pages), bitmap allocator, LRU eviction, ref-counted sharing between prefill/decode, dirty page writeback
 - **GPU-CPU heterogeneous scheduling**: `HeteroScheduler` — GPU↔NUMA topology mapping, workload migration, load balancing
 - **14 new syscalls (282-295)**: pd_submit/next_decode/next_prefill/preempt/resume, kv_alloc/free/share/stats, gpu_hetero_sched/migrate/balance, ai_sched_stats/reset
+
+### V35 (Linux Feature Parity) — 2026-05-24
+
+Based on Linux kernel 2024-2026 innovation survey. Key features adopted:
+
+#### V35a — Memory & Security (mseal, Sheaves, mTHP)
+- **mseal**: Memory sealing prevent munmap/mprotect on sealed ranges, 64-entry table, `sys_mseal` (301)
+- **Per-CPU page cache**: Sheaves-inspired, 8 pages per hart, lock-free fast path, `alloc_page_fast/free_page_fast`
+- **mTHP**: 2MB superpage mapping (`try_map_2m`), splitting (`split_large_page`), promotion (`try_promote`), `ThpConfig` with configurable thresholds
+- **Enhanced PteStats**: sealed_pages, thp_promotions/splits, cache_hits/misses
+
+#### V35b — Scheduling & IPC (PREEMPT_LAZY, Proxy Execution, CAS)
+- **PREEMPT_LAZY**: Deferred preemption — Fair tasks preempt at tick boundary, RT tasks immediately, `sys_sched_setpreempt`
+- **Proxy Execution**: Priority/time-slice donation from blocked thread to lock holder, `ProxyLock` with automatic proxy
+- **Cache-Aware Scheduling**: `CacheTopology` discovery, `cas_wake_select` for cache-hot CPU selection, migration cost calculation
+- **Time Slice Extension**: 50us extension for spinlock holders, max 3 extensions, `sys_set_slice_ext`
+
+#### V35c — I/O & Filesystem (RWF_UNCACHED/ATOMIC, io_uring ZC, cachestat)
+- **RWF flags**: HIPRI/DSYNC/SYNC/NOWAIT/APPEND/UNCACHED/ATOMIC, `sys_readv2/writev2` with full flag support
+- **Atomic writes**: `atomic_write_begin/commit/rollback`, crash-consistent all-or-nothing block I/O
+- **io_uring ZC**: send_zc/recv_zc via pre-registered buffer pools, splice between fds, 5 new opcodes
+- **cachestat**: `sys_cachestat` — query page cache residency (total/cached/dirty/writeback/evicted pages)
 
 ### Architecture
 **Microkernel** — kernel provides:

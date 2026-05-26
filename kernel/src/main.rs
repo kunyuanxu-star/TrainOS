@@ -182,6 +182,10 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
     crate::aslr::kaslr_init();
     println!("  ASLR/KASLR initialized");
 
+    // V35: Initialize CAS (Cache-Aware Scheduling) topology
+    crate::numa::cas_init();
+    println!("  CAS topology initialized");
+
     // V33: Initialize Confidential Computing TEE subsystem
     crate::security::tee::tee_init();
     println!("  TEE subsystem initialized");

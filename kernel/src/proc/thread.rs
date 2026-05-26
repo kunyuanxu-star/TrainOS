@@ -8,6 +8,24 @@ pub enum ThreadState {
     Dead,
 }
 
+/// Preemption model — inspired by Linux PREEMPT_LAZY.
+/// Split the traditional NEED_RESCHED into two levels:
+///  - `Lazy` (default): defer preemption until the next tick boundary
+///  - `Immediate`: preempt right away (used by RT/real-time tasks)
+///  - `None`: never preempt (reserved for idle / special threads)
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum PreemptMode {
+    None,
+    Lazy,
+    Immediate,
+}
+
+impl Default for PreemptMode {
+    fn default() -> Self {
+        PreemptMode::Lazy
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub enum WaitTarget {
     Endpoint(usize),
@@ -78,6 +96,20 @@ pub struct Thread {
     pub vruntime: u64,    // EEVDF virtual runtime (incremented per tick)
     pub deadline: u64,    // EEVDF deadline for sorted ready-queue insertion
     pub weight: u32,      // Scheduling weight (derived from priority, 8..512)
+    // V35: PREEMPT_LAZY — preemption mode
+    pub preempt_mode: PreemptMode,
+    /// Ticks remaining in the current time slice (decremented each tick).
+    pub remaining_ticks: u64,
+    // V35: CAS — last CPU this thread ran on
+    pub last_cpu: u8,
+    // V35: Proxy execution — priority inheritance for lock holders
+    /// Thread I am proxying for (I blocked, this thread runs in my place).
+    pub proxy_target: Option<*mut Thread>,
+    /// Thread donating time to me (it blocked, I inherited its priority).
+    pub proxy_donor: Option<*mut Thread>,
+    // V35: Time slice extension — prevent preemption during critical sections
+    pub slice_extension_enabled: bool,
+    pub slice_extension_count: u64,
 }
 
 impl Thread {
@@ -119,6 +151,17 @@ impl Thread {
             vruntime: 0,
             deadline: 0,
             weight: w,
+            // V35: PREEMPT_LAZY default — fair tasks use lazy preemption
+            preempt_mode: PreemptMode::Lazy,
+            remaining_ticks: 1, // start with one tick
+            // V35: CAS — no last CPU yet
+            last_cpu: 0,
+            // V35: Proxy execution — no proxy initially
+            proxy_target: None,
+            proxy_donor: None,
+            // V35: Time slice extension — disabled by default
+            slice_extension_enabled: false,
+            slice_extension_count: 0,
         }
     }
 
@@ -145,9 +188,22 @@ impl Thread {
             vruntime: 0,
             deadline: 0,
             weight: 8,
+            // V35: Idle thread should never be preempted
+            preempt_mode: PreemptMode::None,
+            remaining_ticks: 0,
+            last_cpu: 0,
+            proxy_target: None,
+            proxy_donor: None,
+            slice_extension_enabled: false,
+            slice_extension_count: 0,
         }
     }
 }
+
+// Thread contains raw `*mut Thread` pointers (proxy_target, proxy_donor) which
+// are !Send. The kernel uses these pointers only behind a Mutex or SpinLock
+// and in a single-address-space / single-CPU-at-a-time context, making this safe.
+unsafe impl Send for Thread {}
 
 extern "C" {
     pub fn user_trap_return();

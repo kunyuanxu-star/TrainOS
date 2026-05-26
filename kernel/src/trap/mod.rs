@@ -165,7 +165,25 @@ fn timer_interrupt(_tf: &mut TrapFrame) {
         crate::extension::run_hook(crate::extension::HOOK_TIMER, TICK_COUNT as u64, timer_pid as u64);
     }
 
-    crate::sched::schedule();
+    // V35: PREEMPT_LAZY — decrement remaining ticks and check preemption policy.
+    // Fair-class (Lazy) tasks are preempted only when remaining_ticks reaches 0,
+    // i.e. at the tick boundary.  RT-class (Immediate) tasks are preempted every
+    // tick.  None-class (idle) tasks are never preempted from the timer tick.
+    let needs_resched = crate::sched::current_thread()
+        .map(|t| {
+            // Decrement remaining ticks for the current thread
+            unsafe {
+                if (*t).remaining_ticks > 0 {
+                    (*t).remaining_ticks -= 1;
+                }
+            }
+            crate::sched::check_preempt_lazy(t)
+        })
+        .unwrap_or(true);
+
+    if needs_resched {
+        crate::sched::schedule();
+    }
 }
 
 fn syscall(tf: &mut TrapFrame) {

@@ -1,5 +1,5 @@
 use crate::proc::switch::context_switch;
-use crate::proc::thread::{Thread, ThreadState};
+use crate::proc::thread::{PreemptMode, Thread, ThreadState};
 use crate::sync::SpinLock;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU64, Ordering};
@@ -118,6 +118,12 @@ pub fn schedule() {
     }
 
     let next = unsafe { (*core::ptr::addr_of_mut!(SCHEDULER)).dequeue_highest() };
+    // V35: Update last_cpu for CAS — record which CPU this thread ran on
+    if let Some(n) = next {
+        unsafe {
+            (*n).last_cpu = crate::per_cpu::hart_id() as u8;
+        }
+    }
     unsafe {
         (*core::ptr::addr_of_mut!(SCHEDULER)).current = next;
     }
@@ -176,6 +182,171 @@ pub fn start_scheduler(idle: *mut Thread) -> ! {
     schedule();
     crate::console::puts("SCHED: schedule returned!\r\n");
     crate::idle_loop();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// V35 — PREEMPT_LAZY (Deferred Preemption)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Check whether the given thread should be preempted according to its
+/// preemption mode.
+///
+/// Returns `true` when a reschedule is needed:
+///  - `PreemptMode::Immediate` → always preempt
+///  - `PreemptMode::Lazy`      → preempt only when `remaining_ticks == 0`
+///                               (tick boundary)
+///  - `PreemptMode::None`      → never preempt
+pub fn check_preempt_lazy(current: *mut Thread) -> bool {
+    unsafe {
+        match (*current).preempt_mode {
+            PreemptMode::Immediate => true,
+            PreemptMode::Lazy => (*current).remaining_ticks == 0,
+            PreemptMode::None => false,
+        }
+    }
+}
+
+/// Set the preemption mode for a thread (syscall backend).
+pub fn set_preempt_mode(thread: *mut Thread, mode: PreemptMode) {
+    unsafe {
+        (*thread).preempt_mode = mode;
+    }
+}
+
+/// Syscall: set preemption mode for a process.
+/// `pid` = 0 means the calling thread, otherwise a specific PID.
+/// `mode` = 0 (None), 1 (Lazy), 2 (Immediate).
+pub fn sys_sched_setpreempt(pid: u32, mode: usize) -> Result<usize, &'static str> {
+    let mode_enum = match mode {
+        0 => PreemptMode::None,
+        1 => PreemptMode::Lazy,
+        2 => PreemptMode::Immediate,
+        _ => return Err("invalid preempt mode"),
+    };
+
+    // Find the target thread.
+    if pid == 0 {
+        // Calling thread
+        let current = current_thread().ok_or("no thread")?;
+        set_preempt_mode(current, mode_enum);
+        Ok(0)
+    } else {
+        // Find process by PID — iterate through processes to locate its thread.
+        let procs = crate::proc::PROCESSES.lock();
+        for p in procs.iter() {
+            if p.pid == pid {
+                if let Some(ref thread) = p.thread {
+                    // Use a raw pointer to the thread inside the Process.
+                    let thread_ptr = thread as *const Thread as *mut Thread;
+                    set_preempt_mode(thread_ptr, mode_enum);
+                    return Ok(0);
+                }
+                break;
+            }
+        }
+        Err("pid not found")
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// V35 — Proxy Execution (Priority Inheritance via Proxy)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Begin proxy execution: when thread `blocker` blocks on a lock held by
+/// `holder`, we donate the blocker's scheduling context (priority, time slice)
+/// to the holder so that it can make progress and release the lock quickly.
+///
+/// Caller must ensure both pointers are valid (non-null) and that `holder`
+/// is the thread currently holding the contended lock.
+pub fn proxy_start(blocker: *mut Thread, holder: *mut Thread) {
+    unsafe {
+        (*blocker).proxy_target = Some(holder);
+        (*holder).proxy_donor = Some(blocker);
+        // Transfer scheduling context: inherit priority
+        let blk_prio = (*blocker).effective_priority;
+        let hld_prio = (*holder).effective_priority;
+        if blk_prio > hld_prio {
+            (*holder).effective_priority = blk_prio;
+        }
+        // Donate remaining ticks so the holder does not get preempted early
+        let blk_ticks = (*blocker).remaining_ticks;
+        if blk_ticks > (*holder).remaining_ticks {
+            (*holder).remaining_ticks = blk_ticks;
+        }
+    }
+}
+
+/// End proxy execution: the lock has been released by `holder`.
+/// Restore the holder's original priority and clear proxy state.
+pub fn proxy_end(holder: *mut Thread) {
+    unsafe {
+        if let Some(donor) = (*holder).proxy_donor {
+            (*donor).proxy_target = None;
+        }
+        (*holder).proxy_donor = None;
+        // Restore original priority and time slice
+        (*holder).effective_priority = (*holder).base_priority;
+    }
+}
+
+/// Resolve proxy chain during scheduling decisions.
+/// If the current thread has a proxy_donor waiting, return `Some(current)`
+/// so the scheduler can account for the inherited priority.
+/// Returns `None` if there is no active proxy relationship.
+pub fn resolve_proxy() -> Option<*mut Thread> {
+    let current = current_thread()?;
+    unsafe {
+        if (*current).proxy_donor.is_some() {
+            // This thread is acting as a proxy; its effective priority
+            // already reflects the donor's priority.
+            Some(current)
+        } else {
+            None
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// V35 — Time Slice Extension
+// ═══════════════════════════════════════════════════════════════════════════
+
+/// Number of timer ticks added per extension request (~50 ms at 10 ms/tick).
+const SLICE_EXTENSION_TICKS: u64 = 5;
+/// Maximum extensions per scheduling quantum (prevents starvation).
+const SLICE_EXTENSION_MAX: u64 = 3;
+
+/// Request a time slice extension for the calling thread.
+/// Can be called from user-space (via rseq or similar) to prevent
+/// preemption during a short critical section.
+///
+/// Only works when `slice_extension_enabled` is true for the thread
+/// and the extension count has not exceeded `SLICE_EXTENSION_MAX`.
+pub fn request_slice_extension() {
+    let current = match current_thread() {
+        Some(t) => t,
+        None => return,
+    };
+    unsafe {
+        if (*current).slice_extension_enabled
+            && (*current).slice_extension_count < SLICE_EXTENSION_MAX
+        {
+            (*current).remaining_ticks =
+                (*current).remaining_ticks.saturating_add(SLICE_EXTENSION_TICKS);
+            (*current).slice_extension_count += 1;
+        }
+    }
+}
+
+/// Syscall: enable or disable time slice extension for the calling process.
+pub fn sys_set_slice_ext(enable: bool) -> Result<usize, &'static str> {
+    let current = current_thread().ok_or("no thread")?;
+    unsafe {
+        (*current).slice_extension_enabled = enable;
+        if !enable {
+            (*current).slice_extension_count = 0;
+        }
+    }
+    Ok(0)
 }
 
 pub fn sched_stats() {

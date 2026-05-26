@@ -417,3 +417,58 @@ pub fn sys_getcwd(buf_ptr: usize, size: usize) -> Result<usize, &'static str> {
     }
     Ok(0)
 }
+
+// V35: VFS helpers used by io_uring splice
+/// Read from VFS by path, returning data bytes.
+pub fn vfs_read_slice(path: &[u8]) -> Result<alloc::vec::Vec<u8>, &'static str> {
+    use crate::ipc::message::Message;
+    let pid = crate::sched::current_thread()
+        .map(|t| unsafe { (*t).owner })
+        .unwrap_or(0);
+    let reply_ep = crate::ipc::create_endpoint();
+    let mut msg = Message::new(pid, 2);
+    msg.payload[0] = reply_ep as u8;
+    msg.payload[1] = (reply_ep >> 8) as u8;
+    let plen = path.len().min(31);
+    msg.payload[2] = plen as u8;
+    for i in 0..plen { msg.payload[3 + i] = path[i]; }
+    msg.payload_len = 3 + plen;
+    crate::ipc::endpoint::send(2, pid, msg).ok().ok_or("vfs send failed")?;
+    let mut buf = alloc::vec::Vec::with_capacity(64);
+    loop {
+        match crate::ipc::endpoint::recv(reply_ep, pid) {
+            Ok(resp) => {
+                let len = resp.payload_len.min(64);
+                for i in 0..len { buf.push(resp.payload[i]); }
+                return Ok(buf);
+            }
+            Err(_) => { crate::sched::schedule(); }
+        }
+    }
+}
+
+/// Write data to VFS by path.
+pub fn vfs_write_slice(path: &[u8], data: &[u8]) -> Result<(), &'static str> {
+    use crate::ipc::message::Message;
+    let pid = crate::sched::current_thread()
+        .map(|t| unsafe { (*t).owner })
+        .unwrap_or(0);
+    let reply_ep = crate::ipc::create_endpoint();
+    let mut msg = Message::new(pid, 3);
+    msg.payload[0] = reply_ep as u8;
+    msg.payload[1] = (reply_ep >> 8) as u8;
+    let plen = path.len().min(31);
+    msg.payload[2] = plen as u8;
+    for i in 0..plen { msg.payload[3 + i] = path[i]; }
+    let data_off = 3 + plen;
+    let dlen = data.len().min(64 - data_off);
+    for i in 0..dlen { msg.payload[data_off + i] = data[i]; }
+    msg.payload_len = data_off + dlen;
+    crate::ipc::endpoint::send(2, pid, msg).ok().ok_or("vfs send failed")?;
+    loop {
+        match crate::ipc::endpoint::recv(reply_ep, pid) {
+            Ok(_) => return Ok(()),
+            Err(_) => { crate::sched::schedule(); }
+        }
+    }
+}

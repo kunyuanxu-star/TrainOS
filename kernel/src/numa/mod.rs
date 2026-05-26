@@ -464,6 +464,191 @@ pub fn eevdf_tick(thread: *mut Thread) {
 
 // ── Diagnostics ───────────────────────────────────────────────────────────────
 
+/// Helper: check whether a given CPU is currently idle (its current thread is
+/// the idle thread). Used by CAS to find cache-hot idle CPUs.
+fn cpu_is_idle(hart: usize) -> bool {
+    if hart >= 4 {
+        return true; // CPU does not exist — treat as idle
+    }
+    let pcpu = crate::per_cpu::cpu(hart);
+    match pcpu.current {
+        Some(t) => unsafe { (*t).tid == 0 }, // idle thread has tid == 0
+        None => true,
+    }
+}
+
+/// Helper: check whether a given CPU has a thread currently running on it
+/// (i.e., is *not* idle). Useful for topology-aware scheduling decisions.
+#[allow(dead_code)]
+fn cpu_busy(hart: usize) -> bool {
+    !cpu_is_idle(hart)
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// V35 — Cache-Aware Scheduling (CAS)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// Cache topology descriptor.
+///
+/// Tracks which cache domain each CPU belongs to and which CPUs share the
+/// same last-level cache (LLC). Used by CAS to make cache-aware wake-up
+/// decisions and estimate migration costs.
+pub struct CacheTopology {
+    /// Map: CPU index → cache domain ID.
+    /// All CPUs in the same cache domain share the LLC.
+    pub cpu_to_cache_domain: [u8; 8],
+    /// Map: cache domain ID → bitmap of sibling CPUs in that domain.
+    pub cache_domain_cpus: [u64; 4],
+}
+
+impl CacheTopology {
+    /// Discover the cache topology from platform information.
+    ///
+    /// For QEMU `virt` machine all CPUs share a single cache domain
+    /// (the machine model has one LLC shared across all harts).
+    /// Real hardware would parse ACPI PPTT or device-tree.
+    pub fn discover() -> Self {
+        CacheTopology {
+            // QEMU virt: one domain (0) for all 8 CPUs
+            cpu_to_cache_domain: [0, 0, 0, 0, 0, 0, 0, 0],
+            // Domain 0 contains all CPUs
+            cache_domain_cpus: [0xFF, 0, 0, 0],
+        }
+    }
+
+    /// Find the best idle CPU that shares a cache domain with `preferred_cpu`.
+    ///
+    /// Checks the preferred CPU first (ideal — cache hot), then scans siblings
+    /// within the same domain.
+    pub fn find_idle_in_cache_domain(&self, preferred_cpu: u8) -> Option<u8> {
+        let domain = self.cpu_to_cache_domain[preferred_cpu as usize] as usize;
+        let siblings = self.cache_domain_cpus[domain];
+
+        // Scan CPUs in the domain starting from the preferred one.
+        for offset in 0..8 {
+            let cpu = (preferred_cpu.wrapping_add(offset)) & 7;
+            if (siblings >> cpu) & 1 != 0 && cpu_is_idle(cpu as usize) {
+                return Some(cpu);
+            }
+        }
+        None
+    }
+
+    /// Estimate the migration cost of moving a thread from CPU `from` to `to`.
+    ///
+    /// Returns an abstract cost level:
+    ///   - 0: same CPU (no migration)
+    ///   - 1: different CPU, same LLC domain (warm cache)
+    ///   - 2: different LLC domain or NUMA node (cold cache)
+    pub fn migration_cost(&self, from: u8, to: u8) -> u8 {
+        if from == to {
+            return 0;
+        }
+        let from_domain = self.cpu_to_cache_domain[from as usize];
+        let to_domain = self.cpu_to_cache_domain[to as usize];
+        if from_domain == to_domain {
+            1
+        } else {
+            2
+        }
+    }
+}
+
+/// Static cache topology — discovered once at boot.
+static CACHE_TOPOLOGY: spin::Mutex<Option<CacheTopology>> = spin::Mutex::new(None);
+
+/// Initialize the cache topology subsystem.
+pub fn cas_init() {
+    let topo = CacheTopology::discover();
+    *CACHE_TOPOLOGY.lock() = Some(topo);
+    crate::println!("CAS: cache topology discovered (8 CPUs, 1 LLC domain)");
+}
+
+/// Execute a closure with a reference to the discovered cache topology.
+/// Returns `false` if CAS has not been initialized yet.
+pub fn with_cache_topology<F, R>(f: F) -> R
+where
+    F: FnOnce(&CacheTopology) -> R,
+{
+    let guard = CACHE_TOPOLOGY.lock();
+    // Panic-safe: if CAS isn't initialized, use a default topology.
+    let topo = guard.as_ref().unwrap_or_else(|| {
+        // Lazy fallback — CAS not yet initialized, use defaults.
+        // This should not happen in normal operation (cas_init() is called at boot).
+        static FALLBACK: CacheTopology = CacheTopology {
+            cpu_to_cache_domain: [0, 0, 0, 0, 0, 0, 0, 0],
+            cache_domain_cpus: [0xFF, 0, 0, 0],
+        };
+        &FALLBACK
+    });
+    f(topo)
+}
+
+/// CAS-enhanced task placement: choose the best CPU to wake a thread on.
+///
+/// Selection order (from best to fallback):
+///   1. Same CPU as `task_last_cpu` (cache hot — ideal)
+///   2. Idle CPU in the same cache domain
+///   3. Idle CPU in the same NUMA node
+///   4. Any idle CPU
+///   5. Fall back to `task_last_cpu` (no idle CPU found)
+///
+/// # Arguments
+///
+/// * `task_last_cpu` — the CPU this thread ran on most recently
+///                    (stored in `Thread::last_cpu`).
+/// * `topology`      — the discovered cache topology.
+pub fn cas_wake_select(task_last_cpu: u8, topology: &CacheTopology) -> u8 {
+    // 1. Same CPU (cache hot)
+    if cpu_is_idle(task_last_cpu as usize) {
+        return task_last_cpu;
+    }
+    // 2. Idle CPU in same cache domain
+    if let Some(cpu) = topology.find_idle_in_cache_domain(task_last_cpu) {
+        return cpu;
+    }
+    // 3. Idle CPU in same NUMA node (node 0 for QEMU virt)
+    let node = hart_to_node(task_last_cpu as usize);
+    let node_mask = {
+        let nodes = NUMA_NODES.lock();
+        if (node as usize) < MAX_NODES {
+            nodes[node as usize].cpu_mask
+        } else {
+            0xFF
+        }
+    };
+    for cpu in 0..8 {
+        if (node_mask >> cpu) & 1 != 0 && cpu_is_idle(cpu) {
+            return cpu as u8;
+        }
+    }
+    // 4. Any idle CPU (fallback)
+    for cpu in 0..8 {
+        if cpu_is_idle(cpu) {
+            return cpu as u8;
+        }
+    }
+    // 5. No idle CPU found — return preferred CPU
+    task_last_cpu
+}
+
+/// Return the migration cost between two CPUs.
+/// Convenience wrapper that acquires the cached topology or falls back to a
+/// reasonable default.
+pub fn migration_cost_between(from: u8, to: u8) -> u8 {
+    let guard = CACHE_TOPOLOGY.lock();
+    match guard.as_ref() {
+        Some(topo) => topo.migration_cost(from, to),
+        None => {
+            if from == to {
+                0
+            } else {
+                2 // unknown — assume worst case
+            }
+        }
+    }
+}
+
 /// Check a node's ready queues for invariant consistency.
 /// Sets `ok` to false if any inconsistency is found.
 /// Returns the total thread count on the node.

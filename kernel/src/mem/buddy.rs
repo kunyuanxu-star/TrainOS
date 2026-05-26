@@ -1,3 +1,4 @@
+use core::sync::atomic::{AtomicU64, Ordering};
 use super::layout::PAGE_SIZE;
 use spin::Mutex;
 
@@ -162,6 +163,82 @@ impl BuddyInner {
     }
 }
 
+// ── V35: Per-CPU Page Cache (SLAB Sheaves-inspired) ──────────────────────────────
+//
+// Each hart caches up to 8 physical pages for lock-free single-page
+// allocation/free.  A cache hit avoids the global buddy mutex; a miss
+// falls through to the shared buddy allocator.
+
+const CPU_CACHE_SIZE: usize = 8;
+const MAX_CPU_HARTS: usize = 8;
+
+#[derive(Clone, Copy)]
+pub struct PerCpuPageCache {
+    cached: [usize; CPU_CACHE_SIZE],
+    count: usize,
+}
+
+static mut CPU_CACHES: [PerCpuPageCache; MAX_CPU_HARTS] =
+    [PerCpuPageCache { cached: [0; CPU_CACHE_SIZE], count: 0 }; MAX_CPU_HARTS];
+
+// Global counters exposed for /proc and PteStats.
+static CACHE_HITS: AtomicU64 = AtomicU64::new(0);
+static CACHE_MISSES: AtomicU64 = AtomicU64::new(0);
+
+/// Allocate a single page from the CPU-local cache (lock-free fast path).
+/// Returns `None` if the cache is empty (caller should fall back to buddy).
+pub fn alloc_page_fast() -> Option<usize> {
+    let hart = crate::per_cpu::hart_id();
+    if hart >= MAX_CPU_HARTS {
+        return None;
+    }
+    unsafe {
+        if CPU_CACHES[hart].count > 0 {
+            CPU_CACHES[hart].count -= 1;
+            Some(CPU_CACHES[hart].cached[CPU_CACHES[hart].count])
+        } else {
+            None
+        }
+    }
+}
+
+/// Return a single page to the CPU-local cache (lock-free fast path).
+/// Returns `true` if the page was accepted, `false` if the cache is full
+/// (caller should fall back to buddy free).
+pub fn free_page_fast(page: usize) -> bool {
+    let hart = crate::per_cpu::hart_id();
+    if hart >= MAX_CPU_HARTS {
+        return false;
+    }
+    unsafe {
+        if CPU_CACHES[hart].count < CPU_CACHE_SIZE {
+            CPU_CACHES[hart].cached[CPU_CACHES[hart].count] = page;
+            CPU_CACHES[hart].count += 1;
+            true
+        } else {
+            false
+        }
+    }
+}
+
+pub fn cache_hits() -> u64 {
+    CACHE_HITS.load(Ordering::Relaxed)
+}
+pub fn cache_misses() -> u64 {
+    CACHE_MISSES.load(Ordering::Relaxed)
+}
+
+pub fn per_cpu_cache_stats() -> (usize, usize) {
+    let mut total_cached = 0usize;
+    let total_capacity = MAX_CPU_HARTS * CPU_CACHE_SIZE;
+    unsafe {
+        for hart in 0..MAX_CPU_HARTS {
+            total_cached += CPU_CACHES[hart].count;
+        }
+    }
+    (total_cached, total_capacity)
+}
+
 pub fn init(base: usize, end: usize) {
     let mut inner = ALLOCATOR.inner.lock();
     inner.base = base;
@@ -191,7 +268,16 @@ pub fn init(base: usize, end: usize) {
 }
 
 /// Allocate a single 4KB physical page. Returns physical address.
+/// Tries the per-CPU cache first (lock-free), then falls back to the global buddy.
 pub fn alloc_page() -> Option<usize> {
+    // Fast path: CPU-local cache (no lock)
+    if let Some(page) = alloc_page_fast() {
+        CACHE_HITS.fetch_add(1, Ordering::Relaxed);
+        return Some(page);
+    }
+    CACHE_MISSES.fetch_add(1, Ordering::Relaxed);
+
+    // Fallback to global buddy allocator
     let mut inner = ALLOCATOR.inner.lock();
     inner.alloc_pages(0).map(|p| p * PAGE_SIZE + inner.base)
 }
@@ -203,7 +289,12 @@ pub fn alloc_pages(order: usize) -> Option<usize> {
 }
 
 /// Free a physical page allocated at `addr` with the given `order`.
+/// For order-0 pages, tries the per-CPU cache first (lock-free).
 pub fn free_page(addr: usize, order: usize) {
+    // For single pages, try CPU-local cache first (no lock)
+    if order == 0 && free_page_fast(addr) {
+        return;
+    }
     let mut inner = ALLOCATOR.inner.lock();
     let page = (addr - inner.base) / PAGE_SIZE;
     inner.free_pages(page, order);

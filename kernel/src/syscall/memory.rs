@@ -1,6 +1,6 @@
 // Memory management syscalls: mmap, munmap, mprotect, brk
 
-use crate::mem::{buddy, sv39, layout::PAGE_SIZE};
+use crate::mem::{buddy, mseal, sv39, layout::PAGE_SIZE};
 
 fn current_pid() -> Result<u32, &'static str> {
     crate::sched::current_thread()
@@ -70,6 +70,11 @@ pub fn sys_mmap(
     let pages = (length + PAGE_SIZE - 1) >> 12;
     let va = if addr == 0 { 0x1000_0000 } else { addr };
 
+    // V35: Reject if range overlaps a sealed region
+    if mseal::is_sealed(pid, va, length) {
+        return Err("mmap: range is sealed");
+    }
+
     // V27.1: CHERI validation — check that the mmap range is authorized
     let required_perms = crate::aslr::CHERI_PERM_R | crate::aslr::CHERI_PERM_W;
     if !crate::aslr::validate_ptr(pid, va, length, required_perms) {
@@ -90,6 +95,12 @@ pub fn sys_mmap(
 /// sys_munmap(addr, length) — unmap memory
 pub fn sys_munmap(addr: usize, length: usize) -> Result<usize, &'static str> {
     let pid = current_pid()?;
+
+    // V35: Reject if range overlaps a sealed region
+    if mseal::is_sealed(pid, addr, length) {
+        return Err("munmap: range is sealed");
+    }
+
     let pt_root = get_page_table_root(pid).ok_or("no proc pt")?;
     let pages = (length + PAGE_SIZE - 1) >> 12;
 
@@ -104,7 +115,16 @@ pub fn sys_munmap(addr: usize, length: usize) -> Result<usize, &'static str> {
 }
 
 /// sys_mprotect(addr, length, prot) — change page protection
-pub fn sys_mprotect(_addr: usize, _length: usize, _prot: usize) -> Result<usize, &'static str> {
+pub fn sys_mprotect(addr: usize, length: usize, _prot: usize) -> Result<usize, &'static str> {
+    let pid = match current_pid() {
+        Ok(p) => p,
+        Err(_) => return Ok(0),
+    };
+
+    // V35: Reject if range overlaps a sealed region
+    if mseal::is_sealed(pid, addr, length) {
+        return Err("mprotect: range is sealed");
+    }
     Ok(0)
 }
 
@@ -141,5 +161,14 @@ pub fn sys_mlock(_addr: usize, _len: usize) -> Result<usize, &'static str> {
 
 /// sys_munlock(addr, len) — unlock memory.
 pub fn sys_munlock(_addr: usize, _len: usize) -> Result<usize, &'static str> {
+    Ok(0)
+}
+
+// ── V35 Memory syscalls ─────────────────────────────────────────────────────────
+
+/// sys_mseal(addr, len) — seal memory range from future mmap/mprotect/munmap.
+pub fn sys_mseal(addr: usize, len: usize) -> Result<usize, &'static str> {
+    let pid = current_pid()?;
+    mseal::mseal(pid, addr, len)?;
     Ok(0)
 }

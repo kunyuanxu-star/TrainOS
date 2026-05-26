@@ -1,6 +1,7 @@
 pub mod buddy;
 pub mod heap;
 pub mod layout;
+pub mod mseal;
 pub mod sv39;
 pub mod txmmu;
 

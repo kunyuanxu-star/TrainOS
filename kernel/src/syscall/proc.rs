@@ -681,11 +681,24 @@ pub fn sys_blk_read(sector: usize, buf_ptr: usize, buf_len: usize) -> Result<usi
 ///   sector  — Logical block address (LBA, 512-byte units)
 ///   buf_ptr — User-space buffer virtual address (data to write)
 ///   buf_len — Buffer size in bytes (must be >= 512)
+///   flags   — RWF_* flags (RWF_ATOMIC enables all-or-nothing write)
 ///
 /// Returns: 512 on success, or an error string.
-pub fn sys_blk_write(sector: usize, buf_ptr: usize, buf_len: usize) -> Result<usize, &'static str> {
+pub fn sys_blk_write(sector: usize, buf_ptr: usize, buf_len: usize, flags: usize) -> Result<usize, &'static str> {
     if buf_len < 512 {
         return Err("buffer too small");
+    }
+
+    // V35: RWF_ATOMIC — save original data before write for rollback
+    if flags & crate::syscall::ioflags::RWF_ATOMIC as usize != 0 {
+        crate::syscall::ioflags::atomic_write_begin(sector as u64, 512)?;
+        // Read current sector data into backup
+        match crate::syscall::ioflags::atomic_read_sector(sector) {
+            Ok(sector_data) => {
+                crate::syscall::ioflags::atomic_write_save_original(&sector_data);
+            }
+            Err(e) => return Err(e),
+        }
     }
 
     // 1. Reset device
@@ -853,6 +866,19 @@ pub fn sys_blk_write(sector: usize, buf_ptr: usize, buf_len: usize) -> Result<us
 
     // 17. Check VirtIO block status byte (0 = OK)
     let blk_status = unsafe { status_buf.read() };
+
+    // V35: Atomic write commit/rollback
+    if flags & crate::syscall::ioflags::RWF_ATOMIC as usize != 0 {
+        if blk_status == 0 {
+            // Write succeeded — commit
+            crate::syscall::ioflags::atomic_write_commit();
+        } else {
+            // Write failed — rollback
+            let _ = crate::syscall::ioflags::atomic_write_rollback();
+            return Err("virtio block error (rolled back)");
+        }
+    }
+
     if blk_status != 0 {
         return Err("virtio block error");
     }

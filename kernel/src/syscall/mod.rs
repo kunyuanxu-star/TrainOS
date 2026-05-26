@@ -7,6 +7,7 @@ pub mod socket;
 pub mod epoll;
 pub mod time;
 pub mod fs;
+pub mod ioflags;
 
 use crate::trap::TrapFrame;
 
@@ -289,6 +290,10 @@ pub const SYS_POLL: usize = 279;
 pub const SYS_PPOLL: usize = 280;
 pub const SYS_PSELECT6: usize = 281;
 
+// V35 — Linux Scheduling & IPC: 296-299
+pub const SYS_SCHED_SETPREEMPT: usize = 296;  // Set preemption mode
+pub const SYS_SET_SLICE_EXT: usize = 297;      // Enable/disable time slice extension
+
 // V34 — AI-Native Scheduling: 282-295
 pub const SYS_PD_SUBMIT: usize = 282;       // Submit P/D workload pair
 pub const SYS_PD_NEXT_DECODE: usize = 283;  // Get next decode step
@@ -304,6 +309,16 @@ pub const SYS_GPU_MIGRATE: usize = 292;     // Migrate workload to different GPU
 pub const SYS_GPU_BALANCE: usize = 293;     // Balance GPU load
 pub const SYS_AI_SCHED_STATS: usize = 294;  // Get AI scheduling stats
 pub const SYS_AI_SCHED_RESET: usize = 295;  // Reset AI scheduling stats
+
+// V35 — Linux Feature Parity (I/O & Filesystem): 305-309
+pub const SYS_READV2: usize = 305;           // Extended read with flags (preadv2)
+pub const SYS_WRITEV2: usize = 306;          // Extended write with flags (pwritev2)
+pub const SYS_CACHESTAT: usize = 307;        // Page cache statistics
+pub const SYS_IORING_PROVIDE_BUFFERS: usize = 308;  // Pre-register buffer pool
+pub const SYS_IORING_REMOVE_BUFFERS: usize = 309;   // Remove buffer pool
+
+// V35 — Memory & Security (V35a): 301
+pub const SYS_MSEAL: usize = 301;                    // Memory sealing (mseal)
 
 // ── Dispatch ─────────────────────────────────────────────────────────────────
 
@@ -383,7 +398,7 @@ pub fn syscall_dispatch(tf: &mut TrapFrame) {
         SYS_MMIO_READ32 => sys_mmio_read32(arg0),
         SYS_MMIO_WRITE32 => sys_mmio_write32(arg0, arg1),
         SYS_BLK_READ => proc::sys_blk_read(arg0, arg1, arg2),
-        SYS_BLK_WRITE => proc::sys_blk_write(arg0, arg1, arg2),
+        SYS_BLK_WRITE => proc::sys_blk_write(arg0, arg1, arg2, arg3),
         SYS_PROCLIST => proc::sys_proclist(arg0, arg1),
         SYS_KILL => {
             let pid = crate::sched::current_thread()
@@ -652,6 +667,62 @@ pub fn syscall_dispatch(tf: &mut TrapFrame) {
         SYS_GPU_BALANCE => proc::sys_gpu_balance(),
         SYS_AI_SCHED_STATS => proc::sys_ai_sched_stats(arg0),
         SYS_AI_SCHED_RESET => proc::sys_ai_sched_reset(),
+
+        // V35 — Scheduling & IPC
+        SYS_SCHED_SETPREEMPT => {
+            crate::sched::sys_sched_setpreempt(arg0 as u32, arg1)
+        }
+        SYS_SET_SLICE_EXT => crate::sched::sys_set_slice_ext(arg0 != 0),
+
+        // V35a — Memory & Security
+        SYS_MSEAL => memory::sys_mseal(arg0, arg1),
+
+        // V35 — Linux Feature Parity (I/O & Filesystem)
+        SYS_READV2 => ioflags::sys_readv2(
+            arg0 as u32,
+            arg1 as *mut u8,
+            arg2,
+            arg3 as isize as i64,
+            tf.a4 as u32,
+        ),
+        SYS_WRITEV2 => ioflags::sys_writev2(
+            arg0 as u32,
+            arg1 as *const u8,
+            arg2,
+            arg3 as isize as i64,
+            tf.a4 as u32,
+        ),
+        SYS_CACHESTAT => ioflags::sys_cachestat(
+            arg0 as u32,
+            arg1,
+            arg2,
+            arg3,
+        ),
+        SYS_IORING_PROVIDE_BUFFERS => {
+            let pages_ptr = arg2;
+            let pages_count = tf.a4;
+            if pages_ptr == 0 { Err("null pages") }
+            else {
+                let mut pages = [0usize; 16];
+                let count = pages_count.min(16);
+                unsafe {
+                    for i in 0..count {
+                        pages[i] = (pages_ptr as *const u32).add(i).read_volatile() as usize;
+                    }
+                }
+                crate::iouring::provide_buffers(
+                    arg0,
+                    arg1 as u16,
+                    &pages[..count],
+                    arg3,
+                );
+                Ok(0)
+            }
+        }
+        SYS_IORING_REMOVE_BUFFERS => {
+            crate::iouring::remove_buffers(arg0, arg1 as u16);
+            Ok(0)
+        }
 
         // V21 — Security
         SYS_SECCOMP_ADD => proc::sys_seccomp_add(arg0 as u32, arg1),

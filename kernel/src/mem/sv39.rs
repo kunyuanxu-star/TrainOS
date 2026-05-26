@@ -1,4 +1,4 @@
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use super::layout::PAGE_SIZE;
 
@@ -695,13 +695,286 @@ pub unsafe fn unmap_user_page_phys(root_phys: usize, va: usize) -> Option<usize>
     }
 }
 
-/// Page table statistics: counts of pages at each granularity and total bytes.
+// ── V35: Multi-Size Transparent Huge Pages (mTHP) ───────────────────────────────
+
+/// mTHP configuration — controls which large-page sizes are enabled and
+/// the minimum mapping size (in 4K pages) before trying a larger page.
+#[derive(Debug, Clone, Copy)]
+pub struct ThpConfig {
+    pub enable_2m: bool,
+    pub enable_1g: bool,
+    pub thp_2m_threshold: usize,   // min 4K pages to try 2MB mapping
+    pub thp_1g_threshold: usize,   // min 4K pages to try 1GB mapping
+}
+
+pub static THP_CONFIG: Mutex<ThpConfig> = Mutex::new(ThpConfig {
+    enable_2m: true,
+    enable_1g: false,          // buddy allocator max order is 12 (16MB), not enough
+    thp_2m_threshold: 512,     // at least 2MB to try 2MB superpage
+    thp_1g_threshold: 262144,  // at least 1GB
+});
+
+/// mTHP performance counters.
+pub struct ThpStats {
+    pub promotions: u64,
+    pub splits: u64,
+}
+
+static THP_PROMOTIONS: AtomicU64 = AtomicU64::new(0);
+static THP_SPLITS: AtomicU64 = AtomicU64::new(0);
+
+/// Try to map a range as 2MB superpages (L1 leaf entries).
+///
+/// `root_phys` — physical address of the L2 page table.
+/// `va` — must be 2MB-aligned.
+/// `count_4k` — number of 4K pages (must be >= 512).
+/// `flags` — bitwise OR of R(1), W(2), X(4), U(8).
+///
+/// Returns `true` if at least one 2MB superpage was created.
+pub fn try_map_2m(root_phys: usize, va: usize, count_4k: usize, flags: u8) -> bool {
+    if count_4k < 512 {
+        return false;
+    }
+    if va & (0x200000 - 1) != 0 {
+        return false; // not 2MB-aligned
+    }
+
+    let r = flags & 1 != 0;
+    let w = flags & 2 != 0;
+    let x = flags & 4 != 0;
+    let u = flags & 8 != 0;
+
+    unsafe {
+        // Allocate 2MB contiguous from buddy (order 9 = 2^9 * 4K)
+        let pa = match super::buddy::alloc_pages(9) {
+            Some(p) => p,
+            None => return false,
+        };
+        // Zero the whole 2MB range
+        core::ptr::write_bytes(pa_to_kva(pa) as *mut u8, 0, 0x200000);
+
+        let vpn2_idx = vpn2(va);
+        let vpn1_idx = vpn1(va);
+
+        let l2 = &mut *(pa_to_kva(root_phys) as *mut [PTE; 512]);
+
+        // Ensure the L2 → L1 page table page exists
+        if !l2[vpn2_idx].is_valid() {
+            let l1_page = match super::buddy::alloc_page() {
+                Some(p) => p,
+                None => {
+                    super::buddy::free_page(pa, 9);
+                    return false;
+                }
+            };
+            core::ptr::write_bytes(pa_to_kva(l1_page) as *mut u8, 0, PAGE_SIZE);
+            let mut entry = PTE::empty();
+            entry.set_ppn(l1_page >> 12);
+            entry.set_flags(false, false, false, false);
+            l2[vpn2_idx] = entry;
+        } else if l2[vpn2_idx].is_leaf() {
+            // Already a 1GB superpage — can't sub-map with 2MB
+            super::buddy::free_page(pa, 9);
+            return false;
+        }
+
+        // Set the L1 entry as a 2MB leaf superpage
+        let l1 = &mut *(pa_to_kva(l2[vpn2_idx].phys_addr()) as *mut [PTE; 512]);
+        if l1[vpn1_idx].is_valid() {
+            super::buddy::free_page(pa, 9);
+            return false; // already mapped
+        }
+
+        let mut pte = PTE::empty();
+        pte.set_ppn(pa >> 12);
+        pte.set_flags(r, w, x, u);
+        pte.set_accessed(true);
+        pte.set_dirty(true);
+        l1[vpn1_idx] = pte;
+
+        THP_PROMOTIONS.fetch_add(1, Ordering::Relaxed);
+    }
+    true
+}
+
+/// Try to map a range as a 1GB superpage (L2 leaf entry).
+///
+/// NOTE: The buddy allocator's max order is 12 (16MB), so 1GB
+/// (order 18) will always fail.  This function exists for future
+/// use with a larger allocator or physically-contiguous reserved regions.
+pub fn try_map_1g(_root_phys: usize, _va: usize, _count_4k: usize, _flags: u8) -> bool {
+    false // not yet supported (buddy max order = 12)
+}
+
+/// Split a 2MB superpage at `va` into 512 individual 4K pages.
+///
+/// Allocates an L0 page table page and fills it with PTEs pointing to
+/// the sub-pages of the existing 2MB physical allocation.
+/// Used for COW and mprotect on individual 4K pages.
+pub fn split_large_page(root_phys: usize, va: usize) -> Result<(), &'static str> {
+    unsafe {
+        let vpn2_idx = vpn2(va);
+        let vpn1_idx = vpn1(va);
+
+        let l2 = &*(pa_to_kva(root_phys) as *const [PTE; 512]);
+        if !l2[vpn2_idx].is_valid() {
+            return Err("split: L2 not valid");
+        }
+        if l2[vpn2_idx].is_leaf() {
+            return Err("split: L2 leaf (1GB) not supported");
+        }
+
+        let l1_phys = l2[vpn2_idx].phys_addr();
+        let l1 = &mut *(pa_to_kva(l1_phys) as *mut [PTE; 512]);
+
+        if !l1[vpn1_idx].is_leaf() {
+            return Err("split: not a 2MB superpage");
+        }
+
+        let super_phys = l1[vpn1_idx].phys_addr();
+        let r = l1[vpn1_idx].is_readable();
+        let w = l1[vpn1_idx].is_writable();
+        let x = l1[vpn1_idx].is_executable();
+        let u = l1[vpn1_idx].is_user();
+        let cow = l1[vpn1_idx].is_cow();
+        let shared = l1[vpn1_idx].is_shared();
+
+        // Allocate an L0 page table page
+        let l0_page = super::buddy::alloc_page().ok_or("split: OOM allocating L0 page")?;
+        let l0 = &mut *(pa_to_kva(l0_page) as *mut [PTE; 512]);
+
+        // Fill with 512× 4K PTEs into the existing 2MB physical region
+        for i in 0..512 {
+            let page_pa = super_phys + i * PAGE_SIZE;
+            let mut pte = PTE::empty();
+            pte.set_ppn(page_pa >> 12);
+            pte.set_flags(r, w, x, u);
+            pte.set_accessed(true);
+            pte.set_dirty(true);
+            if cow {
+                pte.set_cow(true);
+            }
+            if shared {
+                pte.set_shared(true);
+            }
+            l0[i] = pte;
+        }
+
+        // Replace L1 leaf entry with a branch to the L0 table
+        let mut entry = PTE::empty();
+        entry.set_ppn(l0_page >> 12);
+        entry.set_flags(false, false, false, false);
+        l1[vpn1_idx] = entry;
+
+        // Flush TLB for the 2MB range
+        core::arch::asm!("sfence.vma {}", in(reg) va);
+
+        THP_SPLITS.fetch_add(1, Ordering::Relaxed);
+    }
+    Ok(())
+}
+
+/// Attempt to promote a run of contiguous 4K pages into a 2MB superpage.
+///
+/// Checks if the 512 consecutive 4K pages starting at `va` are all mapped,
+/// physically contiguous, and 2MB-aligned.  If so, replaces them with a
+/// single L1 leaf entry and frees the L0 page table page.
+///
+/// Returns `true` if promotion succeeded.
+pub fn try_promote(root_phys: usize, va: usize) -> bool {
+    if va & (0x200000 - 1) != 0 {
+        return false;
+    }
+    unsafe {
+        let vpn2_idx = vpn2(va);
+        let vpn1_idx = vpn1(va);
+
+        let l2 = &mut *(pa_to_kva(root_phys) as *mut [PTE; 512]);
+        if !l2[vpn2_idx].is_valid() || l2[vpn2_idx].is_leaf() {
+            return false;
+        }
+
+        let l1 = &mut *(pa_to_kva(l2[vpn2_idx].phys_addr()) as *mut [PTE; 512]);
+        if l1[vpn1_idx].is_leaf() {
+            return false; // already a superpage
+        }
+        let l0_phys = l1[vpn1_idx].phys_addr();
+        let l0 = &*(pa_to_kva(l0_phys) as *const [PTE; 512]);
+
+        // Read the first PTE to get flags and base physical address
+        let first = l0[0];
+        if !first.is_valid() || !first.is_leaf() {
+            return false;
+        }
+        let base_phys = first.phys_addr();
+
+        // Check 2MB alignment
+        if base_phys & (0x200000 - 1) != 0 {
+            return false;
+        }
+
+        // Verify all 512 PTEs are present, contiguous, and share the same flags
+        for i in 0..512 {
+            let pte = l0[i];
+            if !pte.is_valid() || !pte.is_leaf() {
+                return false;
+            }
+            if pte.phys_addr() != base_phys + i * PAGE_SIZE {
+                return false; // not physically contiguous
+            }
+            if pte.is_readable() != first.is_readable()
+                || pte.is_writable() != first.is_writable()
+                || pte.is_executable() != first.is_executable()
+                || pte.is_user() != first.is_user()
+            {
+                return false; // flags differ
+            }
+        }
+
+        // Promote: set L1 entry as 2MB superpage, free L0 page table page
+        let r = first.is_readable();
+        let w = first.is_writable();
+        let x = first.is_executable();
+        let u = first.is_user();
+
+        let mut super_pte = PTE::empty();
+        super_pte.set_ppn(base_phys >> 12);
+        super_pte.set_flags(r, w, x, u);
+        super_pte.set_accessed(true);
+        super_pte.set_dirty(true);
+        l1[vpn1_idx] = super_pte;
+
+        // Free the L0 page table page
+        super::buddy::free_page(l0_phys, 0);
+
+        core::arch::asm!("sfence.vma {}", in(reg) va);
+
+        THP_PROMOTIONS.fetch_add(1, Ordering::Relaxed);
+    }
+    true
+}
+
+/// Get current mTHP performance stats.
+pub fn thp_stats() -> ThpStats {
+    ThpStats {
+        promotions: THP_PROMOTIONS.load(Ordering::Relaxed),
+        splits: THP_SPLITS.load(Ordering::Relaxed),
+    }
+}
+
+/// Page table statistics: counts of pages at each granularity, total bytes,
+/// sealed pages, mTHP promotion/split counters, and per-CPU cache efficiency.
 #[derive(Debug, Clone, Copy)]
 pub struct PteStats {
     pub mapped_4k: usize,
     pub mapped_2m: usize,
     pub mapped_1g: usize,
     pub total_bytes: usize,
+    pub sealed_pages: usize,
+    pub thp_promotions: u64,
+    pub thp_splits: u64,
+    pub cache_hits: u64,
+    pub cache_misses: u64,
 }
 
 /// Direct page table manager — operates directly on page tables without
@@ -724,6 +997,9 @@ impl PteManager {
     /// `flags` is a bitwise OR of R(1), W(2), X(4), U(8) matching the
     /// TxMMU `FLAG_*` constants.  Each allocated page is zeroed before
     /// mapping.
+    ///
+    /// When mTHP is enabled and the range is large enough, 2MB superpages
+    /// are used automatically for aligned sub-ranges (V35).
     pub unsafe fn map_range(
         &mut self,
         va: usize,
@@ -737,8 +1013,26 @@ impl PteManager {
 
         let start = page_align_down(va);
         let end = page_align_up(va + len);
+        let total_pages = (end - start) / PAGE_SIZE;
+
+        // Try 2MB superpages for large aligned ranges (mTHP)
+        let thp_cfg = THP_CONFIG.lock();
+        let use_2m = thp_cfg.enable_2m && total_pages >= thp_cfg.thp_2m_threshold;
+        drop(thp_cfg);
+
         let mut page_va = start;
         while page_va < end {
+            if use_2m
+                && (page_va & (0x200000 - 1)) == 0
+                && (end - page_va) >= 0x200000
+            {
+                if try_map_2m(self.root_phys, page_va, 512, flags) {
+                    page_va += 0x200000;
+                    continue;
+                }
+                // Fall through to 4K mapping if try_map_2m fails
+            }
+            // 4K fallback
             let pa = super::buddy::alloc_page().ok_or("PteManager map_range: OOM")?;
             core::ptr::write_bytes(pa_to_kva(pa) as *mut u8, 0, PAGE_SIZE);
             map_page(self.root_phys, page_va, pa, r, w, x, u)?;
@@ -884,6 +1178,11 @@ impl PteManager {
             mapped_2m: 0,
             mapped_1g: 0,
             total_bytes: 0,
+            sealed_pages: super::mseal::total_sealed_pages(),
+            thp_promotions: THP_PROMOTIONS.load(Ordering::Relaxed),
+            thp_splits: THP_SPLITS.load(Ordering::Relaxed),
+            cache_hits: super::buddy::cache_hits(),
+            cache_misses: super::buddy::cache_misses(),
         };
         unsafe {
             let l2 = &*(pa_to_kva(self.root_phys) as *const [PTE; 512]);

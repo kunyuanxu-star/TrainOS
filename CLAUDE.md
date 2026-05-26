@@ -28,7 +28,7 @@ The V21–V30 roadmap is defined in [docs/specs/2026-05-18-trainos-v21-v30-roadm
 2. Architecture: RISC-V 64-bit (rv64gc), Sv39 virtual memory, MIT license.
 3. Language: Rust nightly (`no_std` kernel + user-space, no heap in services).
 
-## Current Status (2026-05-24) — V35.0 (Linux Feature Parity)
+## Current Status (2026-05-24) — V36.0 (RISC-V Enhancement)
 
 ### Completed
 - **Dynamic process spawning**: `sys_spawn` (syscall 3) creates new processes from user-provided ELF data
@@ -184,7 +184,35 @@ Based on Linux kernel 2024-2026 innovation survey. Key features adopted:
 - **RWF flags**: HIPRI/DSYNC/SYNC/NOWAIT/APPEND/UNCACHED/ATOMIC, `sys_readv2/writev2` with full flag support
 - **Atomic writes**: `atomic_write_begin/commit/rollback`, crash-consistent all-or-nothing block I/O
 - **io_uring ZC**: send_zc/recv_zc via pre-registered buffer pools, splice between fds, 5 new opcodes
-- **cachestat**: `sys_cachestat` — query page cache residency (total/cached/dirty/writeback/evicted pages)
+### V36 (RISC-V Enhancement) — 2026-05-24
+
+Based on RISC-V ISA extension survey. Full support for Vector, AIA, Cache Ops, IOMMU, and more.
+
+#### V36a — Vector Extension (RVV 1.0)
+- **Vector context**: 32x 256-bit registers, lazy save/restore on context switch, dirty tracking
+- **Vector trap handler**: Illegal instruction trap activates VS in sstatus on first use
+- **Vector kernel API**: `vector_memcpy`, `vector_memset`, `vector_xor` with scalar fallbacks
+- **Vector capability**: CAP_VECTOR for access control, `sys_cap_vector_enable`
+- **Vector stats**: saves/restores/lazy_traps counters, vlen discovery
+
+#### V36b — AIA + Sv48/Sv57 + Sstc
+- **Sstc timer**: `stimecmp` CSR for direct timer programming, no SBI needed
+- **AIA APLIC**: Wired interrupt → MSI conversion, per-source priority and target routing
+- **AIA IMSIC**: Per-hart MSI interrupt files, unified `InterruptController` abstraction
+- **Sv48/Sv57**: 4-level (Sv48) and 5-level (Sv57) page table support, runtime SATP mode detection
+
+#### V36c — Cache Ops + NAPOT + Entropy
+- **Zicbom/Zicboz**: CBO.CLEAN/FLUSH/INVAL/ZERO operations, `cache_flush_range` for DMA
+- **Svnapot**: 64KB NAPOT page mapping (`napot_pte_64k`, `try_map_64k`, `split_napot_64k`)
+- **Svpbmt**: Page-based memory types (PMA/NC/IO) for MMIO and device memory
+- **Svinval**: Fine-grained TLB invalidation (per-VA, per-ASID) with SFENCE.W.INVAL
+- **Zkr entropy**: Hardware `seed` CSR for ASLR/KASLR, 32-round entropy gathering
+
+#### V36d — ePMP + IOMMU + Bitmanip
+- **ePMP**: `mseccfg` CSR (MML/MMWP/RLB), whitelist-only PMP for TEE enclaves
+- **IOMMU**: `RvIommu` with device contexts, IOVA→HPA mapping, `IommuPageTable` sharing
+- **Pointer Masking**: Ssnpm/Smmpm via senvcfg, 7-bit hardware tags for MTE/UAF detection
+- **B Extension**: Zbb (clz/ctz/pcnt/ror/rol), Zbs (bset/bclr), Zbkb, kernel hot-path acceleration
 
 ### Architecture
 **Microkernel** — kernel provides:

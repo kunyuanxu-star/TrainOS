@@ -354,6 +354,16 @@ qemu-system-riscv64 -machine virt -smp 2 -nographic \
 - Operations: READ, WRITE, APPEND, DELETE, LIST, STAT
 - procfs virtual files: /proc/uptime, /proc/meminfo, /proc/perf, /proc/version, /proc/proc, /proc/self
 
+### V38a — RISC-V Crypto Extensions (Zk/Zkn/Zks)
+
+- **Zkne (AES)**: `kernel/src/crypto/aes.rs` — AES-128/256 with ECB, CBC, CTR, GCM modes; software implementation with Zkne instruction wrappers for future hardware acceleration
+- **Zknh (SHA-256/512)**: `kernel/src/crypto/sha.rs` — SHA-256/512 hashing with HMAC; software implementation with Zknh instruction wrappers
+- **Zks (SM3/SM4)**: `kernel/src/crypto/sm.rs` — Chinese national algorithms SM3 hash and SM4 block cipher; software implementation with Zksh/Zksed instruction wrappers
+- **Zkr (Entropy)**: `kernel/src/crypto/entropy.rs` — Entropy source with `seed` CSR probing, AES-CTR DRBG (SP 800-90A), cryptographic conditioning
+- **TEE integration**: SHA delegation to crypto module; AES-GCM for secure storage; hardware entropy for attestation nonces
+- **Boot init**: `crypto_init()` in `rust_main`, reports detected Zk* extensions
+
+
 ## Commit Convention
 Format: `type: description` (conventional commits)
 Types: feat, fix, docs, refactor, test

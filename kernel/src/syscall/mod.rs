@@ -324,7 +324,7 @@ pub const SYS_MSEAL: usize = 301;                    // Memory sealing (mseal)
 pub const SYS_CAP_VECTOR_ENABLE: usize = 310;        // Grant vector capability
 pub const SYS_VECTOR_STATS: usize = 311;             // Read vector statistics
 
-// V37b — GUI syscalls: 350-359
+// V37b — GUI syscalls: 350-356
 pub const SYS_FB_INFO: usize = 350;                  // Get framebuffer info
 pub const SYS_FB_FLUSH: usize = 351;                 // Flush framebuffer
 pub const SYS_INPUT_POLL: usize = 352;               // Poll for input events
@@ -332,6 +332,15 @@ pub const SYS_INPUT_WAIT: usize = 353;               // Wait (block) for input e
 pub const SYS_FB_MAP_PAGE: usize = 354;              // Map a framebuffer page into process
 pub const SYS_GUI_REDRAW: usize = 355;               // Redraw all windows
 pub const SYS_GUI_CREATE_WINDOW: usize = 356;        // Create a window (kernel-managed)
+
+// V38b — RISC-V PMU (Sscofpmf) syscalls: 358-360
+pub const SYS_PERF_READ: usize = 358;                // Read performance counters
+pub const SYS_PERF_CONFIG: usize = 359;              // Configure performance events
+pub const SYS_PERF_SAMPLE: usize = 360;              // Configure sampling period
+
+// V38b — RISC-V Debug (Sdtrig) syscalls: 361-362
+pub const SYS_DEBUG_BREAKPOINT: usize = 361;         // Set hardware breakpoint
+pub const SYS_DEBUG_WATCHPOINT: usize = 362;         // Set hardware watchpoint
 
 // ── Dispatch ─────────────────────────────────────────────────────────────────
 
@@ -805,6 +814,15 @@ pub fn syscall_dispatch(tf: &mut TrapFrame) {
                 }
             }
         }
+
+        // V38b — PMU (Sscofpmf) syscalls
+        SYS_PERF_READ => proc::sys_perf_read(arg0, arg1),
+        SYS_PERF_CONFIG => proc::sys_perf_config(arg0, arg1),
+        SYS_PERF_SAMPLE => proc::sys_perf_sample(arg0),
+
+        // V38b — Debug (Sdtrig) syscalls
+        SYS_DEBUG_BREAKPOINT => proc::sys_debug_breakpoint(arg0),
+        SYS_DEBUG_WATCHPOINT => proc::sys_debug_watchpoint(arg0, arg1),
 
         _ => Err("unknown syscall"),
     };

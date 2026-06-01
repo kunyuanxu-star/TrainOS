@@ -206,6 +206,30 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
     // V36a: Initialize RISC-V Vector Extension (RVV 1.0) support
     crate::mem::vector::init_vector_support();
 
+    // V38b: Initialize RISC-V Performance Monitoring (Sscofpmf)
+    crate::trap::pmu::init();
+
+    // V38b: Initialize RISC-V Debug Triggers (Sdtrig)
+    crate::trap::debug::init();
+
+    // V38b: Initialize RISC-V State Enable (Smstateen)
+    crate::trap::smstateen::init();
+
+    // V38c: Initialize Zihintpause (PAUSE hint instruction)
+    crate::trap::pause::init_pause();
+
+    // V38c: Initialize Zicond (conditional move instructions)
+    crate::mem::zicond::init_zicond();
+
+    // V38c: Initialize Sspmp (S-mode Physical Memory Protection)
+    crate::mem::sspmp::sspmp_init();
+
+    // V38c: Initialize VS-AIA (Virtual Supervisor-level AIA for hypervisor)
+    crate::hypervisor::vs_aia::vs_aia_init();
+
+    // V38c: Initialize Zicond-optimized scheduler hot paths
+    crate::sched::sched_zicond_init();
+
     // V37b: Initialize GUI subsystem (framebuffer + window manager)
     if device::framebuffer::fb_init() {
         device::gui::gui_init();

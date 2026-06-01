@@ -2660,3 +2660,66 @@ pub fn sys_vector_stats(buf_ptr: usize, buf_len: usize) -> Result<usize, &'stati
     }
     Ok(40)
 }
+
+// ── V38b — RISC-V PMU (Sscofpmf) syscalls ─────────────────────────────
+
+/// Read performance counters into a user buffer.
+/// arg0 = buf_ptr, arg1 = buf_len
+/// Fills the buffer with a PerfSummary (56 bytes).
+pub fn sys_perf_read(buf_ptr: usize, buf_len: usize) -> Result<usize, &'static str> {
+    if buf_ptr == 0 || buf_len < 56 {
+        return Err("invalid buffer");
+    }
+    let buf = unsafe { core::slice::from_raw_parts_mut(buf_ptr as *mut u8, buf_len) };
+    let written = crate::trap::pmu::sys_perf_read(buf);
+    if written == 0 {
+        Err("PMU not initialized")
+    } else {
+        Ok(written)
+    }
+}
+
+/// Configure performance monitoring events.
+/// arg0 = events_ptr (array of u64 event-ids), arg1 = event_count
+/// Returns the number of events successfully configured.
+pub fn sys_perf_config(events_ptr: usize, event_count: usize) -> Result<usize, &'static str> {
+    if events_ptr == 0 || event_count == 0 || event_count > 29 {
+        return Err("invalid events");
+    }
+    let events = unsafe {
+        core::slice::from_raw_parts(events_ptr as *const u64, event_count)
+    };
+    Ok(crate::trap::pmu::start_profiling(events))
+}
+
+/// Configure sampling period for overflow-based sampling.
+/// arg0 = period (cycles between samples)
+pub fn sys_perf_sample(period: usize) -> Result<usize, &'static str> {
+    if period == 0 {
+        return Err("invalid period");
+    }
+    crate::trap::pmu::enable_sampling(period as u64);
+    Ok(0)
+}
+
+// ── V38b — RISC-V Debug (Sdtrig) syscalls ──────────────────────────────
+
+/// Set a hardware breakpoint at the given address.
+/// arg0 = address
+/// Returns the trigger index (0-3) on success.
+pub fn sys_debug_breakpoint(addr: usize) -> Result<usize, &'static str> {
+    if addr == 0 {
+        return Err("invalid address");
+    }
+    crate::trap::debug::set_breakpoint(addr)
+}
+
+/// Set a hardware watchpoint at the given address.
+/// arg0 = address, arg1 = size (bytes)
+/// Returns the trigger index (0-3) on success.
+pub fn sys_debug_watchpoint(addr: usize, size: usize) -> Result<usize, &'static str> {
+    if addr == 0 || size == 0 || size > 8 {
+        return Err("invalid watchpoint args");
+    }
+    crate::trap::debug::set_watchpoint(addr, size)
+}

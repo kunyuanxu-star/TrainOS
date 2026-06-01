@@ -1,6 +1,10 @@
 pub mod asm;
 pub mod sstc;
 pub mod aia;
+pub mod pmu;
+pub mod debug;
+pub mod smstateen;
+pub mod pause;
 
 use core::sync::atomic::{AtomicBool, Ordering};
 
@@ -163,6 +167,7 @@ extern "C" fn handle_trap(tf: &mut TrapFrame) {
             1 => software_interrupt(tf),
             5 => timer_interrupt(tf),
             9 => external_interrupt(tf), // V36b: SEI (Supervisor External Interrupt) via AIA
+            13 => perf_overflow_interrupt(tf), // V38b: Sscofpmf counter overflow
             _ => {
                 crate::println!("Unhandled interrupt: scause=0x{:x}", scause);
                 crate::sched::schedule(); // try to recover
@@ -171,6 +176,7 @@ extern "C" fn handle_trap(tf: &mut TrapFrame) {
     } else {
         match cause {
             2 => handle_vector_trap(tf),  // V36a: Illegal instruction (lazy vec)
+            3 => debug_trigger_trap(tf),  // V38b: Sdtrig breakpoint/watchpoint trigger
             8 => syscall(tf),     // Environment call from U-mode
             12 => page_fault(tf), // Instruction page fault
             13 => page_fault(tf), // Load page fault
@@ -349,6 +355,19 @@ pub unsafe fn switch_vector_context(from: *mut crate::proc::thread::Thread, to: 
         (*to).vector_state.restore();
         crate::mem::vector::VECTOR_STATS.record_restore();
     }
+}
+
+/// V38b: Sscofpmf counter overflow interrupt (interrupt cause 13).
+fn perf_overflow_interrupt(_tf: &mut TrapFrame) {
+    crate::trap::pmu::handle_counter_overflow();
+    crate::sched::schedule();
+}
+
+/// V38b: Sdtrig debug trigger breakpoint exception (exception cause 3).
+fn debug_trigger_trap(tf: &mut TrapFrame) {
+    let stval = tf.stval;
+    crate::trap::debug::handle_trigger_hit(stval);
+    crate::sched::schedule();
 }
 
 fn syscall(tf: &mut TrapFrame) {

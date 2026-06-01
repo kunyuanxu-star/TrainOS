@@ -28,7 +28,7 @@ The V21–V30 roadmap is defined in [docs/specs/2026-05-18-trainos-v21-v30-roadm
 2. Architecture: RISC-V 64-bit (rv64gc), Sv39 virtual memory, MIT license.
 3. Language: Rust nightly (`no_std` kernel + user-space, no heap in services).
 
-## Current Status (2026-05-24) — V36.0 (RISC-V Enhancement)
+## Current Status (2026-05-24) — V37.0 (TEE + GUI)
 
 ### Completed
 - **Dynamic process spawning**: `sys_spawn` (syscall 3) creates new processes from user-provided ELF data
@@ -213,6 +213,23 @@ Based on RISC-V ISA extension survey. Full support for Vector, AIA, Cache Ops, I
 - **IOMMU**: `RvIommu` with device contexts, IOVA→HPA mapping, `IommuPageTable` sharing
 - **Pointer Masking**: Ssnpm/Smmpm via senvcfg, 7-bit hardware tags for MTE/UAF detection
 - **B Extension**: Zbb (clz/ctz/pcnt/ror/rol), Zbs (bset/bclr), Zbkb, kernel hot-path acceleration
+
+### V37 (TEE + GUI) — 2026-05-24
+
+#### V37a — RISC-V TEE Enhancement
+- **AP-TEE compliant enclaves**: Standard memory layout (text/rodata/data/heap/stack), SHA-512 measurement, signer hash, TCB version
+- **Remote Attestation (RATS)**: Evidence generation/verification, challenge-response, 236-byte wire format, Ed25519 signatures
+- **Multi-zone TEE**: 16 concurrent zones, communication matrix, trust domains, per-zone permissions
+- **Secure storage**: Sealed blobs (64 entries), measurement binding, domain-separated KDF, AES-GCM encryption
+- **TEE lifecycle manager**: Factory→Provisioning→Operational→Decommissioned, anti-rollback counter
+
+#### V37b — Basic Graphical User Interface
+- **Framebuffer driver**: VirtIO-GPU/simplefb, buddy-allocator-backed, RGBA32, dirty tracking, double buffering
+- **Graphics primitives**: Rounded rects, gradients, drop shadows, 8x16 bitmap font, text wrapping/alignment
+- **Window manager**: 32 windows, Z-ordering, title bars (close/minimize), drag/resize, composited redraw
+- **Input handling**: Event queue (256 entries), USB HID scancodes, keyboard state, scancode→ASCII conversion
+- **Widget toolkit**: Button, Label, TextBox, CheckBox, ProgressBar, ScrollBar with rendering + hit-testing
+- **GUI service**: EP 9, 13 IPC opcodes, 7 new syscalls (350-356)
 
 ### Architecture
 **Microkernel** — kernel provides:

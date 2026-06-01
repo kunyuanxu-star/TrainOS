@@ -206,6 +206,11 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
     // V36a: Initialize RISC-V Vector Extension (RVV 1.0) support
     crate::mem::vector::init_vector_support();
 
+    // V37b: Initialize GUI subsystem (framebuffer + window manager)
+    if device::framebuffer::fb_init() {
+        device::gui::gui_init();
+    }
+
     // V33: Initialize Confidential Computing TEE subsystem
     crate::security::tee::tee_init();
     println!("  TEE subsystem initialized");
@@ -288,7 +293,8 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
     //  54 — Storage tests (test_net2)
     //  53 — Package tests (test_pkg)
     //  50 — Persistence tests (test_mount)
-    //  48 — Init (highest non-test)
+    //  48 — Init (creates EP 1)
+    //  47 — GUI service (V37b, EP 9, framebuffer)
     //  43 — Network (net)
     //  42 — Network echo (echo)
     //  41 — Network tests (test_net)

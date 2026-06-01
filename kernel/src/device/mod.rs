@@ -16,11 +16,18 @@
 pub mod merge;
 pub mod sched;
 pub mod iommu;
+pub mod framebuffer;
+pub mod graphics;
+pub mod window;
+pub mod input;
+pub mod widgets;
+pub mod gui;
 
 pub const DRV_BLOCK: u32 = 1;
 pub const DRV_NET: u32 = 2;
 pub const DRV_CHAR: u32 = 3;
 pub const DRV_PCI: u32 = 4;
+pub const DRV_DISPLAY: u32 = 5;
 pub const DRV_IOMMU: u32 = 6;
 
 use crate::mem::cache_ops;

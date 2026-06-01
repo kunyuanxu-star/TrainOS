@@ -281,26 +281,46 @@ impl Framebuffer {
         let x_end = core::cmp::min(sx + w, self.width);
         let y_end = core::cmp::min(sy + h, self.height);
 
-        let rows: Vec<u32> = if sy < dy {
-            (0..(y_end - sy)).rev().collect()
+        let row_count = y_end - sy;
+        if sy < dy {
+            // Copy bottom-to-top
+            let mut row: i32 = (row_count as i32) - 1;
+            while row >= 0 {
+                let src_y = sy + row as u32;
+                let dst_y = dy + row as u32;
+                for col in 0..(x_end - sx) {
+                    let src_x = sx + col;
+                    let dst_x = dx + col;
+                    if src_x < self.width && dst_x < self.width
+                        && src_y < self.height && dst_y < self.height
+                    {
+                        let src_off = (src_y * self.stride + src_x * self.bpp) as usize;
+                        let dst_off = (dst_y * self.stride + dst_x * self.bpp) as usize;
+                        unsafe {
+                            let val = core::ptr::read_volatile((self.fb_virt + src_off) as *const u32);
+                            core::ptr::write_volatile((self.fb_virt + dst_off) as *mut u32, val);
+                        }
+                    }
+                }
+                row -= 1;
+            }
         } else {
-            (0..(y_end - sy)).collect()
-        };
-
-        for &row in &rows {
-            let src_y = sy + row;
-            let dst_y = dy + row;
-            for col in 0..(x_end - sx) {
-                let src_x = sx + col;
-                let dst_x = dx + col;
-                if src_x < self.width && dst_x < self.width
-                    && src_y < self.height && dst_y < self.height
-                {
-                    let src_off = (src_y * self.stride + src_x * self.bpp) as usize;
-                    let dst_off = (dst_y * self.stride + dst_x * self.bpp) as usize;
-                    unsafe {
-                        let val = core::ptr::read_volatile((self.fb_virt + src_off) as *const u32);
-                        core::ptr::write_volatile((self.fb_virt + dst_off) as *mut u32, val);
+            // Copy top-to-bottom
+            for row in 0..row_count {
+                let src_y = sy + row;
+                let dst_y = dy + row;
+                for col in 0..(x_end - sx) {
+                    let src_x = sx + col;
+                    let dst_x = dx + col;
+                    if src_x < self.width && dst_x < self.width
+                        && src_y < self.height && dst_y < self.height
+                    {
+                        let src_off = (src_y * self.stride + src_x * self.bpp) as usize;
+                        let dst_off = (dst_y * self.stride + dst_x * self.bpp) as usize;
+                        unsafe {
+                            let val = core::ptr::read_volatile((self.fb_virt + src_off) as *const u32);
+                            core::ptr::write_volatile((self.fb_virt + dst_off) as *mut u32, val);
+                        }
                     }
                 }
             }
@@ -354,7 +374,7 @@ impl Framebuffer {
                 None => {
                     // Free already allocated back pages
                     for j in 0..i {
-                        buddy::free_page(back_pages[j]);
+                        buddy::free_page(back_pages[j], 0);
                     }
                     return false;
                 }

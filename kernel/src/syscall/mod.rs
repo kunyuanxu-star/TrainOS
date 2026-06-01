@@ -324,6 +324,15 @@ pub const SYS_MSEAL: usize = 301;                    // Memory sealing (mseal)
 pub const SYS_CAP_VECTOR_ENABLE: usize = 310;        // Grant vector capability
 pub const SYS_VECTOR_STATS: usize = 311;             // Read vector statistics
 
+// V37b — GUI syscalls: 350-359
+pub const SYS_FB_INFO: usize = 350;                  // Get framebuffer info
+pub const SYS_FB_FLUSH: usize = 351;                 // Flush framebuffer
+pub const SYS_INPUT_POLL: usize = 352;               // Poll for input events
+pub const SYS_INPUT_WAIT: usize = 353;               // Wait (block) for input event
+pub const SYS_FB_MAP_PAGE: usize = 354;              // Map a framebuffer page into process
+pub const SYS_GUI_REDRAW: usize = 355;               // Redraw all windows
+pub const SYS_GUI_CREATE_WINDOW: usize = 356;        // Create a window (kernel-managed)
+
 // ── Dispatch ─────────────────────────────────────────────────────────────────
 
 pub fn syscall_dispatch(tf: &mut TrapFrame) {
@@ -736,6 +745,66 @@ pub fn syscall_dispatch(tf: &mut TrapFrame) {
         // V36a — RVV 1.0 Vector Extension
         SYS_CAP_VECTOR_ENABLE => proc::sys_cap_vector_enable(arg0 as u32),
         SYS_VECTOR_STATS => proc::sys_vector_stats(arg0, arg1),
+
+        // V37b — GUI syscalls
+        SYS_FB_INFO => {
+            let pid = crate::sched::current_thread()
+                .map(|t| unsafe { (*t).owner })
+                .unwrap_or(0);
+            if pid == 0 { Err("no process") }
+            // arg0 = user buffer pointer, arg1 = buffer size
+            else if arg0 == 0 { Err("null buffer") }
+            else {
+                let buf = unsafe { core::slice::from_raw_parts_mut(arg0 as *mut u8, arg1) };
+                crate::device::gui::sys_fb_info(buf)
+            }
+        }
+        SYS_FB_FLUSH => crate::device::gui::sys_fb_flush(),
+        SYS_INPUT_POLL => {
+            if arg0 == 0 { Err("null buffer") }
+            else {
+                let buf = unsafe { core::slice::from_raw_parts_mut(arg0 as *mut u8, arg1) };
+                crate::device::gui::sys_input_poll(buf)
+            }
+        }
+        SYS_INPUT_WAIT => {
+            if arg0 == 0 { Err("null buffer") }
+            else {
+                let buf = unsafe { core::slice::from_raw_parts_mut(arg0 as *mut u8, arg1) };
+                crate::device::gui::sys_input_wait(buf)
+            }
+        }
+        SYS_FB_MAP_PAGE => {
+            let pid = crate::sched::current_thread()
+                .map(|t| unsafe { (*t).owner })
+                .unwrap_or(0);
+            if pid == 0 { Err("no process") }
+            else { crate::device::gui::sys_fb_map_page(pid, arg0 as u32) }
+        }
+        SYS_GUI_REDRAW => {
+            crate::device::gui::gui_redraw();
+            Ok(0)
+        }
+        SYS_GUI_CREATE_WINDOW => {
+            // arg0 = title ptr, arg1 = title_len, arg2 = x, arg3 = y, a4 = w, a5 = h
+            let pid = crate::sched::current_thread()
+                .map(|t| unsafe { (*t).owner })
+                .unwrap_or(0);
+            if pid == 0 || arg0 == 0 { Err("invalid args") }
+            else {
+                let title = unsafe {
+                    let slice = core::slice::from_raw_parts(arg0 as *const u8, arg1.min(64));
+                    core::str::from_utf8_unchecked(slice)
+                };
+                if let Some(wm) = crate::device::gui::wm() {
+                    wm.create_window(title, arg2 as i32, arg3 as i32, tf.a4 as u32, tf.a5 as u32, pid)
+                        .map(|id| id)
+                        .ok_or("window create failed")
+                } else {
+                    Err("window manager not initialized")
+                }
+            }
+        }
 
         _ => Err("unknown syscall"),
     };

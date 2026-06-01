@@ -79,6 +79,8 @@ mod ai;
 
 #[cfg(not(test))]
 mod compat;
+#[cfg(not(test))]
+mod crypto;
 
 #[cfg(test)]
 mod mem;
@@ -206,15 +208,6 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
     // V36a: Initialize RISC-V Vector Extension (RVV 1.0) support
     crate::mem::vector::init_vector_support();
 
-    // V38b: Initialize RISC-V Performance Monitoring (Sscofpmf)
-    crate::trap::pmu::init();
-
-    // V38b: Initialize RISC-V Debug Triggers (Sdtrig)
-    crate::trap::debug::init();
-
-    // V38b: Initialize RISC-V State Enable (Smstateen)
-    crate::trap::smstateen::init();
-
     // V38c: Initialize Zihintpause (PAUSE hint instruction)
     crate::trap::pause::init_pause();
 
@@ -229,6 +222,10 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
 
     // V38c: Initialize Zicond-optimized scheduler hot paths
     crate::sched::sched_zicond_init();
+
+    // V38a: Initialize crypto subsystem (RISC-V crypto extensions + entropy)
+    crate::crypto::crypto_init();
+    println!("  V38a: Crypto subsystem initialized");
 
     // V37b: Initialize GUI subsystem (framebuffer + window manager)
     if device::framebuffer::fb_init() {

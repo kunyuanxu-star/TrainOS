@@ -1,6 +1,11 @@
 use crate::proc::thread::Thread;
+use crate::trap::pause::cpu_pause;
 use core::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 
+/// SpinLock with PAUSE-based backoff (V38c: Zihintpause).
+///
+/// Uses exponential backoff with PAUSE instructions for better performance
+/// on SMT systems and lower power consumption on all hardware.
 pub struct SpinLock {
     flag: AtomicBool,
 }
@@ -13,20 +18,17 @@ impl SpinLock {
     }
 
     pub fn lock(&self) {
+        let mut delay: u32 = 1;
         while self
             .flag
             .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
             .is_err()
         {
-            // Hint for hypervisor to yield
-            #[cfg(target_arch = "riscv64")]
-            unsafe {
-                core::arch::asm!("nop");
+            // V38c: Exponential backoff with PAUSE
+            for _ in 0..delay {
+                cpu_pause();
             }
-            #[cfg(not(target_arch = "riscv64"))]
-            unsafe {
-                core::arch::asm!("pause");
-            }
+            delay = delay.saturating_mul(2).min(1024);
         }
     }
 
@@ -105,11 +107,9 @@ impl ProxyLock {
 
         // Lock is contended.  Spin briefly (up to ~64 iterations) before
         // falling back to proxy execution.
-        for _ in 0..64 {
-            #[cfg(target_arch = "riscv64")]
-            unsafe { core::arch::asm!("nop"); }
-            #[cfg(not(target_arch = "riscv64"))]
-            unsafe { core::arch::asm!("pause"); }
+        for i in 0..64 {
+            // V38c: PAUSE-based backoff
+            crate::trap::pause::pause_backoff(i);
 
             if self
                 .flag
@@ -144,15 +144,15 @@ impl ProxyLock {
         }
 
         // Retry the acquire.
+        let mut delay: u32 = 1;
         while self
             .flag
             .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
             .is_err()
         {
-            #[cfg(target_arch = "riscv64")]
-            unsafe { core::arch::asm!("nop"); }
-            #[cfg(not(target_arch = "riscv64"))]
-            unsafe { core::arch::asm!("pause"); }
+            // V38c: PAUSE-based backoff
+            crate::trap::pause::pause_backoff(delay);
+            delay = delay.saturating_mul(2).min(1024);
         }
         if let Some(current) = crate::sched::current_thread() {
             self.holder.store(current, Ordering::Relaxed);

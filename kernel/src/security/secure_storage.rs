@@ -12,13 +12,12 @@
 //   is cryptographically bound to the SHA-512 measurement of the enclave that
 //   created it. Unsealing requires an enclave with an identical measurement.
 //
-//   AES-GCM encryption is simulated using XOR-based stream cipher with
-//   measurement-derived keys for no_std compatibility. In production, this
-//   would use hardware AES-GCM or a dedicated crypto engine.
+//   AES-GCM encryption uses the V38a hardware-accelerated crypto module
+//   (RISC-V Zkne AES extension with software fallback).
 //
 // Reference: RISC-V TEE secure storage, TCG TPM sealed storage semantics
 
-use crate::security::tee::{ApTeeEnclave, sha256_digest};
+use crate::security::tee::ApTeeEnclave;
 
 // ── Constants ───────────────────────────────────────────────────────────────
 
@@ -120,26 +119,29 @@ impl SecureStorage {
         blob.creation_time = unsafe { crate::trap::TICK_COUNT as u64 };
         blob.access_count = 0;
 
-        // Generate IV from creation time mixed with measurement
-        let ts = blob.creation_time;
-        for i in 0..IV_LEN {
-            blob.iv[i] = ((ts >> (i % 8) * 8) as u8)
-                .wrapping_add(enclave.measurement[i % 64])
-                .wrapping_mul(13);
+        // Generate IV from hardware entropy (V38a)
+        {
+            let ent = crate::crypto::crypto_entropy();
+            ent.random_bytes(&mut blob.iv);
         }
 
-        // Derive sealing key from enclave measurement
+        // Derive sealing key from enclave measurement (V38a SHA-256)
         let sealing_key = derive_sealing_key(&enclave.measurement, &blob.iv);
 
-        // Encrypt data using XOR-based stream cipher with the sealing key
-        for i in 0..data.len() {
-            blob.data[i] = data[i] ^ sealing_key[i % sealing_key.len()];
-        }
+        // Create AES-GCM context from sealing key
+        let mut key_arr = [0u8; 16];
+        key_arr.copy_from_slice(&sealing_key[..16]);
+        let aes = crate::crypto::aes::AesContext::new_128(&key_arr);
 
-        // Compute authentication tag (simplified: XOR of encrypted data + measurement)
-        let mut tag = [0u8; TAG_LEN];
-        for i in 0..data.len().min(TAG_LEN) {
-            tag[i] = blob.data[i] ^ enclave.measurement[i % 64];
+        // Encrypt data using AES-GCM with measurement-derived key
+        let mut nonce_arr = [0u8; 12];
+        nonce_arr.copy_from_slice(&blob.iv[..12]);
+        let (ct, tag) = aes.encrypt_gcm(data, &nonce_arr, &enclave.measurement);
+
+        // Store ciphertext
+        blob.data_len = ct.len().min(SEALED_DATA_SIZE);
+        for i in 0..blob.data_len {
+            blob.data[i] = ct[i];
         }
         blob.tag = tag;
 
@@ -178,35 +180,40 @@ impl SecureStorage {
             return None;
         }
 
-        // Derive sealing key from enclave measurement + IV
+        // Derive sealing key from enclave measurement + IV (V38a)
         let sealing_key = derive_sealing_key(&enclave.measurement, &blob.iv);
 
-        // Verify authentication tag
-        let mut expected_tag = [0u8; TAG_LEN];
-        for i in 0..blob.data_len.min(TAG_LEN) {
-            expected_tag[i] = blob.data[i] ^ enclave.measurement[i % 64];
-        }
-        if expected_tag != blob.tag {
-            crate::println!(
-                "  TEE secure storage: auth tag mismatch for blob {}",
-                blob_id,
-            );
-            return None;
-        }
+        // Create AES-GCM context (V38a hardware-accelerated)
+        let mut key_arr = [0u8; 16];
+        key_arr.copy_from_slice(&sealing_key[..16]);
+        let aes = crate::crypto::aes::AesContext::new_128(&key_arr);
 
-        // Decrypt: XOR again with the sealing key (XOR is symmetric)
-        // We use a static buffer for the decrypted data
-        unsafe {
-            DECRYPT_BUF = [0u8; SEALED_DATA_SIZE];
-            for i in 0..blob.data_len {
-                DECRYPT_BUF[i] = blob.data[i] ^ sealing_key[i % sealing_key.len()];
+        // Verify and decrypt using AES-GCM
+        let mut nonce_arr = [0u8; 12];
+        nonce_arr.copy_from_slice(&blob.iv[..12]);
+        let ciphertext = &blob.data[..blob.data_len.min(SEALED_DATA_SIZE)];
+        match aes.decrypt_gcm(ciphertext, &nonce_arr, &enclave.measurement, &blob.tag) {
+            Some(plaintext) => {
+                // Copy decrypted data to static buffer
+                unsafe {
+                    DECRYPT_BUF = [0u8; SEALED_DATA_SIZE];
+                    let len = plaintext.len().min(SEALED_DATA_SIZE);
+                    DECRYPT_BUF[..len].copy_from_slice(&plaintext[..len]);
+
+                    // Update access count
+                    let blob_ptr = &self.sealed_data[blob_id] as *const SealedBlob as *mut SealedBlob;
+                    (*blob_ptr).access_count = blob.access_count.wrapping_add(1);
+
+                    Some(&DECRYPT_BUF[..len])
+                }
             }
-
-            // Update access count (simulate mutation via raw pointer)
-            let blob_ptr = &self.sealed_data[blob_id] as *const SealedBlob as *mut SealedBlob;
-            (*blob_ptr).access_count = blob.access_count.wrapping_add(1);
-
-            Some(&DECRYPT_BUF[..blob.data_len])
+            None => {
+                crate::println!(
+                    "  TEE secure storage: AES-GCM auth failure for blob {}",
+                    blob_id,
+                );
+                None
+            }
         }
     }
 
@@ -288,7 +295,7 @@ static mut DECRYPT_BUF: [u8; SEALED_DATA_SIZE] = [0u8; SEALED_DATA_SIZE];
 
 // ── Key derivation ──────────────────────────────────────────────────────────
 
-/// Derive a sealing key from enclave measurement and IV.
+/// Derive a sealing key from enclave measurement and IV (V38a).
 ///
 /// Uses SHA-256 as a KDF: key = SHA256(measurement || iv || domain_separator)
 fn derive_sealing_key(measurement: &[u8; 64], iv: &[u8; IV_LEN]) -> [u8; 32] {
@@ -297,7 +304,7 @@ fn derive_sealing_key(measurement: &[u8; 64], iv: &[u8; IV_LEN]) -> [u8; 32] {
     input.extend_from_slice(iv);
     // Domain separation: prevents key reuse across different purposes
     input.extend_from_slice(b"TEE-SEALING-v1");
-    sha256_digest(&input)
+    crate::crypto::sha::Sha256::digest(&input)
 }
 
 // ── Global secure storage ───────────────────────────────────────────────────

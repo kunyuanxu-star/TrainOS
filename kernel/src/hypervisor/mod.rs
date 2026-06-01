@@ -15,7 +15,7 @@ pub mod plic;
 pub mod snapshot;
 pub mod timer;
 pub mod virtio;
-
+pub mod vs_aia;
 
 /// Maximum number of concurrent virtual machines.
 const MAX_VMS: usize = 8;
@@ -119,7 +119,7 @@ unsafe fn free_slot() -> Option<*mut VirtualMachine> {
 ///
 /// `name` is a byte slice (may be shorter than `VM_NAME_LEN`; only the first
 /// `VM_NAME_LEN-1` bytes are stored).  `memory_mb` specifies the size of the
-/// guest physical memory in megabytes (must be ≤ 128).
+/// guest physical memory in megabytes (must be ? 128).
 ///
 /// Returns the new VM ID on success, or `None` if the table is full or memory
 /// allocation fails.
@@ -344,7 +344,7 @@ mod tests {
 
         let mut buf = [0u8; 32];
         let written = vm_list(&mut buf);
-        // 2 VMs × 8 bytes = 16
+        // 2 VMs x 8 bytes = 16
         assert_eq!(written, 16);
 
         // Alpha should be running (flag=1)

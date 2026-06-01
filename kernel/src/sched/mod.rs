@@ -1,3 +1,4 @@
+use crate::mem::zicond::{cmov_u64, should_select_thread};
 use crate::proc::switch::context_switch;
 use crate::proc::thread::{PreemptMode, Thread, ThreadState};
 use crate::sync::SpinLock;
@@ -379,4 +380,67 @@ pub fn sched_stats() {
         }
     }
     SCHED_LOCK.unlock();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// V38c — Zicond-Optimized Scheduler Hot Paths
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// These functions use branchless conditional move (Zicond) to accelerate
+// scheduler comparisons that are executed on every scheduling decision.
+// Eliminating branches avoids pipeline stalls from mispredictions.
+
+/// Branchless comparison: return the thread with higher effective priority.
+///
+/// If priorities are equal, return the thread with the earlier deadline.
+/// Uses Zicond to avoid conditional branches in the scheduler hot path.
+pub fn pick_higher_priority_thread(a: *mut Thread, b: *mut Thread) -> *mut Thread {
+    unsafe {
+        let prio_a = (*a).effective_priority as u64;
+        let prio_b = (*b).effective_priority as u64;
+        let deadline_a = (*a).deadline;
+        let deadline_b = (*b).deadline;
+
+        // Use branchless selection: select 'a' if should_select_thread is true
+        let select_a = should_select_thread(prio_a, prio_b, deadline_a, deadline_b);
+        cmov_u64(select_a, a as u64, b as u64) as *mut Thread
+    }
+}
+
+/// Branchless check if thread `a` has strictly higher priority than `b`.
+///
+/// Returns true if `a` has higher priority, or same priority but earlier deadline.
+#[inline]
+pub fn is_higher_priority(a: *mut Thread, b: *mut Thread) -> bool {
+    unsafe {
+        let prio_a = (*a).effective_priority as u64;
+        let prio_b = (*b).effective_priority as u64;
+        let deadline_a = (*a).deadline;
+        let deadline_b = (*b).deadline;
+        should_select_thread(prio_a, prio_b, deadline_a, deadline_b)
+    }
+}
+
+/// Branchless clamp for thread priority to valid range [0, 63].
+#[inline]
+pub fn clamp_priority(prio: u64) -> u8 {
+    crate::mem::zicond::clamp_u64(prio, 0, 63) as u8
+}
+
+/// Branchless compute time slice from weight.
+/// Avoids branching on the weight > 0 check.
+#[inline]
+pub fn compute_slice_ticks(weight: u32) -> u64 {
+    // slice = SLICE_TICKS * WEIGHT_MAX / max(weight, 1)
+    let w = crate::mem::zicond::cmov_u64((weight as u64) < 1, 1, weight as u64);
+    let slice_ticks: u64 = 1; // SLICE_TICKS
+    let weight_max: u64 = 512; // WEIGHT_MAX
+    slice_ticks * weight_max / w
+}
+
+/// Record scheduler Zicond optimization initialization.
+pub fn sched_zicond_init() {
+    if crate::mem::zicond::zicond_available() {
+        crate::println!("  V38c: Scheduler hot paths optimized with Zicond");
+    }
 }

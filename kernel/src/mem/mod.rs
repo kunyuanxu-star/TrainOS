@@ -5,6 +5,7 @@ pub mod heap;
 pub mod layout;
 pub mod mseal;
 pub mod ptr_mask;
+pub mod sspmp;
 pub mod sv39;
 pub mod sv48;
 pub mod svinval;
@@ -12,6 +13,7 @@ pub mod svnapot;
 pub mod svpbmt;
 pub mod txmmu;
 pub mod vector;
+pub mod zicond;
 
 use layout::allocatable_range;
 

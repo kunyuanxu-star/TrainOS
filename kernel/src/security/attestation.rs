@@ -322,15 +322,10 @@ impl AttestationService {
         svc
     }
 
-    /// Refresh the internal nonce.
+    /// Refresh the internal nonce using hardware entropy (V38a).
     pub fn refresh_nonce(&mut self) {
-        // Use tick counter and simple mixing for nonce generation
-        let ts = unsafe { crate::trap::TICK_COUNT as u64 };
-        for i in 0..8 {
-            let byte = ((ts >> (i * 8)) ^ 0xA5) as u8;
-            self.nonce[i] = byte.wrapping_mul(13).wrapping_add(0x37);
-            self.nonce[i + 8] = byte.wrapping_mul(7).wrapping_add(0xC5);
-        }
+        let ent = crate::crypto::crypto_entropy();
+        ent.random_bytes(&mut self.nonce);
     }
 
     /// Get the current nonce.

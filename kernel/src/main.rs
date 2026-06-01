@@ -210,6 +210,33 @@ extern "C" fn rust_main(_hart_id: usize) -> ! {
     crate::security::tee::tee_init();
     println!("  TEE subsystem initialized");
 
+    // V37a: Initialize AP-TEE enhanced enclave framework
+    crate::security::tee::aptee_init();
+    println!("  AP-TEE subsystem initialized");
+
+    // V37a: Initialize TEE lifecycle management
+    let _lifecycle = crate::security::tee::tee_lifecycle_init(1);
+
+    // V37a: Initialize RATS remote attestation service
+    // Device key is derived from boot-time entropy for simulation.
+    // In production, this would come from a hardware root of trust.
+    {
+        let mut device_key = [0u8; 32];
+        let ts = unsafe { crate::trap::TICK_COUNT };
+        for i in 0..32 {
+            device_key[i] = ((ts >> (i % 8) * 8) as u8).wrapping_mul(17).wrapping_add(0x7A);
+        }
+        crate::security::attestation::attestation_init(&device_key, crate::security::attestation::TeeType::EPMP);
+    }
+
+    // V37a: Initialize multi-zone TEE isolation
+    crate::security::multizone::multizone_init();
+    println!("  TEE multi-zone initialized");
+
+    // V37a: Initialize TEE secure storage
+    crate::security::secure_storage::secure_storage_init();
+    println!("  TEE secure storage initialized");
+
     // V28: Initialize WASM/WASI subsystem
     wasm::wasi::wasi_init();
     println!("  WASI subsystem initialized");

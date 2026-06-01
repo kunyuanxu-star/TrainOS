@@ -11,10 +11,18 @@
 //   - tee: PMP-based TEE enclaves
 //   - enclave_ipc: Enclave secure IPC
 //   - hetero_tee: CPU+GPU heterogeneous TEE
+//
+// V37a: Enhanced RISC-V TEE support
+//   - attestation: RATS remote attestation service
+//   - multizone: Multi-zone TEE isolation
+//   - secure_storage: Encrypted sealed storage for enclaves
 
 pub mod tee;
 pub mod enclave_ipc;
 pub mod hetero_tee;
+pub mod attestation;
+pub mod multizone;
+pub mod secure_storage;
 
 use crate::mem::{sv39, layout::PAGE_SIZE};
 

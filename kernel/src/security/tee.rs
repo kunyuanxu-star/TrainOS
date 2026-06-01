@@ -707,6 +707,759 @@ fn w_u64(buf: &mut [u8], pos: usize, v: u64) -> usize {
 }
 
 // ═════════════════════════════════════════════════════════════════════════
+// V37a — AP-TEE (Application-Processor TEE) Enclave Framework
+// ═════════════════════════════════════════════════════════════════════════
+//
+// AP-TEE is the RISC-V standard for application-processor TEE, providing:
+//   - SHA-512 measurement (upgraded from V33's SHA-256)
+//   - Standardized memory layout (text, rodata, data, heap, stack)
+//   - Signer identity verification
+//   - TCB version tracking for attestation
+//   - Enclave state machine (Uninitialized → Loading → Ready → Running → ...)
+//
+// Reference: RISC-V AP-TEE TG specification, v1.0
+
+/// AP-TEE version implemented.
+pub const APTEE_VERSION: u32 = 1;
+
+/// Maximum number of concurrent AP-TEE enclaves.
+pub const APTEE_MAX_ENCLAVES: usize = 32;
+
+/// Maximum number of PMP/ePMP regions tracked per enclave.
+pub const APTEE_MAX_PMP_REGIONS: usize = 4;
+
+/// Total PMP entries reserved for all AP-TEE enclaves.
+pub const APTEE_TOTAL_PMP_REGIONS: usize = 64;
+
+/// Enclave state machine (aligned with AP-TEE spec).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum EnclaveState {
+    Uninitialized = 0,
+    Loading,       // Measurement in progress
+    Ready,         // Measured, ready to enter
+    Running,       // Currently executing
+    Destroyed,     // Shutdown
+    Attesting,     // Generating attestation report
+    Terminated,    // Error/attack detected
+}
+
+impl EnclaveState {
+    pub fn is_active(&self) -> bool {
+        matches!(self, EnclaveState::Loading | EnclaveState::Ready | EnclaveState::Running | EnclaveState::Attesting)
+    }
+}
+
+/// AP-TEE compliant enclave descriptor.
+///
+/// Follows RISC-V AP-TEE TG specification for memory layout, measurement,
+/// signer identity, and state management.
+#[derive(Clone, Copy)]
+pub struct ApTeeEnclave {
+    /// Unique enclave identifier.
+    pub enclave_id: u32,
+    /// PID of the owning process.
+    pub owner_pid: u32,
+    /// SHA-512 measurement of enclave code+data+rodata+stack config.
+    pub measurement: [u8; 64],
+    /// SHA-256 hash of the signing key used to sign the enclave image.
+    pub signer_hash: [u8; 32],
+    /// PMP/ePMP region indices assigned to this enclave (up to 4).
+    pub pmp_regions: [u8; APTEE_MAX_PMP_REGIONS],
+    /// Number of valid PMP region entries.
+    pub pmp_count: u8,
+    /// Base physical address of the enclave memory region.
+    pub enclave_memory_base: usize,
+    /// Total size of the enclave memory region.
+    pub enclave_memory_size: usize,
+    /// Code section offset from enclave base.
+    pub text_start: usize,
+    /// Code section size.
+    pub text_size: usize,
+    /// Read-only data offset from enclave base.
+    pub rodata_start: usize,
+    /// Read-only data size.
+    pub rodata_size: usize,
+    /// Writable data offset from enclave base.
+    pub data_start: usize,
+    /// Writable data size.
+    pub data_size: usize,
+    /// Heap offset from enclave base.
+    pub heap_start: usize,
+    /// Heap size.
+    pub heap_size: usize,
+    /// Stack offset from enclave base.
+    pub stack_start: usize,
+    /// Stack size.
+    pub stack_size: usize,
+    /// TCB version for attestation reporting.
+    pub tcb_version: u32,
+    /// Current enclave lifecycle state.
+    pub state: EnclaveState,
+}
+
+impl ApTeeEnclave {
+    /// Create a new AP-TEE enclave descriptor.
+    ///
+    /// `enclave_id` — assigned unique ID.
+    /// `owner_pid` — owning process PID.
+    /// `signer_hash` — SHA-256 of the enclave signing key.
+    /// `tcb_version` — TCB version for attestation.
+    pub fn new(enclave_id: u32, owner_pid: u32, signer_hash: &[u8; 32], tcb_version: u32) -> Self {
+        ApTeeEnclave {
+            enclave_id,
+            owner_pid,
+            measurement: [0u8; 64],
+            signer_hash: *signer_hash,
+            pmp_regions: [0u8; APTEE_MAX_PMP_REGIONS],
+            pmp_count: 0,
+            enclave_memory_base: 0,
+            enclave_memory_size: 0,
+            text_start: 0,
+            text_size: 0,
+            rodata_start: 0,
+            rodata_size: 0,
+            data_start: 0,
+            data_size: 0,
+            heap_start: 0,
+            heap_size: 0,
+            stack_start: 0,
+            stack_size: 0,
+            tcb_version,
+            state: EnclaveState::Uninitialized,
+        }
+    }
+
+    /// Transition enclave state with validation.
+    pub fn transition_to(&mut self, new_state: EnclaveState) -> Result<(), &'static str> {
+        match (self.state, new_state) {
+            (EnclaveState::Uninitialized, EnclaveState::Loading) => {}
+            (EnclaveState::Loading, EnclaveState::Ready) => {}
+            (EnclaveState::Ready, EnclaveState::Running) => {}
+            (EnclaveState::Ready, EnclaveState::Attesting) => {}
+            (EnclaveState::Running, EnclaveState::Ready) => {}
+            (EnclaveState::Running, EnclaveState::Attesting) => {}
+            (EnclaveState::Attesting, EnclaveState::Ready) => {}
+            (_, EnclaveState::Destroyed) => {}
+            (_, EnclaveState::Terminated) => {}
+            _ => return Err("invalid AP-TEE state transition"),
+        }
+        self.state = new_state;
+        Ok(())
+    }
+
+    /// Configure the enclave memory layout.
+    pub fn configure_regions(
+        &mut self,
+        mem_base: usize,
+        mem_size: usize,
+        text_start: usize,
+        text_size: usize,
+        rodata_start: usize,
+        rodata_size: usize,
+        data_start: usize,
+        data_size: usize,
+        heap_start: usize,
+        heap_size: usize,
+        stack_start: usize,
+        stack_size: usize,
+    ) {
+        self.enclave_memory_base = mem_base;
+        self.enclave_memory_size = mem_size;
+        self.text_start = text_start;
+        self.text_size = text_size;
+        self.rodata_start = rodata_start;
+        self.rodata_size = rodata_size;
+        self.data_start = data_start;
+        self.data_size = data_size;
+        self.heap_start = heap_start;
+        self.heap_size = heap_size;
+        self.stack_start = stack_start;
+        self.stack_size = stack_size;
+    }
+
+    /// Compute SHA-512 measurement of the enclave.
+    ///
+    /// The measurement covers: code + rodata + initial data + stack config.
+    /// This is the AP-TEE standard measurement format.
+    pub fn measure(&mut self, code: &[u8], rodata: &[u8], data: &[u8]) {
+        let mut combined = alloc::vec::Vec::new();
+
+        // Include all measurable regions in order
+        combined.extend_from_slice(code);
+        combined.extend_from_slice(rodata);
+        combined.extend_from_slice(data);
+
+        // Include stack and heap sizes as part of measurement
+        combined.extend_from_slice(&self.stack_size.to_le_bytes());
+        combined.extend_from_slice(&self.heap_size.to_le_bytes());
+        combined.extend_from_slice(&self.tcb_version.to_le_bytes());
+
+        self.measurement = sha512(&combined);
+    }
+
+    /// Assign a PMP region to this enclave.
+    pub fn assign_pmp_region(&mut self, pmp_idx: u8) -> bool {
+        if (self.pmp_count as usize) >= APTEE_MAX_PMP_REGIONS {
+            return false;
+        }
+        let idx = self.pmp_count as usize;
+        self.pmp_regions[idx] = pmp_idx;
+        self.pmp_count += 1;
+        true
+    }
+
+    /// Check if a pointer is within the enclave's protected memory.
+    pub fn contains_addr(&self, addr: usize) -> bool {
+        let base = self.enclave_memory_base;
+        addr >= base && addr < base + self.enclave_memory_size
+    }
+
+    /// Get the number of active PMP regions.
+    pub fn active_pmp_count(&self) -> u8 {
+        self.pmp_count
+    }
+
+    /// Check if this enclave is in a running/active state.
+    pub fn is_running(&self) -> bool {
+        self.state == EnclaveState::Running
+    }
+}
+
+// ── Global AP-TEE state ─────────────────────────────────────────────────────
+
+static mut APTEE_ENCLAVES: [ApTeeEnclave; APTEE_MAX_ENCLAVES] = unsafe { zeroed_aptee() };
+static mut APTEE_COUNT: usize = 0;
+static mut APTEE_ID_COUNTER: u32 = 1;
+
+/// Helper to zero-initialize the AP-TEE enclave table at compile time.
+const fn zeroed_aptee() -> [ApTeeEnclave; APTEE_MAX_ENCLAVES] {
+    unsafe { core::mem::transmute([0u8; core::mem::size_of::<ApTeeEnclave>() * APTEE_MAX_ENCLAVES]) }
+}
+
+// ── AP-TEE Public API ───────────────────────────────────────────────────────
+
+/// Create a new AP-TEE enclave.
+pub fn aptee_create(owner_pid: u32, signer_hash: &[u8; 32], tcb_version: u32) -> Option<u32> {
+    unsafe {
+        if APTEE_COUNT >= APTEE_MAX_ENCLAVES {
+            crate::println!("  AP-TEE: enclave table full (max {})", APTEE_MAX_ENCLAVES);
+            return None;
+        }
+
+        let enclave_id = APTEE_ID_COUNTER;
+        APTEE_ID_COUNTER = APTEE_ID_COUNTER.wrapping_add(1);
+
+        let mut enclave = ApTeeEnclave::new(enclave_id, owner_pid, signer_hash, tcb_version);
+        enclave.state = EnclaveState::Loading;
+
+        let idx = APTEE_COUNT;
+        APTEE_ENCLAVES[idx] = enclave;
+        APTEE_COUNT += 1;
+
+        crate::println!(
+            "  AP-TEE: enclave {} created for pid={}, TCB v{}",
+            enclave_id, owner_pid, tcb_version,
+        );
+        Some(enclave_id)
+    }
+}
+
+/// Finalize an AP-TEE enclave (transition to Ready state).
+pub fn aptee_finalize(enclave_id: u32) -> Result<(), &'static str> {
+    unsafe {
+        for i in 0..APTEE_COUNT {
+            if APTEE_ENCLAVES[i].enclave_id == enclave_id {
+                APTEE_ENCLAVES[i].transition_to(EnclaveState::Ready)?;
+                return Ok(());
+            }
+        }
+        Err("AP-TEE enclave not found")
+    }
+}
+
+/// Enter an AP-TEE enclave (transition to Running).
+pub fn aptee_enter(enclave_id: u32) -> Result<(), &'static str> {
+    unsafe {
+        for i in 0..APTEE_COUNT {
+            if APTEE_ENCLAVES[i].enclave_id == enclave_id {
+                APTEE_ENCLAVES[i].transition_to(EnclaveState::Running)?;
+                return Ok(());
+            }
+        }
+        Err("AP-TEE enclave not found")
+    }
+}
+
+/// Exit an AP-TEE enclave (transition back to Ready).
+pub fn aptee_exit(enclave_id: u32) -> Result<(), &'static str> {
+    unsafe {
+        for i in 0..APTEE_COUNT {
+            if APTEE_ENCLAVES[i].enclave_id == enclave_id {
+                APTEE_ENCLAVES[i].transition_to(EnclaveState::Ready)?;
+                return Ok(());
+            }
+        }
+        Err("AP-TEE enclave not found")
+    }
+}
+
+/// Destroy an AP-TEE enclave.
+pub fn aptee_destroy(enclave_id: u32) -> bool {
+    unsafe {
+        for i in 0..APTEE_COUNT {
+            if APTEE_ENCLAVES[i].enclave_id == enclave_id {
+                APTEE_ENCLAVES[i].transition_to(EnclaveState::Destroyed).ok();
+                return true;
+            }
+        }
+        false
+    }
+}
+
+/// Terminate an AP-TEE enclave (on error/attack).
+pub fn aptee_terminate(enclave_id: u32) -> bool {
+    unsafe {
+        for i in 0..APTEE_COUNT {
+            if APTEE_ENCLAVES[i].enclave_id == enclave_id {
+                APTEE_ENCLAVES[i].transition_to(EnclaveState::Terminated).ok();
+                return true;
+            }
+        }
+        false
+    }
+}
+
+/// Find an AP-TEE enclave by ID.
+pub fn aptee_find(enclave_id: u32) -> Option<&'static ApTeeEnclave> {
+    unsafe {
+        for i in 0..APTEE_COUNT {
+            if APTEE_ENCLAVES[i].enclave_id == enclave_id {
+                return Some(&APTEE_ENCLAVES[i]);
+            }
+        }
+        None
+    }
+}
+
+/// Find an AP-TEE enclave by ID (mutable).
+pub fn aptee_find_mut(enclave_id: u32) -> Option<&'static mut ApTeeEnclave> {
+    unsafe {
+        for i in 0..APTEE_COUNT {
+            if APTEE_ENCLAVES[i].enclave_id == enclave_id {
+                return Some(&mut APTEE_ENCLAVES[i]);
+            }
+        }
+        None
+    }
+}
+
+/// List all active AP-TEE enclaves. Returns bytes written.
+pub fn aptee_list(buf: &mut [u8]) -> usize {
+    let mut pos = 0usize;
+    unsafe {
+        for i in 0..APTEE_COUNT {
+            let e = &APTEE_ENCLAVES[i];
+            if !e.state.is_active() {
+                continue;
+            }
+            pos += w_str(buf, pos, "id=");
+            pos += w_u64(buf, pos, e.enclave_id as u64);
+            pos += w_str(buf, pos, " pid=");
+            pos += w_u64(buf, pos, e.owner_pid as u64);
+            pos += w_str(buf, pos, " state=");
+            pos += w_str(buf, pos, e.state_name());
+            pos += w_str(buf, pos, " mem=0x");
+            pos += w_hex64(buf, pos, e.enclave_memory_base as u64);
+            pos += w_str(buf, pos, " size=");
+            pos += w_u64(buf, pos, e.enclave_memory_size as u64);
+            pos += w_str(buf, pos, " pmp=");
+            pos += w_u64(buf, pos, e.pmp_count as u64);
+            pos += w_str(buf, pos, " tcb=");
+            pos += w_u64(buf, pos, e.tcb_version as u64);
+            pos += w_str(buf, pos, "\n");
+        }
+    }
+    pos
+}
+
+impl ApTeeEnclave {
+    /// Get a human-readable state name.
+    fn state_name(&self) -> &'static str {
+        match self.state {
+            EnclaveState::Uninitialized => "uninit",
+            EnclaveState::Loading => "loading",
+            EnclaveState::Ready => "ready",
+            EnclaveState::Running => "running",
+            EnclaveState::Destroyed => "destroyed",
+            EnclaveState::Attesting => "attesting",
+            EnclaveState::Terminated => "terminated",
+        }
+    }
+}
+
+// ── TEE Lifecycle Management (GlobalPlatform-aligned) ─────────────────────
+
+/// TEE lifecycle states (aligned with GlobalPlatform TEE specification).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum TeeLifecycle {
+    /// Factory state — device is being manufactured.
+    Factory,
+    /// Provisioning state — keys are being installed.
+    Provisioning,
+    /// Operational state — normal operation.
+    Operational,
+    /// Recovery state — firmware update in progress.
+    Recovery,
+    /// Decommissioned state — device being retired.
+    Decommissioned,
+    /// Compromised state — security breach detected.
+    Compromised,
+}
+
+impl TeeLifecycle {
+    pub fn name(&self) -> &'static str {
+        match self {
+            TeeLifecycle::Factory => "factory",
+            TeeLifecycle::Provisioning => "provisioning",
+            TeeLifecycle::Operational => "operational",
+            TeeLifecycle::Recovery => "recovery",
+            TeeLifecycle::Decommissioned => "decommissioned",
+            TeeLifecycle::Compromised => "compromised",
+        }
+    }
+}
+
+/// TEE lifecycle manager.
+///
+/// Tracks the overall TEE lifecycle state, hardware fuse values,
+/// and provides anti-rollback protection via monotonic counter.
+pub struct TeeLifecycleManager {
+    state: TeeLifecycle,
+    fuse_bits: u32,
+    rollback_protection: u64,
+    fw_version: u32,
+}
+
+impl TeeLifecycleManager {
+    /// Create a new lifecycle manager starting in Operational state.
+    pub const fn new(fw_version: u32) -> Self {
+        TeeLifecycleManager {
+            state: TeeLifecycle::Operational,
+            fuse_bits: 0,
+            rollback_protection: 1,
+            fw_version,
+        }
+    }
+
+    /// Create a lifecycle manager with factory provisioning.
+    pub const fn factory(fw_version: u32) -> Self {
+        TeeLifecycleManager {
+            state: TeeLifecycle::Factory,
+            fuse_bits: 0,
+            rollback_protection: 0,
+            fw_version,
+        }
+    }
+
+    /// Get the current lifecycle state.
+    pub fn current_state(&self) -> &TeeLifecycle {
+        &self.state
+    }
+
+    /// Transition to a new lifecycle state.
+    ///
+    /// Valid transitions are enforced to prevent illegal state changes.
+    pub fn transition_to(&mut self, new_state: TeeLifecycle) -> Result<(), &'static str> {
+        match (self.state, new_state) {
+            // Factory → Provisioning (key installation)
+            (TeeLifecycle::Factory, TeeLifecycle::Provisioning) => {}
+            // Provisioning → Operational (normal use)
+            (TeeLifecycle::Provisioning, TeeLifecycle::Operational) => {}
+            // Operational → Recovery (firmware update)
+            (TeeLifecycle::Operational, TeeLifecycle::Recovery) => {}
+            // Recovery → Operational (update successful)
+            (TeeLifecycle::Recovery, TeeLifecycle::Operational) => {}
+            // Any → Decommissioned (retirement)
+            (_, TeeLifecycle::Decommissioned) => {}
+            // Any → Compromised (security breach)
+            (_, TeeLifecycle::Compromised) => {}
+            // No other transitions are allowed
+            _ => return Err("invalid TEE lifecycle transition"),
+        }
+        self.state = new_state;
+        crate::println!("  TEE lifecycle: -> {}", new_state.name());
+        Ok(())
+    }
+
+    /// Increment the anti-rollback counter.
+    ///
+    /// This should be called after each successful firmware update.
+    pub fn increment_rollback_counter(&mut self) {
+        self.rollback_protection = self.rollback_protection.wrapping_add(1);
+    }
+
+    /// Verify that a firmware version is not older than the current.
+    pub fn verify_fw_version(&self, version: u32) -> bool {
+        version >= self.fw_version
+    }
+
+    /// Get the current firmware version.
+    pub fn fw_version(&self) -> u32 {
+        self.fw_version
+    }
+
+    /// Get the anti-rollback counter value.
+    pub fn rollback_counter(&self) -> u64 {
+        self.rollback_protection
+    }
+
+    /// Write hardware fuse bits (called during provisioning).
+    pub fn write_fuses(&mut self, fuses: u32) {
+        self.fuse_bits |= fuses;
+    }
+
+    /// Read hardware fuse bits.
+    pub fn read_fuses(&self) -> u32 {
+        self.fuse_bits
+    }
+}
+
+// ── AP-TEE Initialization ──────────────────────────────────────────────────
+
+/// Initialize the AP-TEE subsystem.
+pub fn aptee_init() {
+    crate::println!("  AP-TEE: v{} initialized, max {} enclaves", APTEE_VERSION, APTEE_MAX_ENCLAVES);
+    crate::println!("  AP-TEE: {} PMP/ePMP regions reserved", APTEE_TOTAL_PMP_REGIONS);
+}
+
+/// Initialize TEE lifecycle management.
+pub fn tee_lifecycle_init(fw_version: u32) -> TeeLifecycleManager {
+    let mgr = TeeLifecycleManager::new(fw_version);
+    crate::println!("  TEE lifecycle: operational (fw v{}, rollback {})", fw_version, mgr.rollback_counter());
+    mgr
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// V37a — SHA-512 Implementation for AP-TEE Measurement
+// ═════════════════════════════════════════════════════════════════════════
+//
+// SHA-512 is required by the AP-TEE specification for measurements.
+// This is a minimal no_std implementation.
+
+/// Minimal SHA-512 implementation for AP-TEE attestation measurements.
+struct Sha512 {
+    state: [u64; 8],
+    buffer: [u8; 128],
+    count: u128,
+    buf_len: usize,
+}
+
+impl Sha512 {
+    const K: [u64; 80] = [
+        0x428a2f98d728ae22, 0x7137449123ef65cd, 0xb5c0fbcfec4d3b2f, 0xe9b5dba58189dbbc,
+        0x3956c25bf348b538, 0x59f111f1b605d019, 0x923f82a4af194f9b, 0xab1c5ed5da6d8118,
+        0xd807aa98a3030242, 0x12835b0145706fbe, 0x243185be4ee4b28c, 0x550c7dc3d5ffb4e2,
+        0x72be5d74f27b896f, 0x80deb1fe3b1696b1, 0x9bdc06a725c71235, 0xc19bf174cf692694,
+        0xe49b69c19ef14ad2, 0xefbe4786384f25e3, 0x0fc19dc68b8cd5b5, 0x240ca1cc77ac9c65,
+        0x2de92c6f592b0275, 0x4a7484aa6ea6e483, 0x5cb0a9dcbd41fbd4, 0x76f988da831153b5,
+        0x983e5152ee66dfab, 0xa831c66d2db43210, 0xb00327c898fb213f, 0xbf597fc7beef0ee4,
+        0xc6e00bf33da88fc2, 0xd5a79147930aa725, 0x06ca6351e003826f, 0x142929670a0e6e70,
+        0x27b70a8546d22ffc, 0x2e1b21385c26c926, 0x4d2c6dfc5ac42aed, 0x53380d139d95b3df,
+        0x650a73548baf63de, 0x766a0abb3c77b2a8, 0x81c2c92e47edaee6, 0x92722c851482353b,
+        0xa2bfe8a14cf10364, 0xa81a664bbc423001, 0xc24b8b70d0f89791, 0xc76c51a30654be30,
+        0xd192e819d6ef5218, 0xd69906245565a910, 0xf40e35855771202a, 0x106aa07032bbd1b8,
+        0x19a4c116b8d2d0c8, 0x1e376c085141ab53, 0x2748774cdf8eeb99, 0x34b0bcb5e19b48a8,
+        0x391c0cb3c5c95a63, 0x4ed8aa4ae3418acb, 0x5b9cca4f7763e373, 0x682e6ff3d6b2b8a3,
+        0x748f82ee5defb2fc, 0x78a5636f43172f60, 0x84c87814a1f0ab72, 0x8cc702081a6439ec,
+        0x90befffa23631e28, 0xa4506cebde82bde9, 0xbef9a3f7b2c67915, 0xc67178f2e372532b,
+        0xca273eceea26619c, 0xd186b8c721c0c207, 0xeada7dd6cde0eb1e, 0xf57d4f7fee6ed178,
+        0x06f067aa72176fba, 0x0a637dc5a2c898a6, 0x113f9804bef90dae, 0x1b710b35131c471b,
+        0x28db77f523047d84, 0x32caab7b40c72493, 0x3c9ebe0a15c9bebc, 0x431d67c49c100d4c,
+        0x4cc5d4becb3e42b6, 0x597f299cfc657e2a, 0x5fcb6fab3ad6faec, 0x6c44198c4a475817,
+    ];
+
+    fn new() -> Self {
+        Sha512 {
+            state: [
+                0x6a09e667f3bcc908, 0xbb67ae8584caa73b, 0x3c6ef372fe94f82b, 0xa54ff53a5f1d36f1,
+                0x510e527fade682d1, 0x9b05688c2b3e6c1f, 0x1f83d9abfb41bd6b, 0x5be0cd19137e2179,
+            ],
+            buffer: [0u8; 128],
+            count: 0,
+            buf_len: 0,
+        }
+    }
+
+    fn update(&mut self, data: &[u8]) {
+        let mut offset = 0;
+        let len = data.len();
+        self.count += len as u128;
+
+        if self.buf_len > 0 {
+            let space = 128usize.saturating_sub(self.buf_len);
+            let take = core::cmp::min(space, len);
+            self.buffer[self.buf_len..self.buf_len + take].copy_from_slice(&data[..take]);
+            self.buf_len += take;
+            offset += take;
+            if self.buf_len == 128 {
+                self.process_block();
+                self.buf_len = 0;
+            }
+        }
+
+        while offset + 128 <= len {
+            let block: &[u8; 128] = data[offset..offset + 128].try_into().unwrap();
+            self.process_block_with(block);
+            offset += 128;
+        }
+
+        if offset < len {
+            let remaining = len - offset;
+            self.buffer[..remaining].copy_from_slice(&data[offset..]);
+            self.buf_len = remaining;
+        }
+    }
+
+    fn finalize(&mut self) -> [u8; 64] {
+        let bit_len = self.count * 8;
+        self.buffer[self.buf_len] = 0x80;
+        self.buf_len += 1;
+
+        if self.buf_len > 112 {
+            for i in self.buf_len..128 {
+                self.buffer[i] = 0;
+            }
+            self.process_block();
+            self.buf_len = 0;
+        }
+
+        for i in self.buf_len..112 {
+            self.buffer[i] = 0;
+        }
+
+        self.buffer[112..128].copy_from_slice(&bit_len.to_be_bytes());
+        self.process_block();
+
+        let mut hash = [0u8; 64];
+        for i in 0..8 {
+            hash[i * 8..(i + 1) * 8].copy_from_slice(&self.state[i].to_be_bytes());
+        }
+        hash
+    }
+
+    fn process_block(&mut self) {
+        let block = self.buffer;
+        self.process_block_with(&block);
+    }
+
+    fn process_block_with(&mut self, block: &[u8; 128]) {
+        let mut w = [0u64; 80];
+
+        for i in 0..16 {
+            w[i] = u64::from_be_bytes([
+                block[i * 8],
+                block[i * 8 + 1],
+                block[i * 8 + 2],
+                block[i * 8 + 3],
+                block[i * 8 + 4],
+                block[i * 8 + 5],
+                block[i * 8 + 6],
+                block[i * 8 + 7],
+            ]);
+        }
+        for i in 16..80 {
+            let s0 = w[i - 15].rotate_right(1) ^ w[i - 15].rotate_right(8) ^ (w[i - 15] >> 7);
+            let s1 = w[i - 2].rotate_right(19) ^ w[i - 2].rotate_right(61) ^ (w[i - 2] >> 6);
+            w[i] = w[i - 16]
+                .wrapping_add(s0)
+                .wrapping_add(w[i - 7])
+                .wrapping_add(s1);
+        }
+
+        let (mut a, mut b, mut c, mut d, mut e, mut f, mut g, mut h) = (
+            self.state[0], self.state[1], self.state[2], self.state[3],
+            self.state[4], self.state[5], self.state[6], self.state[7],
+        );
+
+        for i in 0..80 {
+            let s1 = e.rotate_right(14) ^ e.rotate_right(18) ^ e.rotate_right(41);
+            let ch = (e & f) ^ ((!e) & g);
+            let temp1 = h.wrapping_add(s1).wrapping_add(ch).wrapping_add(Self::K[i]).wrapping_add(w[i]);
+            let s0 = a.rotate_right(28) ^ a.rotate_right(34) ^ a.rotate_right(39);
+            let maj = (a & b) ^ (a & c) ^ (b & c);
+            let temp2 = s0.wrapping_add(maj);
+
+            h = g;
+            g = f;
+            f = e;
+            e = d.wrapping_add(temp1);
+            d = c;
+            c = b;
+            b = a;
+            a = temp1.wrapping_add(temp2);
+        }
+
+        self.state[0] = self.state[0].wrapping_add(a);
+        self.state[1] = self.state[1].wrapping_add(b);
+        self.state[2] = self.state[2].wrapping_add(c);
+        self.state[3] = self.state[3].wrapping_add(d);
+        self.state[4] = self.state[4].wrapping_add(e);
+        self.state[5] = self.state[5].wrapping_add(f);
+        self.state[6] = self.state[6].wrapping_add(g);
+        self.state[7] = self.state[7].wrapping_add(h);
+    }
+}
+
+/// Compute SHA-512 hash of data.
+fn sha512(data: &[u8]) -> [u8; 64] {
+    let mut hasher = Sha512::new();
+    hasher.update(data);
+    hasher.finalize()
+}
+
+/// Compute SHA-256 hash (public, for use by other modules).
+pub fn sha256_digest(data: &[u8]) -> [u8; 32] {
+    sha256(data)
+}
+
+// ═════════════════════════════════════════════════════════════════════════
+// V37a — Hex formatting helper for u64
+// ═════════════════════════════════════════════════════════════════════════
+
+fn w_hex64(buf: &mut [u8], pos: usize, v: u64) -> usize {
+    if v == 0 {
+        if pos < buf.len() {
+            buf[pos] = b'0';
+            return 1;
+        }
+        return 0;
+    }
+    let mut temp = [0u8; 16];
+    let mut n = v;
+    let mut len = 0;
+    while n > 0 {
+        let nibble = (n & 0xF) as u8;
+        temp[len] = if nibble < 10 {
+            b'0' + nibble
+        } else {
+            b'a' + nibble - 10
+        };
+        n >>= 4;
+        len += 1;
+    }
+    let mut written = 0;
+    for i in (0..len).rev() {
+        if pos + written < buf.len() {
+            buf[pos + written] = temp[i];
+            written += 1;
+        } else {
+            break;
+        }
+    }
+    written
+}
+
+// ═════════════════════════════════════════════════════════════════════════
 // V36d — RISC-V ePMP (Enhanced Physical Memory Protection)
 // ═════════════════════════════════════════════════════════════════════════
 //

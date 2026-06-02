@@ -28,7 +28,7 @@ The V21–V30 roadmap is defined in [docs/specs/2026-05-18-trainos-v21-v30-roadm
 2. Architecture: RISC-V 64-bit (rv64gc), Sv39 virtual memory, MIT license.
 3. Language: Rust nightly (`no_std` kernel + user-space, no heap in services).
 
-## Current Status (2026-05-24) — V37.0 (TEE + GUI)
+## Current Status (2026-05-24) — V39.0 (Desktop Environment)
 
 ### Completed
 - **Dynamic process spawning**: `sys_spawn` (syscall 3) creates new processes from user-provided ELF data
@@ -230,6 +230,21 @@ Based on RISC-V ISA extension survey. Full support for Vector, AIA, Cache Ops, I
 - **Input handling**: Event queue (256 entries), USB HID scancodes, keyboard state, scancode→ASCII conversion
 - **Widget toolkit**: Button, Label, TextBox, CheckBox, ProgressBar, ScrollBar with rendering + hit-testing
 - **GUI service**: EP 9, 13 IPC opcodes, 7 new syscalls (350-356)
+
+### V39 (Desktop Environment) — 2026-05-24
+
+#### V39a — Desktop Core Infrastructure
+- **Compositor**: Z-ordered alpha-blended composition, drop shadows, background blur, window animations (fade-in/out, minimize slide), dirty region tracking, 30 FPS target
+- **Desktop Shell**: Desktop icons (64, grid layout), taskbar (start button, window tabs, tray, clock), start menu (search bar, power), wallpaper (solid/gradient/tiled/centered), context menu
+- **Theme Engine**: 7 pre-built themes (Catppuccin, Solarized, Nord, High Contrast, TrainOS brand), dark/light toggle, 40+ semantic color tokens
+- **TTF Font Renderer**: TrueType/OpenType parser (cmap/glyf/kern tables), anti-aliased glyph rendering, kerning, multi-font manager, bitmap fallback
+
+#### V39b — Desktop Applications
+- **Widget Toolkit 2.0**: DropdownMenu, Slider (H/V), TabBar, ListView (multi-select/sort), TreeView, Dialog (modal), Tooltip, StatusBar, Container (VBox/HBox/Grid layout)
+- **File Manager**: Address bar, sidebar tree, file list (3 views), toolbar (back/forward/up/new/recycle), full file operations (navigate/copy/move/delete/rename/new-folder)
+- **Terminal Emulator**: 256x64 grid + scrollback, full ANSI escape parser (cursor/SGR/clear/scroll), cursor blink, selection, shell IPC integration
+- **System Monitor**: CPU line graph (128 samples), memory bar chart, process list, 8 PMU performance counters, tick-based auto-update
+- **Settings Panel**: 7 pages (Appearance/Desktop/Display/Network/System/Keyboard/About), live widgets for theme/wallpaper/resolution/font/icon size
 
 ### Architecture
 **Microkernel** — kernel provides:

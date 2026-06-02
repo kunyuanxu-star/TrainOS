@@ -22,6 +22,9 @@ pub mod window;
 pub mod input;
 pub mod widgets;
 pub mod gui;
+pub mod theme;
+pub mod ttf;
+pub mod desktop;
 
 pub const DRV_BLOCK: u32 = 1;
 pub const DRV_NET: u32 = 2;

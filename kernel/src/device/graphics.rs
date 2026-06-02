@@ -220,7 +220,7 @@ pub fn draw_gradient(
     }
 }
 
-fn lerp_color(a: Color, b: Color, t: f32) -> Color {
+pub fn lerp_color(a: Color, b: Color, t: f32) -> Color {
     let t = t.max(0.0).min(1.0);
     let inv = 1.0 - t;
     rgba(

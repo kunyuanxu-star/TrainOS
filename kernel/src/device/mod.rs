@@ -25,6 +25,10 @@ pub mod gui;
 pub mod theme;
 pub mod ttf;
 pub mod desktop;
+pub mod fileman;
+pub mod terminal;
+pub mod sysmon;
+pub mod settings;
 
 pub const DRV_BLOCK: u32 = 1;
 pub const DRV_NET: u32 = 2;
